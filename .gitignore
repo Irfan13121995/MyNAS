@@ -1,0 +1,27 @@
+# Dependencies and generated tooling state
+node_modules/
+.expo/
+dist/
+web-build/
+
+# Local secrets and runtime data
+.env
+.env.*
+!.env.example
+temp_uploads/
+cloudflared/
+
+# Native build and platform artifacts
+android/
+ios/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Logs and editor/OS files
+npm-debug.*
+yarn-debug.*
+.DS_Store
+*.log
