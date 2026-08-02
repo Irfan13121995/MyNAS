@@ -62,10 +62,26 @@ function logActivity(type, detail) {
   if (activityLog.length > 50) activityLog.pop();
 }
 
+const helmet = require('helmet');
+
+// Global Rate Limiter for API Endpoints (150 requests per min per IP)
+const globalApiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 150,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Rate limit exceeded. Please slow down requests.' }
+});
+
 // Serve the Windows Dashboard UI as static files
+app.use(helmet({
+  contentSecurityPolicy: false, // Allows media streaming & blobs
+  crossOriginResourcePolicy: false
+}));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(cors());
 app.use(express.json());
+app.use('/api/', globalApiLimiter);
 
 console.log('====================================');
 console.log(`  Personal NAS Server Active Passcode: ${PASSCODE}`);

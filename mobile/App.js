@@ -10,6 +10,7 @@ import BottomNav from './components/BottomNav';
 import AutoSyncModal from './components/AutoSyncModal';
 import FileViewerModal from './components/FileViewerModal';
 import { authenticateBiometric } from './services/biometricService';
+import { getSecureItem, setSecureItem, deleteSecureItem } from './services/secureStoreService';
 
 export default function App() {
   const [loading, setLoading] = useState(true);
@@ -30,8 +31,8 @@ export default function App() {
 
   const bootstrapAsync = async () => {
     try {
-      const storedUrl = await AsyncStorage.getItem('nas_server_url');
-      const storedToken = await AsyncStorage.getItem('nas_jwt_token');
+      const storedUrl = await getSecureItem('nas_server_url');
+      const storedToken = await getSecureItem('nas_jwt_token');
 
       if (storedUrl && storedToken) {
         const ok = await verifyToken(storedUrl, storedToken);
@@ -83,8 +84,8 @@ export default function App() {
 
   const handleConnect = async (url, jwtToken) => {
     try {
-      await AsyncStorage.setItem('nas_server_url', url);
-      await AsyncStorage.setItem('nas_jwt_token', jwtToken);
+      await setSecureItem('nas_server_url', url);
+      await setSecureItem('nas_jwt_token', jwtToken);
       setServerUrl(url);
       setToken(jwtToken);
       fetchDrives(url, jwtToken);
@@ -95,10 +96,11 @@ export default function App() {
 
   const handleLogout = async () => {
     try {
-      await AsyncStorage.removeItem('nas_server_url');
-      await AsyncStorage.removeItem('nas_jwt_token');
+      await deleteSecureItem('nas_server_url');
+      await deleteSecureItem('nas_jwt_token');
       setServerUrl(null);
       setToken(null);
+      setDrives([]);
     } catch (e) {
       console.error('Failed to clear credentials', e);
     }

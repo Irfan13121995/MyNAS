@@ -16,12 +16,23 @@ async function validatePath(targetPath) {
     throw new Error('Path is required');
   }
 
+  // Security Hardening: Prevent Null-Byte Injection & Traversal Attacks
+  if (targetPath.includes('\0') || targetPath.includes('%00')) {
+    throw new Error('Access Denied: Malformed path string detected');
+  }
+
   let formatted = targetPath;
   if (/^[a-zA-Z]:$/.test(formatted)) {
     formatted += '\\';
   }
 
   const resolvedPath = path.resolve(formatted);
+
+  // Enforce Path Traversal Check
+  if (targetPath.includes('..') && !resolvedPath.startsWith(path.normalize(formatted))) {
+    throw new Error('Access Denied: Directory traversal is forbidden');
+  }
+
   const drives = await getDrives();
   const driveLetters = drives.map(d => d.letter.toUpperCase().replace(/[\/\\]+$/, ''));
   const targetDrive = resolvedPath.substring(0, 2).toUpperCase();
