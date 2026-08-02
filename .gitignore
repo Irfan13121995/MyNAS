@@ -4,12 +4,15 @@ node_modules/
 dist/
 web-build/
 
-# Local secrets and runtime data
+# Local secrets, cache, user data, and runtime data
 .env
 .env.*
 !.env.example
 temp_uploads/
 cloudflared/
+users.json
+.nas_cache/
+.nas_trash/
 
 # Native build and platform artifacts
 android/

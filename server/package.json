@@ -2,16 +2,28 @@
   "name": "personal-nas-server",
   "version": "1.0.0",
   "description": "Windows 11 Personal NAS Server",
+  "bin": "index.js",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "build:exe": "npx pkg . --targets node18-win-x64 --output dist/personal-nas.exe"
   },
   "dependencies": {
+    "archiver": "^8.0.0",
+    "bcryptjs": "^3.0.3",
     "bonjour-service": "^1.2.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "express-rate-limit": "^8.6.1",
     "jsonwebtoken": "^9.0.2",
-    "multer": "^2.2.0"
+    "multer": "^2.2.0",
+    "nodemailer": "^9.0.3",
+    "sharp": "^0.35.3"
+  },
+  "pkg": {
+    "assets": [
+      "public/**/*"
+    ]
   }
 }

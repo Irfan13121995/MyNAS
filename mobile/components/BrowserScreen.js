@@ -12,14 +12,21 @@ import {
 } from 'react-native';
 import FileViewer from './FileViewer';
 import BackupPanel from './BackupPanel';
+import TunnelPanel from './TunnelPanel';
+import StorageScreen from './StorageScreen';
+import LibraryScreen from './LibraryScreen';
+import ControlPanelScreen from './ControlPanelScreen';
+import BottomNav from './BottomNav';
 
 export default function BrowserScreen({ serverUrl, token, onLogout, onRemoteUrl }) {
+  const [activeTab, setActiveTab] = useState('files'); // 'files' | 'storage' | 'library' | 'control'
+
   const [drives, setDrives] = useState([]);
   const [contents, setContents] = useState([]);
   const [currentPath, setCurrentPath] = useState(null); // null = Drives Dashboard
   const [history, setHistory] = useState([]); // Path history stack
   const [loading, setLoading] = useState(true);
-  
+
   // File Preview Modal State
   const [selectedFile, setSelectedFile] = useState(null);
   const [modalVisible, setModalVisible] = useState(false);
@@ -30,14 +37,15 @@ export default function BrowserScreen({ serverUrl, token, onLogout, onRemoteUrl 
   // Backup Panel State
   const [backupPanelVisible, setBackupPanelVisible] = useState(false);
 
+  // Tunnel Panel State
+  const [tunnelPanelVisible, setTunnelPanelVisible] = useState(false);
   const [tunnel, setTunnel] = useState(null);
-  const [tunnelLoading, setTunnelLoading] = useState(false);
 
   // Load drives or folder contents based on path parameter
   const loadPath = async (path = null) => {
     setLoading(true);
     try {
-      const url = path 
+      const url = path
         ? `${serverUrl}/api/files?path=${encodeURIComponent(path)}`
         : `${serverUrl}/api/files`;
 
@@ -45,7 +53,7 @@ export default function BrowserScreen({ serverUrl, token, onLogout, onRemoteUrl 
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await response.json();
-      
+
       if (!response.ok) {
         throw new Error(data.error || 'Failed to load content');
       }
@@ -58,7 +66,6 @@ export default function BrowserScreen({ serverUrl, token, onLogout, onRemoteUrl 
       }
     } catch (err) {
       Alert.alert('Connection Error', err.message || 'Could not communicate with NAS server.');
-      // Fallback: If opening subfolder fails, pop history
       if (path !== null && history.length > 0) {
         handleBack();
       }
@@ -80,40 +87,7 @@ export default function BrowserScreen({ serverUrl, token, onLogout, onRemoteUrl 
       if (response.ok) {
         setTunnel(await response.json());
       }
-    } catch {
-      // Drive browsing remains available even when remote access is unavailable.
-    }
-  };
-
-  const handleTunnelToggle = async () => {
-    const shouldStop = tunnel?.status === 'running';
-    setTunnelLoading(true);
-
-    try {
-      const response = await fetch(`${serverUrl}/api/tunnel/${shouldStop ? 'stop' : 'start'}`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'Unable to update remote access');
-      }
-
-      if (shouldStop) {
-        setTunnel({ status: 'stopped', url: null, error: null });
-        await onRemoteUrl?.(null);
-        Alert.alert('Remote Access Stopped', 'The temporary tunnel is no longer available.');
-      } else {
-        setTunnel({ status: 'running', url: data.url, error: null });
-        await onRemoteUrl?.(data.url);
-        Alert.alert('Remote Access Ready', `Use this URL when away from home:\n${data.url}`);
-      }
-    } catch (err) {
-      Alert.alert('Remote Access Error', err.message || 'Could not update remote access.');
-      await loadTunnelStatus();
-    } finally {
-      setTunnelLoading(false);
-    }
+    } catch {}
   };
 
   const handleDriveClick = (drivePath) => {
@@ -139,20 +113,18 @@ export default function BrowserScreen({ serverUrl, token, onLogout, onRemoteUrl 
   const handleBack = () => {
     if (history.length > 1) {
       const newHistory = [...history];
-      newHistory.pop(); // Remove current path
+      newHistory.pop();
       const prevPath = newHistory[newHistory.length - 1];
       setHistory(newHistory);
       setCurrentPath(prevPath);
       loadPath(prevPath);
     } else {
-      // Return to Drives dashboard
       setHistory([]);
       setCurrentPath(null);
       loadPath(null);
     }
   };
 
-  // Helper to format bytes to dynamic readables
   const formatBytes = (bytes) => {
     if (!bytes || bytes === 0) return '0 Bytes';
     const k = 1024;
@@ -161,10 +133,8 @@ export default function BrowserScreen({ serverUrl, token, onLogout, onRemoteUrl 
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   };
 
-  // Icon selector based on file extensions
   const getFileIcon = (item) => {
     if (item.isDirectory) return '📁';
-    
     const ext = (item.ext || '').toLowerCase();
     const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'];
     const videoExtensions = ['.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv'];
@@ -177,8 +147,7 @@ export default function BrowserScreen({ serverUrl, token, onLogout, onRemoteUrl 
     if (audioExtensions.includes(ext)) return '🎵';
     if (docExtensions.includes(ext)) return '📄';
     if (zipExtensions.includes(ext)) return '📦';
-    
-    return '📄'; // Default File Icon
+    return '📄';
   };
 
   const renderDriveItem = ({ item }) => {
@@ -188,8 +157,8 @@ export default function BrowserScreen({ serverUrl, token, onLogout, onRemoteUrl 
     const usedPercent = totalSize > 0 ? (usedSpace / totalSize) * 100 : 0;
 
     return (
-      <TouchableOpacity 
-        style={styles.driveCard} 
+      <TouchableOpacity
+        style={styles.driveCard}
         onPress={() => handleDriveClick(item.path)}
       >
         <View style={styles.cardHeader}>
@@ -226,8 +195,8 @@ export default function BrowserScreen({ serverUrl, token, onLogout, onRemoteUrl 
     });
 
     return (
-      <TouchableOpacity 
-        style={styles.fileItem} 
+      <TouchableOpacity
+        style={styles.fileItem}
         onPress={() => handleItemClick(item)}
       >
         <Text style={styles.fileIcon}>{getFileIcon(item)}</Text>
@@ -263,98 +232,146 @@ export default function BrowserScreen({ serverUrl, token, onLogout, onRemoteUrl 
         drives={drives}
         onClose={() => {
           setBackupPanelVisible(false);
-          loadPath(null); // Reload drives to refresh storage size
+          loadPath(null);
         }}
       />
     );
   }
 
+  if (tunnelPanelVisible) {
+    return (
+      <TunnelPanel
+        serverUrl={serverUrl}
+        token={token}
+        onClose={() => setTunnelPanelVisible(false)}
+      />
+    );
+  }
+
+  // Handle Module Navigation from Control Panel
+  const handleControlPanelNavigate = (moduleId) => {
+    if (moduleId === 'tunnel') {
+      setTunnelPanelVisible(true);
+    } else if (moduleId === 'files') {
+      setActiveTab('files');
+    } else if (moduleId === 'users' || moduleId === 'security') {
+      Alert.alert('Security Info', `Server Passcode Protected.\nHost: ${serverUrl}`);
+    } else {
+      Alert.alert('System Module', `Module "${moduleId.toUpperCase()}" active and healthy on NAS server.`);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container}>
-      {/* 1. Header Navigation Bar */}
-      <View style={styles.header}>
-        <View style={styles.headerTitleContainer}>
-          {currentPath ? (
-            <TouchableOpacity style={styles.backButton} onPress={handleBack}>
-              <Text style={styles.backButtonText}>‹ Back</Text>
-            </TouchableOpacity>
-          ) : (
-            <Text style={styles.title}>Personal NAS</Text>
-          )}
-          <Text style={styles.pathText} numberOfLines={1}>
-            {currentPath ? currentPath : `Connected to ${serverUrl.replace(/^https?:\/\//i, '')}`}
-          </Text>
-        </View>
-        
-        {!currentPath && (
-          <View style={{ flexDirection: 'row' }}>
-            <TouchableOpacity
-              style={[styles.logoutButton, { borderColor: '#4285F4', marginRight: 10 }]}
-              onPress={() => setBackupPanelVisible(true)}
-            >
-              <Text style={[styles.logoutText, { color: '#4285F4' }]}>Backup</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.logoutButton, { borderColor: tunnel?.status === 'running' ? '#00C853' : '#FFB300', marginRight: 10 }]}
-              onPress={handleTunnelToggle}
-              disabled={tunnelLoading}
-            >
-              <Text style={[styles.logoutText, { color: tunnel?.status === 'running' ? '#00C853' : '#FFB300' }]}>
-                {tunnelLoading ? 'Please wait' : tunnel?.status === 'running' ? 'Remote On' : 'Remote'}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.logoutButton} onPress={onLogout}>
-              <Text style={styles.logoutText}>Logout</Text>
-            </TouchableOpacity>
+      <View style={styles.mainView}>
+        {/* ── TAB CONTENT ─────────────────────────────────────────────────── */}
+        {activeTab === 'storage' ? (
+          <StorageScreen
+            serverUrl={serverUrl}
+            token={token}
+            onOpenAddStorage={() => setActiveTab('files')}
+          />
+        ) : activeTab === 'library' ? (
+          <LibraryScreen
+            serverUrl={serverUrl}
+            token={token}
+            onSelectMedia={(item) => setActiveViewFile(item)}
+          />
+        ) : activeTab === 'control' ? (
+          <ControlPanelScreen
+            onNavigateModule={handleControlPanelNavigate}
+          />
+        ) : (
+          /* FILES BROWSER TAB */
+          <View style={{ flex: 1 }}>
+            {/* Header Navigation Bar */}
+            <View style={styles.header}>
+              <View style={styles.headerTitleContainer}>
+                {currentPath ? (
+                  <TouchableOpacity style={styles.backButton} onPress={handleBack}>
+                    <Text style={styles.backButtonText}>‹ Back</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <Text style={styles.title}>Personal NAS</Text>
+                )}
+                <Text style={styles.pathText} numberOfLines={1}>
+                  {currentPath ? currentPath : `Connected to ${serverUrl.replace(/^https?:\/\//i, '')}`}
+                </Text>
+              </View>
+
+              {!currentPath && (
+                <View style={{ flexDirection: 'row' }}>
+                  <TouchableOpacity
+                    style={[styles.logoutButton, { borderColor: '#00C853', marginRight: 8 }]}
+                    onPress={() => setTunnelPanelVisible(true)}
+                  >
+                    <Text style={[styles.logoutText, { color: '#00C853' }]}>🌐</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.logoutButton, { borderColor: '#4285F4', marginRight: 8 }]}
+                    onPress={() => setBackupPanelVisible(true)}
+                  >
+                    <Text style={[styles.logoutText, { color: '#4285F4' }]}>Backup</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.logoutButton} onPress={onLogout}>
+                    <Text style={styles.logoutText}>Logout</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+
+            {loading ? (
+              <View style={styles.centerContainer}>
+                <ActivityIndicator size="large" color="#4285F4" />
+                <Text style={styles.loadingText}>Loading details...</Text>
+              </View>
+            ) : (
+              <View style={styles.content}>
+                {currentPath === null ? (
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.sectionTitle}>Available Drives</Text>
+                    <FlatList
+                      data={drives}
+                      keyExtractor={(item) => item.path}
+                      renderItem={renderDriveItem}
+                      contentContainerStyle={styles.listContainer}
+                      refreshing={loading}
+                      onRefresh={() => loadPath(null)}
+                      ListEmptyComponent={
+                        <Text style={styles.emptyText}>No storage drives connected.</Text>
+                      }
+                    />
+                  </View>
+                ) : (
+                  <View style={{ flex: 1 }}>
+                    <FlatList
+                      data={contents}
+                      keyExtractor={(item) => item.path}
+                      renderItem={renderFileItem}
+                      contentContainerStyle={styles.listContainer}
+                      refreshing={loading}
+                      onRefresh={() => loadPath(currentPath)}
+                      ListEmptyComponent={
+                        <View style={styles.centerContainer}>
+                          <Text style={styles.emptyText}>This folder is empty.</Text>
+                        </View>
+                      }
+                    />
+                  </View>
+                )}
+              </View>
+            )}
           </View>
         )}
       </View>
 
-      {/* 2. Loading State */}
-      {loading ? (
-        <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color="#4285F4" />
-          <Text style={styles.loadingText}>Loading details...</Text>
-        </View>
-      ) : (
-        /* 3. Render Dashboard vs Folder Browser */
-        <View style={styles.content}>
-          {currentPath === null ? (
-            <View style={{ flex: 1 }}>
-              <Text style={styles.sectionTitle}>Available Drives</Text>
-              <FlatList
-                data={drives}
-                keyExtractor={(item) => item.path}
-                renderItem={renderDriveItem}
-                contentContainerStyle={styles.listContainer}
-                refreshing={loading}
-                onRefresh={() => loadPath(null)}
-                ListEmptyComponent={
-                  <Text style={styles.emptyText}>No storage drives connected.</Text>
-                }
-              />
-            </View>
-          ) : (
-            <View style={{ flex: 1 }}>
-              <FlatList
-                data={contents}
-                keyExtractor={(item) => item.path}
-                renderItem={renderFileItem}
-                contentContainerStyle={styles.listContainer}
-                refreshing={loading}
-                onRefresh={() => loadPath(currentPath)}
-                ListEmptyComponent={
-                  <View style={styles.centerContainer}>
-                    <Text style={styles.emptyText}>This folder is empty.</Text>
-                  </View>
-                }
-              />
-            </View>
-          )}
-        </View>
-      )}
+      {/* ── PERSISTENT BOTTOM NAVIGATION ───────────────────────────────────── */}
+      <BottomNav
+        activeTab={activeTab}
+        onTabChange={(tabKey) => setActiveTab(tabKey)}
+      />
 
-      {/* 4. File Preview Modal Drawer */}
+      {/* File Detail Modal Drawer */}
       {selectedFile && (
         <Modal
           animationType="slide"
@@ -366,7 +383,7 @@ export default function BrowserScreen({ serverUrl, token, onLogout, onRemoteUrl 
             <View style={styles.modalContent}>
               <Text style={styles.modalIcon}>{getFileIcon(selectedFile)}</Text>
               <Text style={styles.modalFileName}>{selectedFile.name}</Text>
-              
+
               <View style={styles.modalDetailsContainer}>
                 <View style={styles.modalDetailRow}>
                   <Text style={styles.modalDetailLabel}>Size</Text>
@@ -390,7 +407,7 @@ export default function BrowserScreen({ serverUrl, token, onLogout, onRemoteUrl 
                 </View>
               </View>
 
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.modalActionBtn}
                 onPress={() => {
                   setModalVisible(false);
@@ -400,7 +417,7 @@ export default function BrowserScreen({ serverUrl, token, onLogout, onRemoteUrl 
                 <Text style={styles.modalActionBtnText}>Open File</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.modalCloseBtn}
                 onPress={() => setModalVisible(false)}
               >
@@ -419,51 +436,54 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#121212',
   },
+  mainView: {
+    flex: 1,
+    backgroundColor: '#F5F6F8',
+  },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingVertical: 15,
+    backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
-    borderColor: '#222',
+    borderColor: '#E5E7EB',
   },
   headerTitleContainer: {
     flex: 1,
   },
   title: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: 'bold',
-    color: '#fff',
+    color: '#111827',
   },
   pathText: {
     fontSize: 12,
-    color: '#888',
-    marginTop: 4,
+    color: '#6B7280',
+    marginTop: 2,
   },
   backButton: {
     alignSelf: 'flex-start',
-    backgroundColor: '#1e1e1e',
+    backgroundColor: '#F3F4F6',
     paddingVertical: 4,
     paddingHorizontal: 10,
     borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#333',
   },
   backButtonText: {
-    color: '#4285F4',
+    color: '#1A73E8',
     fontWeight: 'bold',
     fontSize: 14,
   },
   logoutButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: '#e53935',
+    borderColor: '#EF4444',
   },
   logoutText: {
-    color: '#e53935',
+    color: '#EF4444',
     fontWeight: 'bold',
     fontSize: 12,
   },
@@ -474,33 +494,36 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   loadingText: {
-    color: '#aaa',
+    color: '#6B7280',
     marginTop: 10,
     fontSize: 14,
   },
   content: {
     flex: 1,
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     paddingTop: 15,
   },
   sectionTitle: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#888',
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#6B7280',
     textTransform: 'uppercase',
     letterSpacing: 1,
-    marginBottom: 15,
+    marginBottom: 12,
   },
   listContainer: {
     paddingBottom: 20,
   },
   driveCard: {
-    backgroundColor: '#1e1e1e',
+    backgroundColor: '#FFFFFF',
     borderRadius: 12,
     padding: 16,
-    marginBottom: 15,
-    borderWidth: 1,
-    borderColor: '#2d2d2d',
+    marginBottom: 12,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -515,18 +538,18 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   driveName: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
-    color: '#fff',
+    color: '#111827',
   },
   driveMeta: {
     fontSize: 12,
-    color: '#aaa',
+    color: '#6B7280',
     marginTop: 2,
   },
   progressBarBg: {
     height: 8,
-    backgroundColor: '#2d2d2d',
+    backgroundColor: '#E5E7EB',
     borderRadius: 4,
     width: '100%',
     overflow: 'hidden',
@@ -534,7 +557,7 @@ const styles = StyleSheet.create({
   },
   progressBarFill: {
     height: '100%',
-    backgroundColor: '#4285F4',
+    backgroundColor: '#1A73E8',
     borderRadius: 4,
   },
   cardFooter: {
@@ -542,11 +565,12 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   spaceText: {
-    color: '#aaa',
+    color: '#6B7280',
     fontSize: 12,
+    fontWeight: '500',
   },
   emptyText: {
-    color: '#666',
+    color: '#9CA3AF',
     fontSize: 14,
     textAlign: 'center',
     marginTop: 50,
@@ -554,9 +578,10 @@ const styles = StyleSheet.create({
   fileItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 4,
     borderBottomWidth: 1,
-    borderColor: '#1e1e1e',
+    borderColor: '#E5E7EB',
   },
   fileIcon: {
     fontSize: 24,
@@ -566,17 +591,17 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   fileName: {
-    color: '#fff',
-    fontSize: 16,
+    color: '#111827',
+    fontSize: 15,
     fontWeight: '500',
   },
   fileMeta: {
-    color: '#888',
+    color: '#6B7280',
     fontSize: 12,
-    marginTop: 4,
+    marginTop: 2,
   },
   arrowIcon: {
-    color: '#444',
+    color: '#9CA3AF',
     fontSize: 22,
     marginLeft: 10,
   },
@@ -587,76 +612,74 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: '#1e1e1e',
+    backgroundColor: '#FFFFFF',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    padding: 30,
+    padding: 24,
     alignItems: 'center',
-    borderTopWidth: 1,
-    borderColor: '#2d2d2d',
   },
   modalIcon: {
-    fontSize: 64,
-    marginBottom: 15,
+    fontSize: 54,
+    marginBottom: 12,
   },
   modalFileName: {
-    color: '#fff',
-    fontSize: 20,
+    color: '#111827',
+    fontSize: 18,
     fontWeight: 'bold',
     textAlign: 'center',
-    marginBottom: 20,
+    marginBottom: 16,
   },
   modalDetailsContainer: {
     width: '100%',
-    backgroundColor: '#121212',
+    backgroundColor: '#F5F6F8',
     borderRadius: 10,
-    padding: 15,
-    marginBottom: 25,
+    padding: 14,
+    marginBottom: 20,
   },
   modalDetailRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     paddingVertical: 8,
     borderBottomWidth: 1,
-    borderColor: '#1e1e1e',
+    borderColor: '#E5E7EB',
   },
   modalDetailLabel: {
-    color: '#666',
-    fontSize: 14,
+    color: '#6B7280',
+    fontSize: 13,
     fontWeight: '500',
   },
   modalDetailValue: {
-    color: '#ccc',
-    fontSize: 14,
-    fontWeight: 'bold',
+    color: '#111827',
+    fontSize: 13,
+    fontWeight: '600',
     textAlign: 'right',
     maxWidth: '70%',
   },
   modalActionBtn: {
     width: '100%',
-    backgroundColor: '#4285F4',
-    borderRadius: 8,
+    backgroundColor: '#1A73E8',
+    borderRadius: 10,
     padding: 14,
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 10,
   },
   modalActionBtnText: {
-    color: '#fff',
+    color: '#FFFFFF',
     fontSize: 16,
     fontWeight: 'bold',
   },
   modalCloseBtn: {
     width: '100%',
     backgroundColor: 'transparent',
-    borderRadius: 8,
-    padding: 14,
+    borderRadius: 10,
+    padding: 12,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: '#E5E7EB',
   },
   modalCloseBtnText: {
-    color: '#aaa',
-    fontSize: 16,
-    fontWeight: 'bold',
+    color: '#6B7280',
+    fontSize: 15,
+    fontWeight: '600',
   }
 });

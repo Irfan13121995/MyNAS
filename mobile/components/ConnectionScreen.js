@@ -1,452 +1,674 @@
 import React, { useState } from 'react';
 import {
-  StyleSheet,
-  Text,
-  View,
-  TextInput,
-  TouchableOpacity,
-  ActivityIndicator,
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
+  StyleSheet, View, Text, TextInput, TouchableOpacity,
+  ActivityIndicator, Alert, SafeAreaView, KeyboardAvoidingView,
+  Platform, Modal, ScrollView, StatusBar
 } from 'react-native';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 
 export default function ConnectionScreen({ onConnect }) {
-  const [passcode, setPasscode] = useState('');
-  const [manualUrl, setManualUrl] = useState('');
-  const [scanning, setScanning] = useState(false);
-  const [scanProgress, setScanProgress] = useState('');
-  const [connecting, setConnecting] = useState(false);
+  const [authMode, setAuthMode] = useState('passcode'); // 'passcode' | 'login' | 'register'
 
-  // Active tab: 'local' | 'remote'
-  const [activeTab, setActiveTab] = useState('local');
+  // Server location
+  const [ipAddress, setIpAddress] = useState('192.168.1.100');
+  const [port, setPort] = useState('3001');
 
-  // Helper to test if a specific IP hosts our NAS server
-  const checkIp = async (ip, port, controller) => {
-    try {
-      const response = await fetch(`http://${ip}:${port}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ passcode: 'test_ping' }),
-        signal: controller.signal
-      });
-      if (response.status === 401 || response.status === 400) {
-        return `http://${ip}:${port}`;
-      }
-    } catch (e) {
-      // Fail silently for non-responsive IPs
+  // Credentials
+  const [passcode, setPasscode] = useState('881612');
+  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+
+  const [loading, setLoading] = useState(false);
+
+  // QR Modal & Camera state
+  const [qrModalVisible, setQrModalVisible] = useState(false);
+  const [scannedUrl, setScannedUrl] = useState('');
+  const [scanned, setScanned] = useState(false);
+  const [permission, requestPermission] = useCameraPermissions();
+
+  const getCleanUrl = (rawUrl = null) => {
+    let cleanUrl = (rawUrl || ipAddress).trim();
+    if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
+      cleanUrl = `http://${cleanUrl}`;
     }
-    return null;
+    if (!cleanUrl.includes('trycloudflare.com') && !cleanUrl.includes(':')) {
+      cleanUrl = `${cleanUrl}:${port || '3001'}`;
+    }
+    return cleanUrl;
   };
 
-  // Perform parallel scanning of local subnets
-  const handleAutoScan = async () => {
-    setScanning(true);
-    setScanProgress('Starting network scan...');
-    
-    const subnets = ['192.168.1', '192.168.0', '192.168.68'];
-    const port = '3000';
-    let foundUrl = null;
+  const openQrScanner = async () => {
+    setScanned(false);
+    setQrModalVisible(true);
+    if (!permission?.granted) {
+      await requestPermission();
+    }
+  };
+
+  const handleBarCodeScanned = ({ data }) => {
+    if (scanned || !data) return;
+    setScanned(true);
+
+    let targetUrl = data.trim();
+    let targetPasscode = passcode;
 
     try {
-      for (const subnet of subnets) {
-        if (foundUrl) break;
-        setScanProgress(`Scanning ${subnet}.X subnet...`);
-        
-        const batchSize = 50;
-        for (let base = 1; base <= 255; base += batchSize) {
-          if (foundUrl) break;
-          
-          const controllers = [];
-          const promises = [];
-          
-          const limit = Math.min(base + batchSize - 1, 255);
-          for (let i = base; i <= limit; i++) {
-            const ip = `${subnet}.${i}`;
-            const controller = new AbortController();
-            controllers.push(controller);
-            
-            const timeoutId = setTimeout(() => controller.abort(), 350);
-            
-            promises.push(
-              checkIp(ip, port, controller).then((res) => {
-                clearTimeout(timeoutId);
-                if (res) foundUrl = res;
-              })
-            );
-          }
-          
-          await Promise.all(promises);
-          controllers.forEach(c => c.abort());
+      if (targetUrl.startsWith('{') && targetUrl.endsWith('}')) {
+        const parsed = JSON.parse(targetUrl);
+        if (parsed.url) targetUrl = parsed.url;
+        if (parsed.passcode) {
+          targetPasscode = parsed.passcode;
+          setPasscode(parsed.passcode);
         }
       }
+    } catch (e) {}
 
-      if (foundUrl) {
-        setScanProgress('NAS Server found!');
-        setManualUrl(foundUrl);
-        Alert.alert('NAS Server Found!', `Located server at ${foundUrl}. Enter your passcode to pair.`);
-      } else {
-        Alert.alert(
-          'No Server Found',
-          'Could not find NAS server automatically. Ensure it is running on the same Wi-Fi, or use Remote Access.'
-        );
-      }
-    } catch (error) {
-      Alert.alert('Scan Error', 'Something went wrong while scanning the network.');
-    } finally {
-      setScanning(false);
-      setScanProgress('');
-    }
+    setScannedUrl(targetUrl);
+    setIpAddress(targetUrl);
+    setQrModalVisible(false);
+    
+    handleConnect(targetUrl, targetPasscode);
   };
 
-  const handleConnect = async () => {
-    if (!manualUrl) {
-      Alert.alert('Error', 'Please enter the server URL.');
-      return;
-    }
-    if (!passcode) {
-      Alert.alert('Error', 'Please enter your passcode.');
+  const handleConnect = async (customUrl = null, customPasscode = null) => {
+    const activePasscode = customPasscode || passcode;
+
+    if (!activePasscode) {
+      Alert.alert('Error', 'Please enter your NAS Passcode');
       return;
     }
 
-    let formattedUrl = manualUrl.trim();
-    if (!/^https?:\/\//i.test(formattedUrl)) {
-      formattedUrl = (activeTab === 'remote' ? 'https://' : 'http://') + formattedUrl;
-    }
-    formattedUrl = formattedUrl.replace(/\/$/, '');
+    setLoading(true);
+    const cleanUrl = getCleanUrl(customUrl);
 
-    setConnecting(true);
     try {
-      const response = await fetch(`${formattedUrl}/api/auth/login`, {
+      const res = await fetch(`${cleanUrl}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ passcode }),
+        body: JSON.stringify({ passcode: activePasscode })
       });
 
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to authenticate');
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Authentication failed');
       }
 
-      onConnect(formattedUrl, data.token);
+      onConnect(cleanUrl, data.token);
     } catch (err) {
-      Alert.alert('Connection Failed', err.message || 'Could not connect to the server.');
+      Alert.alert('Connection Failed', err.message || 'Could not connect to Personal NAS server.');
     } finally {
-      setConnecting(false);
+      setLoading(false);
     }
   };
 
-  return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}
-    >
-      <ScrollView contentContainerStyle={styles.scrollContainer}>
-        <View style={styles.card}>
-          <Text style={styles.logo}>🔒</Text>
-          <Text style={styles.title}>Personal NAS</Text>
-          <Text style={styles.subtitle}>Secure File Access Anywhere</Text>
+  const handleUserLogin = async () => {
+    if (!username.trim() || !password) {
+      Alert.alert('Error', 'Please enter your username and password');
+      return;
+    }
 
-          {/* Tab Switcher */}
-          <View style={styles.tabBar}>
-            <TouchableOpacity
-              style={[styles.tab, activeTab === 'local' && styles.tabActive]}
-              onPress={() => { setActiveTab('local'); setManualUrl(''); }}
-              disabled={scanning || connecting}
-            >
-              <Text style={[styles.tabText, activeTab === 'local' && styles.tabTextActive]}>
-                📶 Local WiFi
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.tab, activeTab === 'remote' && styles.tabActive]}
-              onPress={() => { setActiveTab('remote'); setManualUrl(''); }}
-              disabled={scanning || connecting}
-            >
-              <Text style={[styles.tabText, activeTab === 'remote' && styles.tabTextActive]}>
-                🌐 Remote Access
-              </Text>
-            </TouchableOpacity>
+    setLoading(true);
+    const cleanUrl = getCleanUrl();
+
+    try {
+      const res = await fetch(`${cleanUrl}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username.trim(), password })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.requireEmailVerification) {
+          Alert.alert(
+            'Email Verification Needed',
+            data.error || 'Please verify your email before logging in.'
+          );
+          return;
+        }
+        throw new Error(data.error || 'Login failed');
+      }
+
+      onConnect(cleanUrl, data.token);
+    } catch (err) {
+      Alert.alert('Login Failed', err.message || 'Unable to log in');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRegister = async () => {
+    if (!username.trim() || username.trim().length < 3) {
+      Alert.alert('Validation Error', 'Username must be at least 3 characters');
+      return;
+    }
+    if (email && (!email.includes('@') || !email.includes('.'))) {
+      Alert.alert('Validation Error', 'Please enter a valid email address');
+      return;
+    }
+    if (!password || password.length < 6) {
+      Alert.alert('Validation Error', 'Password must be at least 6 characters');
+      return;
+    }
+
+    setLoading(true);
+    const cleanUrl = getCleanUrl();
+
+    try {
+      const res = await fetch(`${cleanUrl}/api/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: username.trim(),
+          email: email.trim(),
+          password
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Registration failed');
+      }
+
+      if (data.requireEmailVerification) {
+        Alert.alert(
+          'Account Created! ✉️',
+          data.message + (data.devLink ? `\n\n[Dev Link]: ${data.devLink}` : ''),
+          [{ text: 'OK', onPress: () => setAuthMode('login') }]
+        );
+      } else {
+        Alert.alert('Success 🎉', 'Account created successfully! Logging you in...');
+        onConnect(cleanUrl, data.token);
+      }
+    } catch (err) {
+      Alert.alert('Registration Failed', err.message || 'Could not create account');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleQrPairSubmit = () => {
+    if (!scannedUrl) {
+      Alert.alert('QR Scanner', 'Please paste or scan a valid Tunnel URL');
+      return;
+    }
+    setIpAddress(scannedUrl.trim());
+    setQrModalVisible(false);
+    handleConnect(scannedUrl.trim());
+  };
+
+  const statusBarPadding = Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 8 : 16;
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.inner}>
+        <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: statusBarPadding }]} showsVerticalScrollIndicator={false}>
+          {/* Logo / Header */}
+          <View style={styles.logoBox}>
+            <Text style={styles.logoIcon}>🗄️</Text>
+            <Text style={styles.title}>Personal NAS</Text>
+            <Text style={styles.subtitle}>Connect your Android device to your Windows NAS</Text>
           </View>
 
-          {/* Local WiFi Tab */}
-          {activeTab === 'local' && (
-            <View style={styles.section}>
-              <Text style={styles.description}>
-                Make sure your computer and phone are connected to the same Wi-Fi network.
-              </Text>
-              
-              {scanning ? (
-                <View style={styles.loaderContainer}>
-                  <ActivityIndicator size="large" color="#4285F4" />
-                  <Text style={styles.loaderText}>{scanProgress}</Text>
-                </View>
-              ) : (
-                <TouchableOpacity style={styles.primaryButton} onPress={handleAutoScan}>
-                  <Text style={styles.buttonText}>Auto-Scan Network</Text>
-                </TouchableOpacity>
-              )}
+          {/* Card Form */}
+          <View style={styles.card}>
+            {/* Quick QR Scanner Button */}
+            <TouchableOpacity
+              style={styles.qrScanBtn}
+              onPress={openQrScanner}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.qrScanBtnText}>📷 Scan QR Code to Login</Text>
+            </TouchableOpacity>
 
-              {/* Show manual input if a server was found, or always show a manual option */}
-              {manualUrl ? (
-                <View style={styles.manualInputSection}>
-                  <Text style={styles.label}>Server Found</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={manualUrl}
-                    onChangeText={setManualUrl}
-                    autoCapitalize="none"
-                    disabled={connecting}
+            {/* Auth Mode Tabs */}
+            <View style={styles.tabContainer}>
+              <TouchableOpacity
+                style={[styles.tabBtn, authMode === 'passcode' && styles.tabBtnActive]}
+                onPress={() => setAuthMode('passcode')}
+              >
+                <Text style={[styles.tabText, authMode === 'passcode' && styles.tabTextActive]}>Passcode</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.tabBtn, authMode === 'login' && styles.tabBtnActive]}
+                onPress={() => setAuthMode('login')}
+              >
+                <Text style={[styles.tabText, authMode === 'login' && styles.tabTextActive]}>User Login</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.tabBtn, authMode === 'register' && styles.tabBtnActive]}
+                onPress={() => setAuthMode('register')}
+              >
+                <Text style={[styles.tabText, authMode === 'register' && styles.tabTextActive]}>Register</Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.label}>NAS Server IP or Tunnel URL</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="e.g. 192.168.1.100 or tunnel.trycloudflare.com"
+              placeholderTextColor="#64748B"
+              value={ipAddress}
+              onChangeText={setIpAddress}
+              autoCapitalize="none"
+            />
+
+            {!ipAddress.includes('trycloudflare.com') && (
+              <>
+                <Text style={styles.label}>Server Port</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="3001"
+                  placeholderTextColor="#64748B"
+                  value={port}
+                  onChangeText={setPort}
+                  keyboardType="numeric"
+                />
+              </>
+            )}
+
+            {/* PASSCODE MODE */}
+            {authMode === 'passcode' && (
+              <>
+                <Text style={styles.label}>System Passcode</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter passcode"
+                  placeholderTextColor="#64748B"
+                  value={passcode}
+                  onChangeText={setPasscode}
+                  secureTextEntry
+                />
+
+                <TouchableOpacity style={styles.connectBtn} onPress={() => handleConnect()} disabled={loading} activeOpacity={0.85}>
+                  {loading ? <ActivityIndicator color="#0F172A" /> : <Text style={styles.connectBtnText}>Connect via Passcode</Text>}
+                </TouchableOpacity>
+              </>
+            )}
+
+            {/* USER LOGIN MODE */}
+            {authMode === 'login' && (
+              <>
+                <Text style={styles.label}>Username or Email</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Username or email"
+                  placeholderTextColor="#64748B"
+                  value={username}
+                  onChangeText={setUsername}
+                  autoCapitalize="none"
+                />
+
+                <Text style={styles.label}>Password</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Password"
+                  placeholderTextColor="#64748B"
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry
+                />
+
+                <TouchableOpacity style={styles.connectBtn} onPress={handleUserLogin} disabled={loading} activeOpacity={0.85}>
+                  {loading ? <ActivityIndicator color="#0F172A" /> : <Text style={styles.connectBtnText}>Sign In</Text>}
+                </TouchableOpacity>
+              </>
+            )}
+
+            {/* REGISTER MODE */}
+            {authMode === 'register' && (
+              <>
+                <Text style={styles.label}>Choose Username</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Username"
+                  placeholderTextColor="#64748B"
+                  value={username}
+                  onChangeText={setUsername}
+                  autoCapitalize="none"
+                />
+
+                <Text style={styles.label}>Email Address (For Verification)</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="name@example.com"
+                  placeholderTextColor="#64748B"
+                  value={email}
+                  onChangeText={setEmail}
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                />
+
+                <Text style={styles.label}>Password (Min 6 chars)</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Password"
+                  placeholderTextColor="#64748B"
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry
+                />
+
+                <TouchableOpacity style={styles.connectBtn} onPress={handleRegister} disabled={loading} activeOpacity={0.85}>
+                  {loading ? <ActivityIndicator color="#0F172A" /> : <Text style={styles.connectBtnText}>Create Account</Text>}
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+
+      {/* QR Code Scanner / Pairing Modal */}
+      <Modal visible={qrModalVisible} animationType="slide" transparent={true} onRequestClose={() => setQrModalVisible(false)}>
+        <View style={styles.modalBg}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>📷 Scan Pairing QR Code</Text>
+              <TouchableOpacity onPress={() => setQrModalVisible(false)}>
+                <Text style={styles.modalCloseText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.modalBody}>
+              {permission?.granted ? (
+                <View style={styles.cameraContainer}>
+                  <CameraView
+                    style={styles.camera}
+                    facing="back"
+                    barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+                    onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
                   />
-                  <Text style={styles.label}>Passcode</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Enter 6-digit passcode"
-                    placeholderTextColor="#666"
-                    value={passcode}
-                    onChangeText={setPasscode}
-                    keyboardType="number-pad"
-                    secureTextEntry
-                    disabled={connecting}
-                  />
-                  {connecting ? (
-                    <ActivityIndicator size="large" color="#4285F4" style={styles.connectingLoader} />
-                  ) : (
-                    <TouchableOpacity style={styles.primaryButton} onPress={handleConnect}>
-                      <Text style={styles.buttonText}>Pair & Connect</Text>
+                  <View style={styles.cameraOverlay} pointerEvents="none">
+                    <View style={styles.scanTarget} />
+                    <Text style={styles.cameraHint}>Point camera at web dashboard QR code</Text>
+                  </View>
+                  {scanned && (
+                    <TouchableOpacity
+                      style={styles.scanAgainBtn}
+                      onPress={() => setScanned(false)}
+                    >
+                      <Text style={styles.scanAgainText}>🔄 Scan Again</Text>
                     </TouchableOpacity>
                   )}
                 </View>
               ) : (
-                <TouchableOpacity
-                  style={styles.linkButton}
-                  onPress={() => setManualUrl('http://')}
-                  disabled={scanning}
-                >
-                  <Text style={styles.linkText}>Enter IP Manually</Text>
-                </TouchableOpacity>
+                <View style={styles.permissionBox}>
+                  <Text style={styles.permissionTitle}>Camera Permission Required</Text>
+                  <Text style={styles.permissionSub}>We need camera access to scan the pairing QR code on your NAS Web Dashboard.</Text>
+                  <TouchableOpacity style={styles.permissionBtn} onPress={requestPermission}>
+                    <Text style={styles.permissionBtnText}>Enable Camera</Text>
+                  </TouchableOpacity>
+                </View>
               )}
-            </View>
-          )}
 
-          {/* Remote Access Tab */}
-          {activeTab === 'remote' && (
-            <View style={styles.section}>
-              <Text style={styles.description}>
-                Connect to your NAS from anywhere on the internet using a Cloudflare Tunnel URL, a custom domain, or a public IP address.
-              </Text>
-
-              <View style={styles.remoteHint}>
-                <Text style={styles.remoteHintTitle}>💡 How to enable remote access</Text>
-                <Text style={styles.remoteHintText}>
-                  On your Windows NAS server, open a browser to{'\n'}
-                  http://localhost:3000 and activate the{'\n'}
-                  Cloudflare Tunnel from the dashboard.{'\n\n'}
-                  A free *.trycloudflare.com URL will be{'\n'}
-                  generated — paste it below.
-                </Text>
-              </View>
-
-              <Text style={styles.label}>Remote Server URL</Text>
+              <Text style={[styles.label, { marginTop: 16 }]}>Or Paste QR Link Manually</Text>
               <TextInput
                 style={styles.input}
-                placeholder="e.g. https://your-tunnel.trycloudflare.com"
-                placeholderTextColor="#666"
-                value={manualUrl}
-                onChangeText={setManualUrl}
+                placeholder="https://...trycloudflare.com"
+                placeholderTextColor="#64748B"
+                value={scannedUrl}
+                onChangeText={setScannedUrl}
                 autoCapitalize="none"
-                autoCorrect={false}
-                disabled={connecting}
               />
 
-              <Text style={styles.label}>Passcode</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter 6-digit passcode"
-                placeholderTextColor="#666"
-                value={passcode}
-                onChangeText={setPasscode}
-                keyboardType="number-pad"
-                secureTextEntry
-                disabled={connecting}
-              />
-
-              {connecting ? (
-                <ActivityIndicator size="large" color="#4285F4" style={styles.connectingLoader} />
-              ) : (
-                <TouchableOpacity style={styles.remoteButton} onPress={handleConnect}>
-                  <Text style={styles.buttonText}>Connect Remotely</Text>
-                </TouchableOpacity>
-              )}
+              <TouchableOpacity style={styles.qrPairBtn} onPress={handleQrPairSubmit} activeOpacity={0.85}>
+                <Text style={styles.qrPairBtnText}>⚡ Pair & Login Now</Text>
+              </TouchableOpacity>
             </View>
-          )}
+          </View>
         </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+      </Modal>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#121212',
+    backgroundColor: '#0B0F17',
   },
-  scrollContainer: {
-    flexGrow: 1,
+  inner: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingHorizontal: 24,
+    paddingBottom: 40,
     justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
+    minHeight: '100%',
   },
-  card: {
-    width: '100%',
-    maxWidth: 400,
-    backgroundColor: '#1e1e1e',
-    borderRadius: 16,
-    padding: 30,
+  logoBox: {
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    elevation: 8,
+    marginBottom: 24,
   },
-  logo: {
-    fontSize: 48,
-    marginBottom: 10,
+  logoIcon: {
+    fontSize: 52,
+    marginBottom: 8,
   },
   title: {
     fontSize: 28,
-    fontWeight: 'bold',
-    color: '#ffffff',
-    letterSpacing: 0.5,
+    fontWeight: '800',
+    color: '#F8FAFC',
+    letterSpacing: -0.5,
   },
   subtitle: {
-    fontSize: 14,
-    color: '#888',
-    marginBottom: 20,
+    fontSize: 13,
+    color: '#94A3B8',
+    marginTop: 4,
+    textAlign: 'center',
   },
-  tabBar: {
-    flexDirection: 'row',
-    width: '100%',
-    backgroundColor: '#121212',
-    borderRadius: 8,
-    padding: 4,
-    marginBottom: 25,
+  card: {
+    backgroundColor: 'rgba(30, 41, 59, 0.75)',
+    borderRadius: 24,
+    padding: 22,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
   },
-  tab: {
-    flex: 1,
-    paddingVertical: 10,
+  qrScanBtn: {
+    backgroundColor: 'rgba(0, 188, 212, 0.18)',
+    borderWidth: 1.5,
+    borderColor: '#00BCD4',
+    borderRadius: 16,
+    paddingVertical: 14,
     alignItems: 'center',
-    borderRadius: 6,
+    marginBottom: 18,
   },
-  tabActive: {
-    backgroundColor: '#2d2d2d',
+  qrScanBtnText: {
+    color: '#22D3EE',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(15, 23, 42, 0.8)',
+    borderRadius: 14,
+    padding: 4,
+    marginBottom: 18,
+  },
+  tabBtn: {
+    flex: 1,
+    paddingVertical: 9,
+    alignItems: 'center',
+    borderRadius: 10,
+  },
+  tabBtnActive: {
+    backgroundColor: '#00BCD4',
+    elevation: 2,
   },
   tabText: {
-    color: '#666',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
+    color: '#94A3B8',
   },
   tabTextActive: {
-    color: '#fff',
-  },
-  section: {
-    width: '100%',
-  },
-  description: {
-    fontSize: 14,
-    color: '#aaa',
-    textAlign: 'center',
-    lineHeight: 20,
-    marginBottom: 20,
-  },
-  manualInputSection: {
-    marginTop: 20,
-    width: '100%',
+    color: '#0F172A',
+    fontWeight: '800',
   },
   label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#ccc',
-    marginBottom: 8,
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#94A3B8',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: 6,
+    marginTop: 10,
   },
   input: {
-    backgroundColor: '#2d2d2d',
-    color: '#fff',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    marginBottom: 20,
+    backgroundColor: 'rgba(15, 23, 42, 0.8)',
     borderWidth: 1,
-    borderColor: '#3d3d3d',
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 14,
+    color: '#F8FAFC',
   },
-  primaryButton: {
-    backgroundColor: '#4285F4',
-    borderRadius: 8,
-    padding: 14,
-    alignItems: 'center',
-    marginTop: 10,
-    shadowColor: '#4285F4',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 5,
-  },
-  remoteButton: {
-    backgroundColor: '#00C853',
-    borderRadius: 8,
-    padding: 14,
-    alignItems: 'center',
-    marginTop: 10,
-    shadowColor: '#00C853',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 5,
-  },
-  buttonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  linkButton: {
+  connectBtn: {
+    backgroundColor: '#00BCD4',
+    borderRadius: 16,
+    paddingVertical: 14,
     alignItems: 'center',
     marginTop: 20,
-    padding: 10,
+    elevation: 4,
   },
-  linkText: {
-    color: '#4285F4',
-    fontSize: 14,
-    fontWeight: '600',
+  connectBtnText: {
+    color: '#0F172A',
+    fontSize: 15,
+    fontWeight: '800',
   },
-  loaderContainer: {
-    marginVertical: 20,
+
+  // Modal
+  modalBg: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#0F172A',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingBottom: 28,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#F8FAFC',
+  },
+  modalCloseText: {
+    fontSize: 18,
+    color: '#94A3B8',
+  },
+  modalBody: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+  },
+  qrPairBtn: {
+    backgroundColor: '#00BCD4',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 16,
+  },
+  qrPairBtnText: {
+    color: '#0F172A',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  cameraContainer: {
+    height: 240,
+    borderRadius: 16,
+    overflow: 'hidden',
+    backgroundColor: '#000000',
+    marginBottom: 8,
+    position: 'relative',
+  },
+  camera: {
+    flex: 1,
+  },
+  cameraOverlay: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    justifyContent: 'center',
     alignItems: 'center',
   },
-  loaderText: {
-    color: '#aaa',
-    fontSize: 14,
-    marginTop: 10,
+  scanTarget: {
+    width: 160,
+    height: 160,
+    borderWidth: 2,
+    borderColor: '#00BCD4',
+    borderRadius: 16,
+    backgroundColor: 'transparent',
   },
-  connectingLoader: {
-    marginVertical: 20,
+  cameraHint: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 12,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
   },
-  remoteHint: {
-    backgroundColor: '#1a2332',
-    borderRadius: 10,
-    padding: 15,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: '#1e3a5f',
-  },
-  remoteHintTitle: {
-    color: '#64B5F6',
-    fontSize: 13,
-    fontWeight: 'bold',
+  permissionBox: {
+    backgroundColor: 'rgba(30, 41, 59, 0.8)',
+    borderRadius: 16,
+    padding: 20,
+    alignItems: 'center',
     marginBottom: 8,
   },
-  remoteHintText: {
-    color: '#90CAF9',
+  permissionTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#F8FAFC',
+    marginBottom: 6,
+  },
+  permissionSub: {
     fontSize: 12,
+    color: '#94A3B8',
+    textAlign: 'center',
+    marginBottom: 14,
     lineHeight: 18,
-  }
+  },
+  permissionBtn: {
+    backgroundColor: '#00BCD4',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  permissionBtnText: {
+    color: '#0F172A',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  scanAgainBtn: {
+    position: 'absolute',
+    bottom: 10,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  scanAgainText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
 });

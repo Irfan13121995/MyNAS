@@ -1,25 +1,29 @@
 const fs = require('fs').promises;
 const path = require('path');
 const { getDrives } = require('./driveService');
+const driveConfig = require('./driveConfigService');
+
+const MEDIA_EXTENSIONS = new Set([
+  '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg',
+  '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.webm', '.m4v'
+]);
 
 /**
  * Validates a path to prevent directory traversal and verify it resides on an active drive.
- * @param {string} targetPath The absolute path to validate.
- * @returns {Promise<string>} The resolved path if valid.
  */
 async function validatePath(targetPath) {
   if (!targetPath) {
     throw new Error('Path is required');
   }
 
-  // Normalize to absolute path
-  const resolvedPath = path.resolve(targetPath);
-  
-  // Retrieve list of active drives
+  let formatted = targetPath;
+  if (/^[a-zA-Z]:$/.test(formatted)) {
+    formatted += '\\';
+  }
+
+  const resolvedPath = path.resolve(formatted);
   const drives = await getDrives();
-  const driveLetters = drives.map(d => d.letter.toUpperCase()); // e.g., ["C:", "D:"]
-  
-  // Extract drive prefix (e.g., "C:")
+  const driveLetters = drives.map(d => d.letter.toUpperCase().replace(/[\/\\]+$/, ''));
   const targetDrive = resolvedPath.substring(0, 2).toUpperCase();
   
   if (!driveLetters.includes(targetDrive)) {
@@ -31,12 +35,9 @@ async function validatePath(targetPath) {
 
 /**
  * Lists contents of a directory.
- * @param {string} dirPath Normalized absolute path to list.
- * @returns {Promise<Array<{name: string, isDirectory: boolean, size: number, modifiedAt: Date, ext: string}>>}
  */
 async function listFiles(dirPath) {
   const validatedPath = await validatePath(dirPath);
-  
   const entries = await fs.readdir(validatedPath, { withFileTypes: true });
   
   const results = [];
@@ -52,12 +53,10 @@ async function listFiles(dirPath) {
         ext: entry.isDirectory() ? '' : path.extname(entry.name).toLowerCase()
       });
     } catch (err) {
-      // Silently skip files/folders with permission errors
       continue;
     }
   }
   
-  // Sort: directories first, then alphabetical by name
   return results.sort((a, b) => {
     if (a.isDirectory !== b.isDirectory) {
       return a.isDirectory ? -1 : 1;
@@ -66,7 +65,90 @@ async function listFiles(dirPath) {
   });
 }
 
+/**
+ * Recursively scans a directory for photos and videos.
+ */
+async function scanMediaDirectory(dirPath, driveLetter, mediaList = [], depth = 0) {
+  if (depth > 4 || mediaList.length >= 300) return mediaList;
+
+  try {
+    const entries = await fs.readdir(dirPath, { withFileTypes: true });
+
+    for (const entry of entries) {
+      if (mediaList.length >= 300) break;
+
+      // Skip system, hidden, cache, and heavy program folders
+      const lowerName = entry.name.toLowerCase();
+      if (entry.name.startsWith('.') || entry.name.startsWith('$') ||
+          lowerName === 'node_modules' || lowerName === 'appdata' ||
+          lowerName === 'windows' || lowerName === 'program files' ||
+          lowerName === 'program files (x86)' || lowerName === 'programdata' ||
+          lowerName === 'system volume information' || lowerName === 'recovery') {
+        continue;
+      }
+
+      const fullPath = path.join(dirPath, entry.name);
+
+      if (entry.isDirectory()) {
+        await scanMediaDirectory(fullPath, driveLetter, mediaList, depth + 1);
+      } else if (entry.isFile()) {
+        const ext = path.extname(entry.name).toLowerCase();
+        if (MEDIA_EXTENSIONS.has(ext)) {
+          try {
+            const stats = await fs.stat(fullPath);
+            const isVideo = ['.mp4','.mkv','.avi','.mov','.wmv','.webm','.m4v'].includes(ext);
+            const folderPath = path.dirname(fullPath);
+            mediaList.push({
+              name: entry.name,
+              path: fullPath,
+              folderPath: folderPath,
+              drive: driveLetter,
+              isDirectory: false,
+              isVideo,
+              size: stats.size,
+              modifiedAt: stats.mtime,
+              ext: ext.replace('.', '')
+            });
+          } catch (e) {}
+        }
+      }
+    }
+  } catch (err) {}
+
+  return mediaList;
+}
+
+/**
+ * Collects all media files across all or specific registered NAS drives.
+ */
+async function getMediaGallery(targetDrive = null) {
+  const allDrives = await getDrives();
+  const allowedPaths = driveConfig.getAllowedPaths();
+
+  let drivesToScan = allDrives;
+  if (allowedPaths !== null) {
+    drivesToScan = allDrives.filter(d =>
+      allowedPaths.includes(d.letter) || allowedPaths.includes(d.letter + '\\')
+    );
+  }
+
+  if (targetDrive && targetDrive !== 'ALL') {
+    const normalizedTarget = targetDrive.toUpperCase().replace(/[/\\]+$/, '');
+    drivesToScan = drivesToScan.filter(d => d.letter.toUpperCase().startsWith(normalizedTarget));
+  }
+
+  let allMedia = [];
+  for (const drive of drivesToScan) {
+    const driveMedia = await scanMediaDirectory(drive.letter + path.sep, drive.letter);
+    allMedia = allMedia.concat(driveMedia);
+  }
+
+  // Sort by modification date descending (newest first)
+  return allMedia.sort((a, b) => new Date(b.modifiedAt) - new Date(a.modifiedAt));
+}
+
 module.exports = {
   validatePath,
-  listFiles
+  listFiles,
+  getMediaGallery
 };

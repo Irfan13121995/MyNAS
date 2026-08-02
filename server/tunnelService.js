@@ -3,7 +3,8 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 
-const CLOUDFLARED_DIR = path.join(__dirname, 'cloudflared');
+const BASE_DIR = process.pkg ? path.dirname(process.execPath) : __dirname;
+const CLOUDFLARED_DIR = path.join(BASE_DIR, 'cloudflared');
 const CLOUDFLARED_EXE = path.join(CLOUDFLARED_DIR, 'cloudflared.exe');
 const TUNNEL_CONFIG_PATH = path.join(CLOUDFLARED_DIR, 'tunnel_state.json');
 
