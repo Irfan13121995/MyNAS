@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
-  StyleSheet, View, Text, FlatList, Image, TouchableOpacity,
+  StyleSheet, View, Text, FlatList, TouchableOpacity,
   ActivityIndicator, RefreshControl, Dimensions, Alert, Platform, StatusBar
 } from 'react-native';
+import { Image } from 'expo-image';
 
 const { width } = Dimensions.get('window');
 const GAP = 3;
@@ -31,6 +32,8 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
   const [refreshing, setRefreshing] = useState(false);
   const [mediaItems, setMediaItems] = useState([]);
   const [filterMode, setFilterMode] = useState(initialFilter);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
 
   useEffect(() => {
     if (initialFilter) {
@@ -40,18 +43,38 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
 
   const fetchGallery = async () => {
     try {
-      const res = await fetch(`${serverUrl}/api/gallery`, {
+      const res = await fetch(`${serverUrl}/api/gallery?page=1&limit=50`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
         const data = await res.json();
-        setMediaItems(data || []);
+        setMediaItems(data.items || []);
+        setPage(data.page || 1);
+        setHasMore(data.hasMore ?? false);
       }
     } catch (err) {
       console.warn('Failed to fetch gallery media:', err);
     } finally {
       setLoading(false);
       setRefreshing(false);
+    }
+  };
+
+  const loadMoreMedia = async () => {
+    if (!hasMore || loading || refreshing) return;
+    try {
+      const nextPage = page + 1;
+      const res = await fetch(`${serverUrl}/api/gallery?page=${nextPage}&limit=50`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setMediaItems(prev => [...prev, ...(data.items || [])]);
+        setPage(data.page || nextPage);
+        setHasMore(data.hasMore ?? false);
+      }
+    } catch (err) {
+      console.warn('Failed to load more media:', err);
     }
   };
 
@@ -64,14 +87,37 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
     fetchGallery();
   };
 
-  const filteredMedia = mediaItems.filter(item => {
-    const isVid = isVideoFile(item);
-    if (filterMode === 'videos') return isVid;
-    if (filterMode === 'photos') return !isVid;
-    return true;
-  });
+  const filteredMedia = useMemo(() => {
+    return mediaItems.filter(item => {
+      const isVid = isVideoFile(item);
+      if (filterMode === 'videos') return isVid;
+      if (filterMode === 'photos') return !isVid;
+      return true;
+    });
+  }, [mediaItems, filterMode]);
 
-  const renderMediaItem = ({ item }) => {
+  const ImageItem = ({ thumbUri }) => {
+    const [error, setError] = useState(false);
+    if (error) {
+      return (
+        <View style={[styles.thumbnail, { alignItems: 'center', justifyContent: 'center', backgroundColor: '#1E293B' }]}>
+          <Text style={{fontSize: 24}}>💔</Text>
+        </View>
+      );
+    }
+    return (
+      <Image
+        source={{ uri: thumbUri }}
+        style={styles.thumbnail}
+        contentFit="cover"
+        transition={200}
+        placeholder={require('../assets/icon.png')}
+        onError={() => setError(true)}
+      />
+    );
+  };
+
+  const renderMediaItem = useCallback(({ item }) => {
     const thumbUri = `${serverUrl}/api/thumbnail?path=${encodeURIComponent(item.path)}&token=${token}`;
     const isVid = isVideoFile(item);
     const ext = normalizeExt(item);
@@ -94,11 +140,7 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
             </View>
           </View>
         ) : (
-          <Image
-            source={{ uri: thumbUri }}
-            style={styles.thumbnail}
-            resizeMode="cover"
-          />
+          <ImageItem thumbUri={thumbUri} />
         )}
 
         {isGif && (
@@ -108,7 +150,7 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
         )}
       </TouchableOpacity>
     );
-  };
+  }, [serverUrl, token, filteredMedia, onSelectMedia]);
 
   const statusBarPadding = Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 8 : 16;
 
@@ -174,6 +216,12 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
           numColumns={3}
           renderItem={renderMediaItem}
           contentContainerStyle={styles.gridContainer}
+          windowSize={5}
+          maxToRenderPerBatch={12}
+          initialNumToRender={18}
+          removeClippedSubviews={true}
+          onEndReached={loadMoreMedia}
+          onEndReachedThreshold={0.5}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#00BCD4" />
           }

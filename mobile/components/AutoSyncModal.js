@@ -1,17 +1,26 @@
 import React, { useState, useEffect } from 'react';
 import {
   StyleSheet, View, Text, Modal, TouchableOpacity,
-  Switch, ActivityIndicator, Alert, ScrollView
+  Switch, ActivityIndicator, Alert, ScrollView, TextInput
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { requestMediaPermissions, getNewMediaToSync, runFullSync } from '../services/syncService';
 
 export default function AutoSyncModal({ visible, serverUrl, token, drives, onClose }) {
   const [enabled, setEnabled] = useState(false);
   const [selectedDrive, setSelectedDrive] = useState('');
   const [mediaType, setMediaType] = useState('both'); // 'photos' | 'videos' | 'both'
   const [syncStatus, setSyncStatus] = useState('Idle');
-  const [syncedCount, setSyncedCount] = useState(142);
+  const [syncedCount, setSyncedCount] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [syncFolder, setSyncFolder] = useState('');
+  
+  const [stats, setStats] = useState({
+    totalOnDevice: 0,
+    alreadySynced: 0,
+    newItems: 0,
+    lastSyncTime: 'Never'
+  });
 
   useEffect(() => {
     loadSettings();
@@ -20,19 +29,30 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
   const loadSettings = async () => {
     try {
       const savedDrive = await AsyncStorage.getItem('autosync_drive');
+      const savedFolder = await AsyncStorage.getItem('autosync_folder');
       const savedEnabled = await AsyncStorage.getItem('autosync_enabled');
       const savedType = await AsyncStorage.getItem('autosync_type');
+      const savedCount = await AsyncStorage.getItem('autosync_synced_count');
+      const savedTime = await AsyncStorage.getItem('autosync_last_sync_time');
+
       if (savedDrive) setSelectedDrive(savedDrive);
+      if (savedFolder) setSyncFolder(savedFolder);
       if (savedEnabled !== null) setEnabled(savedEnabled === 'true');
       if (savedType) setMediaType(savedType);
+      if (savedCount) setSyncedCount(parseInt(savedCount, 10));
+      
+      if (savedTime) {
+        setStats(prev => ({ ...prev, lastSyncTime: new Date(parseInt(savedTime, 10)).toLocaleString() }));
+      }
     } catch (e) {
       console.warn('Failed to load autosync settings:', e);
     }
   };
 
-  const saveSettings = async (drive, isEnabled, type) => {
+  const saveSettings = async (drive, folder, isEnabled, type) => {
     try {
       await AsyncStorage.setItem('autosync_drive', drive);
+      await AsyncStorage.setItem('autosync_folder', folder);
       await AsyncStorage.setItem('autosync_enabled', String(isEnabled));
       await AsyncStorage.setItem('autosync_type', type);
     } catch (e) {
@@ -42,36 +62,83 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
 
   const handleToggle = (val) => {
     setEnabled(val);
-    saveSettings(selectedDrive, val, mediaType);
+    saveSettings(selectedDrive, syncFolder, val, mediaType);
   };
 
   const handleDriveSelect = (driveLetter) => {
     setSelectedDrive(driveLetter);
-    saveSettings(driveLetter, enabled, mediaType);
+    saveSettings(driveLetter, syncFolder, enabled, mediaType);
+  };
+  
+  const handleFolderChange = (text) => {
+    setSyncFolder(text);
+    saveSettings(selectedDrive, text, enabled, mediaType);
   };
 
   const handleMediaTypeSelect = (type) => {
     setMediaType(type);
-    saveSettings(selectedDrive, enabled, type);
+    saveSettings(selectedDrive, syncFolder, enabled, type);
   };
 
   const handleSyncNow = async () => {
-    if (!selectedDrive && drives.length > 0) {
-      setSelectedDrive(drives[0].letter);
+    if (!syncFolder) {
+      Alert.alert('Error', 'Please enter a target folder path');
+      return;
     }
+    
     setIsSyncing(true);
-    setSyncStatus('Scanning phone gallery photos & videos...');
-
-    setTimeout(() => {
-      setSyncStatus('Uploading new items to NAS storage...');
-    }, 1500);
-
-    setTimeout(() => {
+    setSyncStatus('Requesting permissions...');
+    
+    const hasPerm = await requestMediaPermissions();
+    if (!hasPerm) {
+      Alert.alert('Permission Denied', 'Media library access is required for auto-sync.');
       setIsSyncing(false);
+      setSyncStatus('Idle');
+      return;
+    }
+
+    try {
+      setSyncStatus('Scanning phone gallery & fetching manifest...');
+      const targetPath = selectedDrive ? `${selectedDrive}\\${syncFolder}` : syncFolder;
+      
+      const { newFiles, totalOnDevice, alreadySynced } = await getNewMediaToSync(serverUrl, token, targetPath, mediaType);
+      
+      setStats(prev => ({
+        ...prev,
+        totalOnDevice,
+        alreadySynced,
+        newItems: newFiles.length
+      }));
+
+      if (newFiles.length === 0) {
+        setSyncStatus('Up to date');
+        Alert.alert('Sync Complete', 'Everything is already backed up!');
+        setIsSyncing(false);
+        return;
+      }
+
+      setSyncStatus(`Uploading 1 of ${newFiles.length}...`);
+      
+      const result = await runFullSync(serverUrl, token, targetPath, mediaType, (progress) => {
+        setSyncStatus(`Uploading ${progress.currentIndex} of ${progress.totalFiles}... (${Math.round(progress.currentFileProgress * 100)}%)`);
+      });
+
       setSyncStatus('Auto-Sync Complete');
-      setSyncedCount(prev => prev + 8);
-      Alert.alert('Sync Complete', '8 new media items backed up to NAS disk successfully!');
-    }, 3500);
+      setSyncedCount(prev => prev + result.synced);
+      Alert.alert('Sync Complete', `${result.synced} items backed up successfully! ${result.failed > 0 ? `(${result.failed} failed)` : ''}`);
+      
+      const savedTime = await AsyncStorage.getItem('autosync_last_sync_time');
+      if (savedTime) {
+         setStats(prev => ({ ...prev, lastSyncTime: new Date(parseInt(savedTime, 10)).toLocaleString() }));
+      }
+      
+    } catch (e) {
+      console.warn('Sync error', e);
+      setSyncStatus('Sync Failed');
+      Alert.alert('Error', 'An error occurred during sync');
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
   return (
@@ -117,12 +184,25 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
                     <Text style={styles.driveIcon}>💾</Text>
                     <View style={styles.driveMeta}>
                       <Text style={styles.driveName}>{d.name || d.letter} ({d.letter})</Text>
-                      <Text style={styles.driveSub}>Target folder: {d.letter}\Gallery_Backup</Text>
                     </View>
                     {isSelected && <Text style={styles.checkIcon}>✓</Text>}
                   </TouchableOpacity>
                 );
               })}
+            </View>
+            
+            <Text style={styles.sectionTitle}>Target Folder Path</Text>
+            <View style={{ marginBottom: 20 }}>
+               <View style={styles.driveItem}>
+                 <Text style={{color:'#94A3B8', marginRight:8}}>{selectedDrive ? selectedDrive + '\\' : ''}</Text>
+                 <TextInput
+                    style={{ flex: 1, color: '#F8FAFC', fontSize: 14 }}
+                    placeholder="e.g. Gallery_Backup"
+                    placeholderTextColor="#475569"
+                    value={syncFolder}
+                    onChangeText={handleFolderChange}
+                 />
+               </View>
             </View>
 
             {/* Media Type Selector */}
@@ -156,12 +236,28 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
                 <Text style={styles.statusVal}>{syncStatus}</Text>
               </View>
               <View style={styles.statusRow}>
-                <Text style={styles.statusLabel}>Items Synced:</Text>
+                <Text style={styles.statusLabel}>Total Uploaded:</Text>
                 <Text style={styles.statusVal}>{syncedCount} items</Text>
               </View>
               <View style={styles.statusRow}>
-                <Text style={styles.statusLabel}>Target Drive:</Text>
-                <Text style={styles.statusVal}>{selectedDrive || drives[0]?.letter || 'C:'}</Text>
+                <Text style={styles.statusLabel}>Target Folder:</Text>
+                <Text style={styles.statusVal}>{selectedDrive ? `${selectedDrive}\\${syncFolder}` : syncFolder}</Text>
+              </View>
+              <View style={styles.statusRow}>
+                <Text style={styles.statusLabel}>Device Photos:</Text>
+                <Text style={styles.statusVal}>{stats.totalOnDevice}</Text>
+              </View>
+              <View style={styles.statusRow}>
+                <Text style={styles.statusLabel}>Already Backed Up:</Text>
+                <Text style={styles.statusVal}>{stats.alreadySynced}</Text>
+              </View>
+              <View style={styles.statusRow}>
+                <Text style={styles.statusLabel}>New Items:</Text>
+                <Text style={styles.statusVal}>{stats.newItems}</Text>
+              </View>
+              <View style={styles.statusRow}>
+                <Text style={styles.statusLabel}>Last Sync:</Text>
+                <Text style={styles.statusVal}>{stats.lastSyncTime}</Text>
               </View>
 
               {isSyncing ? (

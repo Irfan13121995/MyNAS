@@ -983,9 +983,10 @@ async function loadGalleryMedia() {
   if (!contentEl) return;
   contentEl.innerHTML = '<div class="page-loading"><div class="spinner large"></div><p>Scanning media files...</p></div>';
 
-  const ep = selectedGalleryDrive === 'ALL' ? '/api/gallery' : `/api/gallery?drive=${encodeURIComponent(selectedGalleryDrive)}`;
+  const ep = selectedGalleryDrive === 'ALL' ? '/api/gallery?limit=200' : `/api/gallery?drive=${encodeURIComponent(selectedGalleryDrive)}&limit=200`;
   const r = await GET(ep);
-  const media = r?.data || [];
+  const rawData = r?.data;
+  const media = Array.isArray(rawData) ? rawData : (rawData?.items || []);
 
   let filteredMedia = media;
   if (selectedMediaType === 'photos') {

@@ -80,13 +80,13 @@ async function listFiles(dirPath) {
  * Recursively scans a directory for photos and videos.
  */
 async function scanMediaDirectory(dirPath, driveLetter, mediaList = [], depth = 0) {
-  if (depth > 4 || mediaList.length >= 300) return mediaList;
+  if (depth > 6 || mediaList.length >= 5000) return mediaList;
 
   try {
     const entries = await fs.readdir(dirPath, { withFileTypes: true });
 
     for (const entry of entries) {
-      if (mediaList.length >= 300) break;
+      if (mediaList.length >= 5000) break;
 
       // Skip system, hidden, cache, and heavy program folders
       const lowerName = entry.name.toLowerCase();

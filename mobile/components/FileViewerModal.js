@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useRef } from 'react';
 import {
-  StyleSheet, View, Text, Image, TouchableOpacity,
+  StyleSheet, View, Text, TouchableOpacity,
   ScrollView, ActivityIndicator, Dimensions, SafeAreaView,
   Alert, Linking, Platform, Modal, StatusBar, Share,
   TouchableWithoutFeedback, FlatList
 } from 'react-native';
+import { Image } from 'expo-image';
 import { useVideoPlayer, VideoView } from 'expo-video';
 
 const { width, height } = Dimensions.get('window');
@@ -98,6 +99,19 @@ export default function FileViewerModal({ file, mediaList = [], serverUrl, token
     }
   }, [currentIndex, file]);
 
+  useEffect(() => {
+    // Prefetch adjacent images for smooth swiping
+    if (items && items.length > 1) {
+      [currentIndex + 1, currentIndex + 2].forEach(idx => {
+        if (idx < items.length) {
+          const item = items[idx];
+          const uri = `${serverUrl}/api/stream?path=${encodeURIComponent(item.path)}&token=${token}`;
+          Image.prefetch(uri);
+        }
+      });
+    }
+  }, [currentIndex, items, serverUrl, token]);
+
   const fetchText = async () => {
     try {
       const response = await fetch(streamUrl);
@@ -173,7 +187,7 @@ export default function FileViewerModal({ file, mediaList = [], serverUrl, token
     }
   };
 
-  const renderSingleMediaItem = ({ item }) => {
+  const renderSingleMediaItem = React.useCallback(({ item }) => {
     const itemExt = normalizeExt(item);
     const itemStreamUrl = `${serverUrl}/api/stream?path=${encodeURIComponent(item.path)}&token=${token}`;
     const itemIsImage = IMAGE_EXTS.has(itemExt) || item.isImage;
@@ -197,7 +211,8 @@ export default function FileViewerModal({ file, mediaList = [], serverUrl, token
               <Image
                 source={{ uri: itemStreamUrl }}
                 style={[styles.fullImage, getImageTransformStyle()]}
-                resizeMode="contain"
+                contentFit="contain"
+                transition={300}
                 onError={() => setImageError(true)}
               />
             </TouchableWithoutFeedback>
@@ -217,7 +232,7 @@ export default function FileViewerModal({ file, mediaList = [], serverUrl, token
         <Text style={styles.mediaSub}>{itemExt.toUpperCase()} Document</Text>
       </View>
     );
-  };
+  }, [serverUrl, token, getImageTransformStyle]);
 
   return (
     <Modal
@@ -337,7 +352,8 @@ export default function FileViewerModal({ file, mediaList = [], serverUrl, token
                   <Image
                     source={{ uri: streamUrl }}
                     style={[styles.fullImage, getImageTransformStyle()]}
-                    resizeMode="contain"
+                    contentFit="contain"
+                    transition={300}
                     onError={() => setImageError(true)}
                   />
                 </TouchableWithoutFeedback>
@@ -473,7 +489,8 @@ export default function FileViewerModal({ file, mediaList = [], serverUrl, token
                 <Image
                   source={{ uri: streamUrl }}
                   style={[styles.fullImage, getImageTransformStyle()]}
-                  resizeMode="contain"
+                  contentFit="contain"
+                  transition={300}
                 />
               </View>
 

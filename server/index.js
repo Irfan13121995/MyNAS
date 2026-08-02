@@ -26,7 +26,10 @@ const uploadTempDir = path.join(BASE_DIR, 'temp_uploads');
 if (!fs.existsSync(uploadTempDir)) {
   fs.mkdirSync(uploadTempDir, { recursive: true });
 }
-const upload = multer({ dest: uploadTempDir });
+const upload = multer({
+  dest: uploadTempDir,
+  limits: { fileSize: 5 * 1024 * 1024 * 1024 } // 5 GB max upload size
+});
 
 // 1. Auto-generate .env on first run if it doesn't exist
 const envPath = path.join(BASE_DIR, '.env');
@@ -79,7 +82,20 @@ app.use(helmet({
   crossOriginResourcePolicy: false
 }));
 app.use(express.static(path.join(__dirname, 'public')));
-app.use(cors());
+app.use(cors({
+  origin: function(origin, callback) {
+    // Allow requests with no origin (mobile apps, curl, same-origin)
+    if (!origin) return callback(null, true);
+    // Allow localhost, LAN IPs, and Cloudflare tunnel URLs
+    if (origin.match(/^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.|10\.)/)
+        || origin.endsWith('.trycloudflare.com')
+        || origin.endsWith('.cloudflare.com')) {
+      return callback(null, true);
+    }
+    callback(new Error('CORS: Origin not allowed'));
+  },
+  credentials: true
+}));
 app.use(express.json());
 app.use('/api/', globalApiLimiter);
 
@@ -256,7 +272,6 @@ app.get('/api/system', authenticateToken, (req, res) => {
     platform: os.platform(),
     hostname: os.hostname(),
     ipAddresses: ips,
-    passcode: PASSCODE,
     port: PORT,
   });
 });
@@ -406,9 +421,23 @@ app.get('/api/files', authenticateToken, async (req, res) => {
 
 app.get('/api/gallery', authenticateToken, async (req, res) => {
   const targetDrive = req.query.drive;
+  const page = parseInt(req.query.page) || 1;
+  const limit = Math.min(parseInt(req.query.limit) || 50, 200);
   try {
-    const media = await getMediaGallery(targetDrive);
-    res.json(media);
+    const allMedia = await getMediaGallery(targetDrive);
+    const totalItems = allMedia.length;
+    const totalPages = Math.ceil(totalItems / limit);
+    const startIndex = (page - 1) * limit;
+    const paginatedMedia = allMedia.slice(startIndex, startIndex + limit);
+
+    res.json({
+      items: paginatedMedia,
+      page,
+      limit,
+      totalItems,
+      totalPages,
+      hasMore: page < totalPages
+    });
   } catch (err) {
     res.status(500).json({ error: `Failed to fetch gallery media: ${err.message}` });
   }
@@ -419,8 +448,13 @@ app.get('/api/gallery', authenticateToken, async (req, res) => {
 app.get('/api/stream', authenticateToken, async (req, res) => {
   const targetPath = req.query.path;
   if (!targetPath) return res.status(400).json({ error: 'Path is required to stream' });
-  logActivity('stream', `Streamed: ${path.basename(targetPath)}`);
-  await streamFile(targetPath, req, res);
+  try {
+    await validatePath(targetPath);
+    logActivity('stream', `Streamed: ${path.basename(targetPath)}`);
+    await streamFile(targetPath, req, res);
+  } catch (err) {
+    res.status(403).json({ error: err.message });
+  }
 });
 
 // ─── 9. UPLOAD ENDPOINT ──────────────────────────────────────────────────────
@@ -562,10 +596,19 @@ app.post('/api/files/delete', authenticateToken, (req, res) => {
   }
 });
 
-app.post('/api/files/batch-zip', authenticateToken, (req, res) => {
+app.post('/api/files/batch-zip', authenticateToken, async (req, res) => {
   const { paths } = req.body;
   if (!paths || !Array.isArray(paths) || paths.length === 0) {
     return res.status(400).json({ error: 'Paths array is required' });
+  }
+
+  // Validate every path before archiving
+  try {
+    for (const p of paths) {
+      await validatePath(p);
+    }
+  } catch (err) {
+    return res.status(403).json({ error: err.message });
   }
 
   res.attachment('nas_archive.zip');
@@ -583,6 +626,98 @@ app.post('/api/files/batch-zip', authenticateToken, (req, res) => {
     }
   }
   archive.finalize();
+});
+
+// ─── 10.9. SYNC MANIFEST & CHUNKED UPLOAD ───────────────────────────────────
+
+// Returns a list of filenames+sizes already in a target folder (for mobile dedup)
+app.get('/api/sync/manifest', authenticateToken, async (req, res) => {
+  const folder = req.query.folder;
+  if (!folder) return res.status(400).json({ error: 'folder query parameter is required' });
+
+  try {
+    const validatedPath = await validatePath(folder);
+    const fsSync = require('fs');
+    if (!fsSync.existsSync(validatedPath)) {
+      return res.json({ files: [] });
+    }
+    const entries = await fs.promises.readdir(validatedPath, { withFileTypes: true });
+    const manifest = [];
+    for (const entry of entries) {
+      if (entry.isFile()) {
+        try {
+          const stats = await fs.promises.stat(path.join(validatedPath, entry.name));
+          manifest.push({
+            name: entry.name,
+            size: stats.size,
+            modifiedAt: stats.mtime.toISOString()
+          });
+        } catch (e) {}
+      }
+    }
+    res.json({ files: manifest, folder: validatedPath });
+  } catch (err) {
+    res.status(403).json({ error: err.message });
+  }
+});
+
+// Chunked upload endpoint — receives file chunks and assembles them
+app.post('/api/upload/chunk', authenticateToken, upload.single('chunk'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No chunk data' });
+
+  const { fileName, chunkIndex, totalChunks, destination } = req.body;
+  if (!fileName || chunkIndex === undefined || !totalChunks || !destination) {
+    try { await fs.promises.unlink(req.file.path); } catch {}
+    return res.status(400).json({ error: 'fileName, chunkIndex, totalChunks, and destination are required' });
+  }
+
+  try {
+    const validatedDir = await validatePath(destination);
+    const chunksDir = path.join(uploadTempDir, `chunks_${Buffer.from(fileName).toString('hex')}`);
+    await fs.promises.mkdir(chunksDir, { recursive: true });
+
+    // Move chunk to chunks staging area
+    const chunkPath = path.join(chunksDir, `chunk_${String(chunkIndex).padStart(6, '0')}`);
+    await fs.promises.rename(req.file.path, chunkPath);
+
+    const idx = parseInt(chunkIndex);
+    const total = parseInt(totalChunks);
+
+    // Check if all chunks received
+    const existingChunks = await fs.promises.readdir(chunksDir);
+    if (existingChunks.length >= total) {
+      // Assemble final file
+      await fs.promises.mkdir(validatedDir, { recursive: true });
+      const finalPath = path.join(validatedDir, fileName);
+      const writeStream = require('fs').createWriteStream(finalPath);
+
+      for (let i = 0; i < total; i++) {
+        const cp = path.join(chunksDir, `chunk_${String(i).padStart(6, '0')}`);
+        const chunkData = await fs.promises.readFile(cp);
+        writeStream.write(chunkData);
+      }
+      writeStream.end();
+
+      await new Promise((resolve, reject) => {
+        writeStream.on('finish', resolve);
+        writeStream.on('error', reject);
+      });
+
+      // Cleanup chunks
+      for (const f of existingChunks) {
+        await fs.promises.unlink(path.join(chunksDir, f)).catch(() => {});
+      }
+      await fs.promises.rmdir(chunksDir).catch(() => {});
+
+      logActivity('upload', `Chunked upload complete: ${fileName}`);
+      return res.json({ success: true, complete: true, path: finalPath });
+    }
+
+    res.json({ success: true, complete: false, chunksReceived: existingChunks.length, totalChunks: total });
+  } catch (err) {
+    try { await fs.promises.unlink(req.file.path); } catch {}
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ─── 11. SPA FALLBACK ─────────────────────────────────────────────────────────

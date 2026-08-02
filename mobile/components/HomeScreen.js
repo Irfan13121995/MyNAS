@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   StyleSheet, View, Text, TextInput, ScrollView, TouchableOpacity,
   FlatList, ActivityIndicator, RefreshControl, Alert, Platform, StatusBar
@@ -55,29 +55,29 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
     { name: 'Design Proposal.pptx', ext: '.pptx', size: 12100000, modifiedAt: '2026-07-29T07:31:26Z', type: 'doc' },
   ];
 
-  const rawDisplayFiles = files.length > 0 ? files : defaultItems;
+  const filteredFiles = useMemo(() => {
+    let displayFiles = files.length > 0 ? files : defaultItems;
 
-  let displayFiles = rawDisplayFiles;
-  if (activeSubTab === 'starred') {
-    displayFiles = rawDisplayFiles.filter(f => starredFiles.includes(f.name));
-  } else if (activeSubTab === 'offline') {
-    displayFiles = rawDisplayFiles.slice(0, 2);
-  }
+    if (activeSubTab === 'starred') {
+      displayFiles = displayFiles.filter(f => starredFiles.includes(f.name));
+    } else if (activeSubTab === 'offline') {
+      displayFiles = displayFiles.slice(0, 2);
+    }
 
-  // Category filtering rules
-  if (categoryFilter === 'photos') {
-    displayFiles = displayFiles.filter(f => (f.ext || f.name || '').match(/\.(jpg|jpeg|png|webp|gif|bmp|heic)$/i));
-  } else if (categoryFilter === 'docs') {
-    displayFiles = displayFiles.filter(f => (f.ext || f.name || '').match(/\.(doc|docx|pdf|txt|pptx|xlsx|csv|log)$/i) || f.type === 'doc');
-  } else if (categoryFilter === 'audio') {
-    displayFiles = displayFiles.filter(f => (f.ext || f.name || '').match(/\.(mp3|wav|flac|m4a|ogg|aac)$/i) || f.type === 'audio');
-  } else if (categoryFilter === 'video') {
-    displayFiles = displayFiles.filter(f => (f.ext || f.name || '').match(/\.(mp4|mkv|avi|mov|wmv|flv|webm|m4v)$/i) || f.type === 'video');
-  }
+    if (categoryFilter === 'photos') {
+      displayFiles = displayFiles.filter(f => (f.ext || f.name || '').match(/\.(jpg|jpeg|png|webp|gif|bmp|heic)$/i));
+    } else if (categoryFilter === 'docs') {
+      displayFiles = displayFiles.filter(f => (f.ext || f.name || '').match(/\.(doc|docx|pdf|txt|pptx|xlsx|csv|log)$/i) || f.type === 'doc');
+    } else if (categoryFilter === 'audio') {
+      displayFiles = displayFiles.filter(f => (f.ext || f.name || '').match(/\.(mp3|wav|flac|m4a|ogg|aac)$/i) || f.type === 'audio');
+    } else if (categoryFilter === 'video') {
+      displayFiles = displayFiles.filter(f => (f.ext || f.name || '').match(/\.(mp4|mkv|avi|mov|wmv|flv|webm|m4v)$/i) || f.type === 'video');
+    }
 
-  const filteredFiles = displayFiles.filter(f =>
-    f.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+    return displayFiles.filter(f =>
+      f.name.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+  }, [files, activeSubTab, categoryFilter, searchQuery, starredFiles]);
 
   const toggleStar = (fileName) => {
     if (starredFiles.includes(fileName)) {
@@ -138,6 +138,37 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
   const subTabs = ['recent', 'starred', 'labeled', 'offline'];
 
   const statusBarPadding = Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 8 : 16;
+
+  const renderFileItem = useCallback(({ item }) => {
+    const badge = getFileBadge(item);
+    const dateStr = item.modifiedAt
+      ? new Date(item.modifiedAt).toLocaleString()
+      : '05/25/2022, 08:48:22';
+    const isStarred = starredFiles.includes(item.name);
+
+    return (
+      <TouchableOpacity
+        style={styles.fileRow}
+        activeOpacity={0.75}
+        onPress={() => onSelectFile && onSelectFile(item, filteredFiles)}
+      >
+        <View style={[styles.fileBadgeBox, { backgroundColor: badge.bg }]}>
+          <Text style={[styles.fileBadgeText, { color: badge.color }]}>{badge.icon}</Text>
+        </View>
+
+        <View style={styles.fileMetaBox}>
+          <Text style={styles.fileName}>
+            {isStarred ? '⭐ ' : ''}{item.name}
+          </Text>
+          <Text style={styles.fileDate}>{dateStr}</Text>
+        </View>
+
+        <TouchableOpacity style={styles.moreBtn} onPress={() => handleFileMore(item)}>
+          <Text style={styles.moreIcon}>⋮</Text>
+        </TouchableOpacity>
+      </TouchableOpacity>
+    );
+  }, [starredFiles, filteredFiles, onSelectFile]);
 
   return (
     <View style={styles.container}>
@@ -213,67 +244,40 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
       </View>
 
       {/* ── FILE LIST ──────────────────────────────────────────────── */}
-      <ScrollView
+      <FlatList
         style={styles.fileList}
         contentContainerStyle={{ paddingBottom: 110 }}
+        data={filteredFiles}
+        keyExtractor={(item, index) => item.path || index.toString()}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#00BCD4" />}
-      >
-        <View style={styles.listHeaderRow}>
-          <Text style={styles.dateHeader}>
-            {categoryFilter ? `Filtered: ${categoryFilter.toUpperCase()}` : 'Files'}
-          </Text>
-          {categoryFilter && (
-            <TouchableOpacity onPress={() => setCategoryFilter(null)}>
-              <Text style={styles.clearFilterText}>Show All ✕</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-
-        {loading ? (
-          <View style={styles.loadingBox}>
-            <ActivityIndicator size="large" color="#00BCD4" />
-          </View>
-        ) : filteredFiles.length === 0 ? (
-          <View style={styles.emptyBox}>
-            <Text style={styles.emptyIcon}>🔍</Text>
-            <Text style={styles.emptyText}>
-              No {categoryFilter || 'files'} found.
+        ListHeaderComponent={
+          <View style={styles.listHeaderRow}>
+            <Text style={styles.dateHeader}>
+              {categoryFilter ? `Filtered: ${categoryFilter.toUpperCase()}` : 'Files'}
             </Text>
-          </View>
-        ) : (
-          filteredFiles.map((item, idx) => {
-            const badge = getFileBadge(item);
-            const dateStr = item.modifiedAt
-              ? new Date(item.modifiedAt).toLocaleString()
-              : '05/25/2022, 08:48:22';
-            const isStarred = starredFiles.includes(item.name);
-
-            return (
-              <TouchableOpacity
-                key={item.path || idx}
-                style={styles.fileRow}
-                activeOpacity={0.75}
-                onPress={() => onSelectFile && onSelectFile(item, filteredFiles)}
-              >
-                <View style={[styles.fileBadgeBox, { backgroundColor: badge.bg }]}>
-                  <Text style={[styles.fileBadgeText, { color: badge.color }]}>{badge.icon}</Text>
-                </View>
-
-                <View style={styles.fileMetaBox}>
-                  <Text style={styles.fileName}>
-                    {isStarred ? '⭐ ' : ''}{item.name}
-                  </Text>
-                  <Text style={styles.fileDate}>{dateStr}</Text>
-                </View>
-
-                <TouchableOpacity style={styles.moreBtn} onPress={() => handleFileMore(item)}>
-                  <Text style={styles.moreIcon}>⋮</Text>
-                </TouchableOpacity>
+            {categoryFilter && (
+              <TouchableOpacity onPress={() => setCategoryFilter(null)}>
+                <Text style={styles.clearFilterText}>Show All ✕</Text>
               </TouchableOpacity>
-            );
-          })
-        )}
-      </ScrollView>
+            )}
+          </View>
+        }
+        ListEmptyComponent={
+          loading ? (
+            <View style={styles.loadingBox}>
+              <ActivityIndicator size="large" color="#00BCD4" />
+            </View>
+          ) : (
+            <View style={styles.emptyBox}>
+              <Text style={styles.emptyIcon}>🔍</Text>
+              <Text style={styles.emptyText}>
+                No {categoryFilter || 'files'} found.
+              </Text>
+            </View>
+          )
+        }
+        renderItem={renderFileItem}
+      />
 
       {/* ── FAB BUTTON ────────────────────────────────────────────── */}
       <TouchableOpacity style={styles.fab} activeOpacity={0.8} onPress={onOpenFileBrowser}>

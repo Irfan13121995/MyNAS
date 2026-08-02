@@ -11,6 +11,31 @@ import AutoSyncModal from './components/AutoSyncModal';
 import FileViewerModal from './components/FileViewerModal';
 import { authenticateBiometric } from './services/biometricService';
 import { getSecureItem, setSecureItem, deleteSecureItem } from './services/secureStoreService';
+import * as TaskManager from 'expo-task-manager';
+import * as BackgroundFetch from 'expo-background-fetch';
+import { runFullSync } from './services/syncService';
+
+const BACKGROUND_SYNC_TASK = 'background-nas-sync';
+
+TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
+  try {
+    const serverUrl = await getSecureItem('nas_server_url');
+    const token = await getSecureItem('nas_jwt_token');
+    const syncFolder = await AsyncStorage.getItem('autosync_folder');
+    const mediaType = await AsyncStorage.getItem('autosync_type') || 'all';
+    
+    if (!serverUrl || !token || !syncFolder) {
+      return BackgroundFetch.BackgroundFetchResult.NoData;
+    }
+    
+    const result = await runFullSync(serverUrl, token, syncFolder, mediaType, null, null);
+    return result.synced > 0 
+      ? BackgroundFetch.BackgroundFetchResult.NewData 
+      : BackgroundFetch.BackgroundFetchResult.NoData;
+  } catch (err) {
+    return BackgroundFetch.BackgroundFetchResult.Failed;
+  }
+});
 
 export default function App() {
   const [loading, setLoading] = useState(true);
@@ -27,7 +52,23 @@ export default function App() {
 
   useEffect(() => {
     bootstrapAsync();
+    registerBackgroundSync();
   }, []);
+
+  const registerBackgroundSync = async () => {
+    try {
+      const isEnabled = await AsyncStorage.getItem('autosync_enabled');
+      if (isEnabled === 'true') {
+        await BackgroundFetch.registerTaskAsync(BACKGROUND_SYNC_TASK, {
+          minimumInterval: 60 * 15, // 15 minutes
+          stopOnTerminate: false,
+          startOnBoot: true,
+        });
+      }
+    } catch (e) {
+      console.warn('Failed to register background sync task', e);
+    }
+  };
 
   const bootstrapAsync = async () => {
     try {

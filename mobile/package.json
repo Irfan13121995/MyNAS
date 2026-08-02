@@ -5,12 +5,16 @@
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
     "expo": "~57.0.9",
+    "expo-background-fetch": "~57.0.7",
     "expo-camera": "~57.0.3",
     "expo-device": "~57.0.0",
+    "expo-image": "~57.0.1",
     "expo-local-authentication": "~57.0.2",
     "expo-media-library": "~57.0.3",
     "expo-secure-store": "~57.0.1",
+    "expo-splash-screen": "~57.0.5",
     "expo-status-bar": "~57.0.0",
+    "expo-task-manager": "~57.0.7",
     "expo-video": "~57.0.2",
     "react": "19.2.3",
     "react-native": "0.86.2"
