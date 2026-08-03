@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   StyleSheet, View, Text, FlatList, TouchableOpacity,
-  ActivityIndicator, RefreshControl, Dimensions, Alert, Platform, StatusBar
+  ActivityIndicator, RefreshControl, Dimensions, Alert, Platform, StatusBar, ScrollView
 } from 'react-native';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
@@ -37,6 +37,7 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
   const [deviceMediaItems, setDeviceMediaItems] = useState([]);
   const [hasPermission, setHasPermission] = useState(null);
   const [filterMode, setFilterMode] = useState(initialFilter);
+  const [extFilter, setExtFilter] = useState('ALL');
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
 
@@ -174,11 +175,18 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
   const filteredMedia = useMemo(() => {
     return activeMediaList.filter(item => {
       const isVid = isVideoFile(item);
-      if (filterMode === 'videos') return isVid;
-      if (filterMode === 'photos') return !isVid;
+      if (filterMode === 'videos' && !isVid) return false;
+      if (filterMode === 'photos' && isVid) return false;
+      
+      if (extFilter !== 'ALL') {
+        const ext = extFilter.toLowerCase();
+        const name = (item.name || '').toLowerCase();
+        const filename = (item.filename || '').toLowerCase();
+        if (!name.endsWith(ext) && !filename.endsWith(ext)) return false;
+      }
       return true;
     });
-  }, [activeMediaList, filterMode]);
+  }, [activeMediaList, filterMode, extFilter]);
 
   const ImageItem = ({ thumbUri }) => {
     const [error, setError] = useState(false);
@@ -299,6 +307,22 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
               </Text>
             </TouchableOpacity>
           ))}
+        </View>
+
+        {/* EXTENSION FILTER BAR */}
+        <View style={{ marginTop: 12 }}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+            {['ALL', '.JPG', '.PNG', '.WEBP', '.MP4', '.MKV'].map(ext => (
+              <TouchableOpacity
+                key={ext}
+                style={[styles.filterPill, extFilter === ext && styles.filterPillActive]}
+                activeOpacity={0.7}
+                onPress={() => setExtFilter(ext)}
+              >
+                <Text style={[styles.filterPillText, extFilter === ext && styles.filterPillTextActive]}>{ext}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
         </View>
       </View>
 

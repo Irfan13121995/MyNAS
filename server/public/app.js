@@ -150,6 +150,8 @@ async function doLogin(credentials) {
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Login failed');
   Auth.setToken(data.token);
+  const username = body.username || 'Passcode Admin';
+  localStorage.setItem('nas_user', username);
 }
 
 async function doRegister(username, password) {
@@ -160,6 +162,7 @@ async function doRegister(username, password) {
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Registration failed');
   Auth.setToken(data.token);
+  localStorage.setItem('nas_user', username);
 }
 
 // ─── SIDEBAR & MOBILE DRAWER STATE ────────────────────────────────────────────
@@ -234,6 +237,12 @@ async function loadSystemInfo() {
   const tr = await GET('/api/tunnel/status');
   if (tr?.data?.status === 'running') {
     document.getElementById('tunnel-badge').classList.remove('hidden');
+  }
+
+  const username = localStorage.getItem('nas_user') || 'Irfan.Ahmed';
+  const userBadge = document.getElementById('username-display');
+  if (userBadge) {
+    userBadge.textContent = username;
   }
 }
 

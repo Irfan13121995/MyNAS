@@ -233,8 +233,8 @@ tbody td { padding: 13px 18px; font-size: 13px; color: var(--text-primary); }
 .progress-fill.danger { background: linear-gradient(90deg, var(--red), var(--orange)); box-shadow: 0 0 10px rgba(239, 68, 68, 0.5); }
 
 /* ── CIRCULAR GAUGE ─────────────────────────────────────────────────────────── */
-.gauge-container { position: relative; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
-.gauge { transform: rotate(-90deg); }
+.gauge-container { position: relative; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; background: transparent !important; border: none !important; box-shadow: none !important; border-radius: 50%; overflow: visible; }
+.gauge { transform: rotate(-90deg); background: transparent !important; border: none !important; box-shadow: none !important; border-radius: 50%; overflow: visible; }
 .gauge-bg { fill: none; stroke: rgba(255,255,255,0.06); stroke-width: 4; }
 .gauge-fill { fill: none; stroke: var(--accent); stroke-width: 4; stroke-linecap: round; transition: stroke-dasharray 0.8s ease; filter: drop-shadow(0 0 6px var(--accent)); }
 .gauge-fill.warn   { stroke: var(--yellow); filter: drop-shadow(0 0 6px var(--yellow)); }
@@ -446,6 +446,12 @@ tbody td { padding: 13px 18px; font-size: 13px; color: var(--text-primary); }
 }
 .tunnel-badge { color: var(--green); border-color: rgba(16,185,129,0.3); background: var(--green-bg); }
 .passcode-badge { font-family: 'JetBrains Mono', monospace; color: var(--yellow); border-color: rgba(245,158,11,0.3); background: var(--yellow-bg); }
+.user-profile-badge {
+  display: flex; align-items: center; gap: 7px; padding: 5px 12px;
+  background: var(--bg-card); border: 1px solid var(--accent);
+  border-radius: 20px; font-size: 11px; font-weight: 700; color: #94A3B8;
+  box-shadow: 0 0 12px var(--accent-glow); backdrop-filter: var(--glass-backdrop);
+}
 .passcode-eye-btn {
   background: transparent; border: none; padding: 2px 4px; border-radius: 4px;
   cursor: pointer; font-size: 12px; display: flex; align-items: center; justify-content: center;

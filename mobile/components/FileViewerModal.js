@@ -102,11 +102,11 @@ export default function FileViewerModal({ file, mediaList = [], serverUrl, token
   useEffect(() => {
     // Prefetch adjacent images for smooth swiping
     if (items && items.length > 1) {
-      [currentIndex + 1, currentIndex + 2].forEach(idx => {
-        if (idx < items.length) {
+      [currentIndex - 1, currentIndex + 1, currentIndex + 2].forEach(idx => {
+        if (idx >= 0 && idx < items.length) {
           const item = items[idx];
           const uri = `${serverUrl}/api/stream?path=${encodeURIComponent(item.path)}&token=${token}`;
-          Image.prefetch(uri);
+          if (uri) Image.prefetch(uri);
         }
       });
     }
@@ -164,7 +164,7 @@ export default function FileViewerModal({ file, mediaList = [], serverUrl, token
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
-  const getImageTransformStyle = () => {
+  const getImageTransformStyle = React.useCallback(() => {
     const transforms = [];
     if (zoomScale !== 1) transforms.push({ scale: zoomScale });
     if (rotation !== 0) transforms.push({ rotate: `${rotation}deg` });
@@ -175,7 +175,7 @@ export default function FileViewerModal({ file, mediaList = [], serverUrl, token
       transform: transforms,
       opacity: brightness,
     };
-  };
+  }, [zoomScale, rotation, flipH, flipV, brightness]);
 
   const statusBarPadding = Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 8 : 16;
 
@@ -212,7 +212,8 @@ export default function FileViewerModal({ file, mediaList = [], serverUrl, token
                 source={{ uri: itemStreamUrl }}
                 style={[styles.fullImage, getImageTransformStyle()]}
                 contentFit="contain"
-                transition={300}
+                transition={150}
+                cachePolicy="disk"
                 onError={() => setImageError(true)}
               />
             </TouchableWithoutFeedback>
@@ -242,6 +243,7 @@ export default function FileViewerModal({ file, mediaList = [], serverUrl, token
       statusBarTranslucent={true}
       presentationStyle="fullScreen"
       onRequestClose={onClose}
+      hardwareAccelerated={true}
     >
       <StatusBar barStyle="light-content" backgroundColor="#0B0F17" />
 
@@ -353,7 +355,8 @@ export default function FileViewerModal({ file, mediaList = [], serverUrl, token
                     source={{ uri: streamUrl }}
                     style={[styles.fullImage, getImageTransformStyle()]}
                     contentFit="contain"
-                    transition={300}
+                    transition={150}
+                    cachePolicy="disk"
                     onError={() => setImageError(true)}
                   />
                 </TouchableWithoutFeedback>
@@ -490,7 +493,8 @@ export default function FileViewerModal({ file, mediaList = [], serverUrl, token
                   source={{ uri: streamUrl }}
                   style={[styles.fullImage, getImageTransformStyle()]}
                   contentFit="contain"
-                  transition={300}
+                  transition={150}
+                  cachePolicy="disk"
                 />
               </View>
 
