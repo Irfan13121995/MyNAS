@@ -4,6 +4,8 @@ import {
   ActivityIndicator, RefreshControl, Dimensions, Alert, Platform, StatusBar
 } from 'react-native';
 import { Image } from 'expo-image';
+import * as ImagePicker from 'expo-image-picker';
+import { requestMediaPermissions } from '../services/syncService';
 
 const { width } = Dimensions.get('window');
 const GAP = 3;
@@ -23,14 +25,17 @@ const VIDEO_EXTS = new Set(['.mp4', '.mkv', '.mov', '.avi', '.webm', '.flv', '.w
 const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.heic', '.tiff', '.svg']);
 
 function isVideoFile(item) {
-  if (item.isVideo) return true;
+  if (item.isVideo || item.type === 'video' || item.mediaType === 'video') return true;
   return VIDEO_EXTS.has(normalizeExt(item));
 }
 
 export default function LibraryScreen({ serverUrl, token, initialFilter = 'all', onSelectMedia }) {
+  const [activeSource, setActiveSource] = useState('nas'); // 'nas' | 'device'
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [mediaItems, setMediaItems] = useState([]);
+  const [deviceMediaItems, setDeviceMediaItems] = useState([]);
+  const [hasPermission, setHasPermission] = useState(null);
   const [filterMode, setFilterMode] = useState(initialFilter);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
@@ -40,6 +45,18 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
       setFilterMode(initialFilter);
     }
   }, [initialFilter]);
+
+  const checkPermissions = async () => {
+    const granted = await requestMediaPermissions();
+    setHasPermission(granted);
+    if (granted && activeSource === 'device') {
+      loadDeviceMedia();
+    }
+  };
+
+  useEffect(() => {
+    checkPermissions();
+  }, []);
 
   const fetchGallery = async () => {
     try {
@@ -61,7 +78,7 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
   };
 
   const loadMoreMedia = async () => {
-    if (!hasMore || loading || refreshing) return;
+    if (activeSource !== 'nas' || !hasMore || loading || refreshing) return;
     try {
       const nextPage = page + 1;
       const res = await fetch(`${serverUrl}/api/gallery?page=${nextPage}&limit=50`, {
@@ -78,30 +95,97 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
     }
   };
 
+  const loadDeviceMedia = async () => {
+    setLoading(true);
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      setHasPermission(perm.granted);
+      if (!perm.granted) {
+        setLoading(false);
+        return;
+      }
+
+      // Launch media picker or get user selected assets
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images', 'videos'],
+        allowsMultipleSelection: true,
+        quality: 0.8,
+        selectionLimit: 0
+      });
+
+      if (!result.canceled && result.assets) {
+        const mapped = result.assets.map(a => ({
+          name: a.fileName || `device_${Date.now()}.jpg`,
+          path: a.uri,
+          uri: a.uri,
+          isDevice: true,
+          isVideo: a.type === 'video',
+          mediaType: a.type,
+          size: a.fileSize || 0,
+          modifiedAt: new Date().toISOString()
+        }));
+        setDeviceMediaItems(mapped);
+      }
+    } catch (err) {
+      console.warn('Failed to load device media:', err);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  const handleGrantPermission = async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    setHasPermission(perm.granted);
+    if (perm.granted) {
+      if (activeSource === 'device') {
+        loadDeviceMedia();
+      } else {
+        Alert.alert('Permission Granted', 'Personal NAS can now access your phone photos & videos for backup and view.');
+      }
+    } else {
+      Alert.alert('Permission Required', 'Please enable media library access in your phone settings to view device media.');
+    }
+  };
+
   useEffect(() => {
-    fetchGallery();
-  }, []);
+    if (activeSource === 'nas') {
+      fetchGallery();
+    } else if (activeSource === 'device') {
+      if (hasPermission) {
+        loadDeviceMedia();
+      } else {
+        setLoading(false);
+      }
+    }
+  }, [activeSource]);
 
   const onRefresh = () => {
     setRefreshing(true);
-    fetchGallery();
+    if (activeSource === 'nas') {
+      fetchGallery();
+    } else {
+      loadDeviceMedia();
+    }
   };
 
+  const activeMediaList = activeSource === 'nas' ? mediaItems : deviceMediaItems;
+
   const filteredMedia = useMemo(() => {
-    return mediaItems.filter(item => {
+    return activeMediaList.filter(item => {
       const isVid = isVideoFile(item);
       if (filterMode === 'videos') return isVid;
       if (filterMode === 'photos') return !isVid;
       return true;
     });
-  }, [mediaItems, filterMode]);
+  }, [activeMediaList, filterMode]);
 
   const ImageItem = ({ thumbUri }) => {
     const [error, setError] = useState(false);
     if (error) {
       return (
         <View style={[styles.thumbnail, { alignItems: 'center', justifyContent: 'center', backgroundColor: '#1E293B' }]}>
-          <Text style={{fontSize: 24}}>💔</Text>
+          <Text style={{fontSize: 24}}>🖼️</Text>
         </View>
       );
     }
@@ -118,7 +202,9 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
   };
 
   const renderMediaItem = useCallback(({ item }) => {
-    const thumbUri = `${serverUrl}/api/thumbnail?path=${encodeURIComponent(item.path)}&token=${token}`;
+    const thumbUri = item.isDevice
+      ? item.uri
+      : `${serverUrl}/api/thumbnail?path=${encodeURIComponent(item.path)}&token=${token}`;
     const isVid = isVideoFile(item);
     const ext = normalizeExt(item);
     const isGif = ext === '.gif';
@@ -131,7 +217,11 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
       >
         {isVid ? (
           <View style={styles.videoPlaceholder}>
-            <Text style={styles.videoEmoji}>🎬</Text>
+            {item.isDevice ? (
+              <ImageItem thumbUri={thumbUri} />
+            ) : (
+              <Text style={styles.videoEmoji}>🎬</Text>
+            )}
             <View style={styles.videoPlayBtn}>
               <Text style={styles.playArrow}>▶</Text>
             </View>
@@ -159,10 +249,36 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
       {/* ── DARK GLASS TOPBAR (SAFE FROM STATUS BAR) ─────────────────── */}
       <View style={[styles.topbar, { paddingTop: statusBarPadding }]}>
         <View style={styles.topbarInner}>
-          <Text style={styles.topbarTitle}>Library</Text>
+          <Text style={styles.topbarTitle}>Media Gallery</Text>
           <Text style={styles.itemCount}>
             {loading ? 'Scanning media…' : `${filteredMedia.length.toLocaleString()} items`}
           </Text>
+        </View>
+
+        {/* Source Switcher Tabs (NAS Cloud vs Device Phone) */}
+        <View style={styles.sourceTabRow}>
+          <TouchableOpacity
+            style={[styles.sourceTab, activeSource === 'nas' && styles.sourceTabActive]}
+            activeOpacity={0.8}
+            onPress={() => setActiveSource('nas')}
+          >
+            <Text style={[styles.sourceTabText, activeSource === 'nas' && styles.sourceTabTextActive]}>
+              ☁️ NAS Storage
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.sourceTab, activeSource === 'device' && styles.sourceTabActive]}
+            activeOpacity={0.8}
+            onPress={() => {
+              setActiveSource('device');
+              if (!hasPermission) checkPermissions();
+            }}
+          >
+            <Text style={[styles.sourceTabText, activeSource === 'device' && styles.sourceTabTextActive]}>
+              📱 Phone Gallery
+            </Text>
+          </TouchableOpacity>
         </View>
 
         {/* Filter Pills */}
@@ -178,10 +294,7 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
               activeOpacity={0.7}
               onPress={() => setFilterMode(f.key)}
             >
-              <Text style={[
-                styles.filterPillText,
-                filterMode === f.key && styles.filterPillTextActive
-              ]}>
+              <Text style={[styles.filterPillText, filterMode === f.key && styles.filterPillTextActive]}>
                 {f.label}{f.icon}
               </Text>
             </TouchableOpacity>
@@ -189,30 +302,47 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
         </View>
       </View>
 
-      {/* ── MEDIA GRID ──────────────────────────────────────────────────────── */}
-      {loading ? (
-        <View style={styles.loadingBox}>
-          <View style={styles.loadingGlass}>
-            <ActivityIndicator size="large" color="#00BCD4" />
-            <Text style={styles.loadingText}>Loading Media Library…</Text>
-          </View>
+      {/* Permission Card (If Permission Not Granted for Phone Media) */}
+      {hasPermission === false && (
+        <View style={styles.permissionCard}>
+          <Text style={styles.permIcon}>🖼️🎬</Text>
+          <Text style={styles.permTitle}>Phone Photos & Videos Permission</Text>
+          <Text style={styles.permText}>
+            Personal NAS requires permission to access your phone gallery to view local photos & videos and auto-sync them to your NAS drives.
+          </Text>
+          <TouchableOpacity style={styles.grantBtn} activeOpacity={0.8} onPress={handleGrantPermission}>
+            <Text style={styles.grantBtnText}>Grant Media Permission</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* ── MEDIA GRID ───────────────────────────────────────────── */}
+      {loading && !refreshing ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#00BCD4" />
+          <Text style={styles.loadingText}>Loading {activeSource === 'nas' ? 'NAS' : 'Phone'} media...</Text>
         </View>
       ) : filteredMedia.length === 0 ? (
         <View style={styles.emptyContainer}>
-          <View style={styles.emptyGlass}>
-            <Text style={styles.emptyIcon}>{filterMode === 'videos' ? '🎬' : '🖼️'}</Text>
-            <Text style={styles.emptyTitle}>
-              No {filterMode === 'videos' ? 'Videos' : filterMode === 'photos' ? 'Photos' : 'Media'} Found
-            </Text>
-            <Text style={styles.emptySub}>
-              Upload {filterMode === 'videos' ? 'videos' : 'photos'} to your NAS drives to see them here.
-            </Text>
-          </View>
+          <Text style={styles.emptyIcon}>{activeSource === 'device' ? '📱' : '🖼️'}</Text>
+          <Text style={styles.emptyTitle}>
+            No {filterMode === 'photos' ? 'Photos' : filterMode === 'videos' ? 'Videos' : 'Media'} Found
+          </Text>
+          <Text style={styles.emptyText}>
+            {activeSource === 'device'
+              ? 'Tap "📱 Phone Gallery" or refresh to select device photos and videos.'
+              : 'No media detected on your configured NAS drives.'}
+          </Text>
+          {activeSource === 'device' && (
+            <TouchableOpacity style={[styles.grantBtn, { marginTop: 16 }]} activeOpacity={0.8} onPress={loadDeviceMedia}>
+              <Text style={styles.grantBtnText}>📸 Choose Photos / Videos</Text>
+            </TouchableOpacity>
+          )}
         </View>
       ) : (
         <FlatList
           data={filteredMedia}
-          keyExtractor={(item, index) => item.path || index.toString()}
+          keyExtractor={(item, index) => item.path || item.uri || index.toString()}
           numColumns={3}
           renderItem={renderMediaItem}
           contentContainerStyle={styles.gridContainer}
@@ -237,206 +367,232 @@ const styles = StyleSheet.create({
     backgroundColor: '#0B0F17',
   },
 
-  /* ── Dark Glass Topbar ─── */
+  // TOPBAR
   topbar: {
-    paddingHorizontal: 20,
-    paddingBottom: 14,
-    backgroundColor: 'rgba(15, 23, 42, 0.95)',
+    backgroundColor: 'rgba(15, 23, 42, 0.92)',
+    paddingHorizontal: 16,
+    paddingBottom: 12,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255, 255, 255, 0.08)',
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
   },
   topbarInner: {
-    marginBottom: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    marginBottom: 8,
   },
   topbarTitle: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: '800',
     color: '#F8FAFC',
     letterSpacing: -0.5,
   },
   itemCount: {
     fontSize: 13,
-    color: '#94A3B8',
-    marginTop: 3,
-    fontWeight: '500',
+    fontWeight: '600',
+    color: '#00BCD4',
   },
 
-  /* ── Filter Pills ─── */
+  // SOURCE TABS
+  sourceTabRow: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(30, 41, 59, 0.7)',
+    borderRadius: 12,
+    padding: 3,
+    marginBottom: 10,
+  },
+  sourceTab: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderRadius: 9,
+  },
+  sourceTabActive: {
+    backgroundColor: '#00BCD4',
+  },
+  sourceTabText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#94A3B8',
+  },
+  sourceTabTextActive: {
+    color: '#0B0F17',
+  },
+
+  // FILTER PILLS
   filterRow: {
     flexDirection: 'row',
     gap: 8,
   },
   filterPill: {
-    paddingVertical: 7,
     paddingHorizontal: 16,
-    borderRadius: 22,
-    backgroundColor: 'rgba(30, 41, 59, 0.75)',
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: 'rgba(30, 41, 59, 0.7)',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
   filterPillActive: {
     backgroundColor: 'rgba(0, 188, 212, 0.2)',
     borderColor: '#00BCD4',
-    elevation: 3,
-    shadowColor: '#00BCD4',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
   },
   filterPillText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     color: '#94A3B8',
   },
   filterPillTextActive: {
     color: '#22D3EE',
-    fontWeight: '800',
+    fontWeight: '700',
   },
 
-  /* ── Media Grid ─── */
+  // PERMISSION CARD
+  permissionCard: {
+    margin: 16,
+    padding: 20,
+    backgroundColor: 'rgba(30, 41, 59, 0.85)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 188, 212, 0.4)',
+    alignItems: 'center',
+  },
+  permIcon: {
+    fontSize: 36,
+    marginBottom: 8,
+  },
+  permTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#F8FAFC',
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  permText: {
+    fontSize: 13,
+    color: '#94A3B8',
+    textAlign: 'center',
+    lineHeight: 18,
+    marginBottom: 14,
+  },
+  grantBtn: {
+    backgroundColor: '#00BCD4',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  grantBtnText: {
+    color: '#0B0F17',
+    fontWeight: '800',
+    fontSize: 14,
+  },
+
+  // GRID
   gridContainer: {
     padding: GAP,
-    paddingBottom: 110,
   },
   gridCard: {
     width: COLUMN_WIDTH,
     height: COLUMN_WIDTH,
     margin: GAP / 2,
-    borderRadius: 8,
     backgroundColor: '#1E293B',
-    position: 'relative',
+    borderRadius: 8,
     overflow: 'hidden',
+    position: 'relative',
   },
   thumbnail: {
     width: '100%',
     height: '100%',
-    borderRadius: 8,
   },
 
-  /* ── Video Card ─── */
+  // VIDEO PLACEHOLDER
   videoPlaceholder: {
     width: '100%',
     height: '100%',
     backgroundColor: '#0F172A',
-    alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 8,
+    alignItems: 'center',
   },
   videoEmoji: {
-    fontSize: 30,
+    fontSize: 28,
     opacity: 0.6,
   },
   videoPlayBtn: {
     position: 'absolute',
-    bottom: 8,
-    left: 8,
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    backgroundColor: '#00BCD4',
-    alignItems: 'center',
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(0, 188, 212, 0.85)',
     justifyContent: 'center',
-    elevation: 3,
+    alignItems: 'center',
   },
   playArrow: {
     color: '#0F172A',
-    fontSize: 11,
-    marginLeft: 1,
-    fontWeight: '800',
+    fontSize: 12,
+    fontWeight: 'bold',
+    marginLeft: 2,
   },
   videoBadge: {
     position: 'absolute',
-    bottom: 6,
-    right: 6,
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
-    paddingHorizontal: 7,
+    bottom: 4,
+    right: 4,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    paddingHorizontal: 4,
     paddingVertical: 2,
-    borderRadius: 6,
+    borderRadius: 3,
   },
   videoBadgeText: {
-    color: '#38BDF8',
+    color: '#22D3EE',
     fontSize: 9,
     fontWeight: '800',
-    letterSpacing: 0.5,
   },
 
-  /* ── GIF Badge ─── */
+  // GIF BADGE
   gifBadge: {
     position: 'absolute',
-    bottom: 6,
-    left: 6,
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 6,
+    top: 4,
+    left: 4,
+    backgroundColor: '#00BCD4',
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 3,
   },
   gifText: {
-    color: '#FFFFFF',
-    fontSize: 10,
-    fontWeight: '800',
+    color: '#0F172A',
+    fontSize: 9,
+    fontWeight: '900',
   },
 
-  /* ── Loading State ─── */
-  loadingBox: {
+  // STATES
+  loadingContainer: {
     flex: 1,
-    alignItems: 'center',
     justifyContent: 'center',
-    padding: 32,
-  },
-  loadingGlass: {
     alignItems: 'center',
-    padding: 40,
-    borderRadius: 24,
-    backgroundColor: 'rgba(30, 41, 59, 0.75)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
-    elevation: 4,
   },
   loadingText: {
-    marginTop: 14,
+    marginTop: 12,
     color: '#94A3B8',
     fontSize: 14,
-    fontWeight: '500',
   },
-
-  /* ── Empty State ─── */
   emptyContainer: {
     flex: 1,
-    alignItems: 'center',
     justifyContent: 'center',
+    alignItems: 'center',
     padding: 32,
   },
-  emptyGlass: {
-    alignItems: 'center',
-    padding: 40,
-    borderRadius: 24,
-    backgroundColor: 'rgba(30, 41, 59, 0.75)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
-    elevation: 4,
-    maxWidth: 320,
-  },
   emptyIcon: {
-    fontSize: 56,
-    marginBottom: 14,
+    fontSize: 48,
+    marginBottom: 12,
   },
   emptyTitle: {
-    fontSize: 19,
-    fontWeight: '800',
+    fontSize: 18,
+    fontWeight: '700',
     color: '#F8FAFC',
-    marginBottom: 8,
-    letterSpacing: -0.3,
+    marginBottom: 6,
   },
-  emptySub: {
-    fontSize: 14,
-    color: '#94A3B8',
+  emptyText: {
+    fontSize: 13,
+    color: '#64748B',
     textAlign: 'center',
-    lineHeight: 21,
-    fontWeight: '400',
+    lineHeight: 18,
   },
 });
