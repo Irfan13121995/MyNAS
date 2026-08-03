@@ -1248,7 +1248,7 @@ async function remote(container) {
           <ol style="margin-left:18px;font-size:12px;color:var(--text-secondary);display:flex;flex-direction:column;gap:6px">
             <li><b>Domain Validated</b>: <code>mynas-hi.eu.org</code> approved at <a href="https://nic.eu.org" target="_blank" style="color:var(--accent);text-decoration:underline">nic.eu.org</a> with Cloudflare nameservers.</li>
             <li><b>Cloudflare Active</b>: Site added at <a href="https://dash.cloudflare.com" target="_blank" style="color:var(--accent);text-decoration:underline">dash.cloudflare.com</a>.</li>
-            <li><b>Create Tunnel & Paste Token</b>: Go to <a href="https://one.dash.cloudflare.com" target="_blank" style="color:var(--accent);text-decoration:underline">one.dash.cloudflare.com</a> ➔ <b>Networks ➔ Tunnels</b>, map <code>https://mynas-hi.eu.org</code> to <code>http://localhost:3000</code>, copy your token (`eyJh...`), and paste it above!</li>
+            <li><b>Create Tunnel & Paste Token</b>: Go to <a href="https://one.dash.cloudflare.com" target="_blank" style="color:var(--accent);text-decoration:underline">one.dash.cloudflare.com</a> ➔ <b>Networks ➔ Tunnels</b>, map <code>https://mynas-hi.eu.org</code> to <code>http://localhost:3000</code>, copy your token (<code>eyJh...</code>), and paste it above!</li>
           </ol>
         </div>
       </div>
