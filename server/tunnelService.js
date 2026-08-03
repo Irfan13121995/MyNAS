@@ -128,10 +128,21 @@ async function startTunnel(port = 3000, requestedMode = 'quick', token = '', cus
 
       const handleOutput = (data) => {
         const output = data.toString();
-        
+
+        if (output.includes('Invalid tunnel secret') || output.includes('Unauthorized')) {
+          if (!resolved) {
+            resolved = true;
+            tunnelStatus = 'error';
+            tunnelError = 'Cloudflare rejected token: Invalid tunnel secret. Please copy a fresh token from Cloudflare Zero Trust.';
+            stopTunnel();
+            reject(new Error(tunnelError));
+          }
+          return;
+        }
+
         if (requestedMode === 'named') {
-          // For named tunnels, connection established logs indicate success
-          if ((output.includes('Registered tunnel connection') || output.includes('Connection') || output.includes('Infra')) && !resolved) {
+          // Check for successful registration line
+          if ((output.includes('Registered tunnel connection') || output.includes('Registered connector')) && !resolved) {
             resolved = true;
             tunnelStatus = 'running';
             saveNamedTunnelConfig({ mode: 'named', token, customUrl });
