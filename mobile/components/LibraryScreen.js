@@ -30,6 +30,27 @@ function isVideoFile(item) {
   return VIDEO_EXTS.has(normalizeExt(item));
 }
 
+const ImageItem = React.memo(({ thumbUri }) => {
+  const [error, setError] = useState(false);
+  if (error) {
+    return (
+      <View style={[styles.thumbnail, { alignItems: 'center', justifyContent: 'center', backgroundColor: '#1E293B' }]}>
+        <Text style={{fontSize: 24}}>🖼️</Text>
+      </View>
+    );
+  }
+  return (
+    <Image
+      source={{ uri: thumbUri }}
+      style={styles.thumbnail}
+      contentFit="cover"
+      transition={200}
+      placeholder={require('../assets/icon.png')}
+      onError={() => setError(true)}
+    />
+  );
+});
+
 export default function LibraryScreen({ serverUrl, token, initialFilter = 'all', onSelectMedia }) {
   const [activeSource, setActiveSource] = useState('nas'); // 'nas' | 'device'
   const [loading, setLoading] = useState(true);
@@ -43,6 +64,7 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
   const [showExtModal, setShowExtModal] = useState(false);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   useEffect(() => {
     if (initialFilter) {
@@ -96,7 +118,8 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
   };
 
   const loadMoreMedia = async () => {
-    if (activeSource !== 'nas' || !hasMore || loading || refreshing) return;
+    if (activeSource !== 'nas' || !hasMore || loading || refreshing || loadingMore) return;
+    setLoadingMore(true);
     try {
       const nextPage = page + 1;
       const res = await fetch(`${serverUrl}/api/gallery?page=${nextPage}&limit=50`, {
@@ -110,6 +133,8 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
       }
     } catch (err) {
       console.warn('Failed to load more media:', err);
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -204,27 +229,6 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
       return true;
     });
   }, [activeMediaList, filterMode, extFilter]);
-
-  const ImageItem = ({ thumbUri }) => {
-    const [error, setError] = useState(false);
-    if (error) {
-      return (
-        <View style={[styles.thumbnail, { alignItems: 'center', justifyContent: 'center', backgroundColor: '#1E293B' }]}>
-          <Text style={{fontSize: 24}}>🖼️</Text>
-        </View>
-      );
-    }
-    return (
-      <Image
-        source={{ uri: thumbUri }}
-        style={styles.thumbnail}
-        contentFit="cover"
-        transition={200}
-        placeholder={require('../assets/icon.png')}
-        onError={() => setError(true)}
-      />
-    );
-  };
 
   const renderMediaItem = useCallback(({ item }) => {
     const thumbUri = item.isDevice

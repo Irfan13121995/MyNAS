@@ -177,7 +177,7 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
   }
 });
 
-app.post('/api/auth/login', authLimiter, (req, res) => {
+app.post('/api/auth/login', authLimiter, async (req, res) => {
   const { passcode, username, password } = req.body;
   
   if (passcode) {
@@ -190,7 +190,7 @@ app.post('/api/auth/login', authLimiter, (req, res) => {
   }
   
   if (username && password) {
-    const result = usersService.verifyPassword(username, password);
+    const result = await usersService.verifyPassword(username, password);
     if (result.success) {
       const token = jwt.sign({ authenticated: true, username: result.user.username }, JWT_SECRET, { expiresIn: '7d' });
       logActivity('auth', 'Dashboard login: ' + result.user.username);
@@ -684,16 +684,19 @@ app.post('/api/files/batch-zip', authenticateToken, async (req, res) => {
 
   res.attachment('nas_archive.zip');
   const archive = archiver('zip', { zlib: { level: 6 } });
+  archive.on('error', (err) => { console.error('Archiver error:', err); if (!res.headersSent) res.status(500).json({ error: err.message }); });
   archive.pipe(res);
 
   for (const p of paths) {
-    if (fs.existsSync(p)) {
-      const stat = fs.statSync(p);
+    try {
+      const stat = await fs.promises.stat(p);
       if (stat.isFile()) {
         archive.file(p, { name: path.basename(p) });
       } else if (stat.isDirectory()) {
         archive.directory(p, path.basename(p));
       }
+    } catch (err) {
+      // Ignore if not exists
     }
   }
   archive.finalize();

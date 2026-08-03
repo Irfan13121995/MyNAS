@@ -322,6 +322,10 @@ export default function FileViewerModal({ file, mediaList = [], serverUrl, token
                 getItemLayout={(data, index) => ({ length: width, offset: width * index, index })}
                 onMomentumScrollEnd={onScrollEnd}
                 renderItem={renderSingleMediaItem}
+                windowSize={3}
+                removeClippedSubviews={true}
+                maxToRenderPerBatch={3}
+                initialNumToRender={1}
               />
             </>
           ) : isImage ? (

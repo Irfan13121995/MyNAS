@@ -16,13 +16,19 @@ function ensureCacheDir() {
   }
 }
 
-function getCacheKey(filePath) {
-  return crypto.createHash('md5').update(filePath).digest('hex') + '.webp';
-}
-
 async function getOrGenerateThumbnail(filePath, size = 250) {
   ensureCacheDir();
-  const cacheKey = getCacheKey(filePath);
+  
+  let mtimeMs = 0;
+  try {
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile()) return filePath;
+    mtimeMs = stat.mtimeMs;
+  } catch (err) {
+    return filePath;
+  }
+
+  const cacheKey = crypto.createHash('md5').update(`${filePath}_${mtimeMs}`).digest('hex') + '.webp';
   const cachePath = path.join(CACHE_DIR, cacheKey);
 
   // Return cached thumbnail if exists
@@ -31,9 +37,7 @@ async function getOrGenerateThumbnail(filePath, size = 250) {
   }
 
   // Generate thumbnail using sharp if available
-  if (sharp && fs.existsSync(filePath)) {
-    const stat = fs.statSync(filePath);
-    if (!stat.isFile()) return filePath;
+  if (sharp) {
     try {
       await sharp(filePath)
         .resize(size, size, { fit: 'cover' })

@@ -37,6 +37,33 @@ TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
   }
 });
 
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error('Uncaught error:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <View style={{flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0B0F17'}}>
+          <Text style={{color: '#fff', fontSize: 18, marginBottom: 20}}>Something went wrong.</Text>
+          <Text style={{color: '#00BCD4', fontSize: 16}} onPress={() => this.setState({hasError: false})}>Restart App</Text>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function App() {
   const [loading, setLoading] = useState(true);
   const [serverUrl, setServerUrl] = useState(null);
@@ -51,8 +78,12 @@ export default function App() {
   const [activeMediaList, setActiveMediaList] = useState([]);
 
   useEffect(() => {
-    bootstrapAsync();
+    const controller = new AbortController();
+    bootstrapAsync(controller.signal);
     registerBackgroundSync();
+    return () => {
+      controller.abort();
+    };
   }, []);
 
   const registerBackgroundSync = async () => {
@@ -70,20 +101,20 @@ export default function App() {
     }
   };
 
-  const bootstrapAsync = async () => {
+  const bootstrapAsync = async (signal) => {
     try {
       const storedUrl = await getSecureItem('nas_server_url');
       const storedToken = await getSecureItem('nas_jwt_token');
 
       if (storedUrl && storedToken) {
-        const ok = await verifyToken(storedUrl, storedToken);
+        const ok = await verifyToken(storedUrl, storedToken, signal);
         if (ok) {
           // Biometric prompt on launch if enrolled
           const bioRes = await authenticateBiometric('Unlock Personal NAS');
           if (bioRes && bioRes.success) {
             setServerUrl(storedUrl);
             setToken(storedToken);
-            fetchDrives(storedUrl, storedToken);
+            fetchDrives(storedUrl, storedToken, signal);
           } else {
             handleLogout();
           }
@@ -92,16 +123,19 @@ export default function App() {
         }
       }
     } catch (e) {
-      console.warn('Bootstrapping error:', e);
+      if (e.name !== 'AbortError') {
+        console.warn('Bootstrapping error:', e);
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  const verifyToken = async (url, jwtToken) => {
+  const verifyToken = async (url, jwtToken, signal) => {
     try {
       const res = await fetch(`${url}/api/auth/verify`, {
-        headers: { Authorization: `Bearer ${jwtToken}` }
+        headers: { Authorization: `Bearer ${jwtToken}` },
+        signal: signal || AbortSignal.timeout(8000)
       });
       return res.ok;
     } catch (e) {
@@ -109,17 +143,20 @@ export default function App() {
     }
   };
 
-  const fetchDrives = async (url, jwtToken) => {
+  const fetchDrives = async (url, jwtToken, signal) => {
     try {
       const res = await fetch(`${url}/api/drives`, {
-        headers: { Authorization: `Bearer ${jwtToken}` }
+        headers: { Authorization: `Bearer ${jwtToken}` },
+        signal: signal || AbortSignal.timeout(8000)
       });
       if (res.ok) {
         const data = await res.json();
         setDrives(data || []);
       }
     } catch (e) {
-      console.warn('Failed to load drives:', e);
+      if (e.name !== 'AbortError') {
+        console.warn('Failed to load drives:', e);
+      }
     }
   };
 
@@ -167,7 +204,8 @@ export default function App() {
   }
 
   return (
-    <View style={styles.rootWrapper}>
+    <ErrorBoundary>
+      <View style={styles.rootWrapper}>
       <StatusBar barStyle="light-content" backgroundColor="#0B0F17" translucent={false} />
       <SafeAreaView style={styles.container}>
 
@@ -257,6 +295,7 @@ export default function App() {
         />
       )}
     </View>
+    </ErrorBoundary>
   );
 }
 

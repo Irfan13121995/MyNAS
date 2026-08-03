@@ -131,6 +131,7 @@ async function scanMediaDirectory(dirPath, driveLetter, mediaList = [], depth = 
 
 let mediaGalleryCache = { data: null, timestamp: 0, targetDrive: null };
 const GALLERY_CACHE_TTL = 5000; // 5 seconds in-memory TTL cache
+let pendingScanPromise = null;
 
 /**
  * Collects all media files across all or specific registered NAS drives.
@@ -145,30 +146,44 @@ async function getMediaGallery(targetDrive = null) {
     return mediaGalleryCache.data;
   }
 
-  const allDrives = await getDrives();
-  const allowedPaths = driveConfig.getAllowedPaths();
-
-  let drivesToScan = allDrives;
-  if (allowedPaths !== null) {
-    drivesToScan = allDrives.filter(d =>
-      allowedPaths.includes(d.letter) || allowedPaths.includes(d.letter + '\\')
-    );
+  const cacheKey = targetDrive || '__all__';
+  if (pendingScanPromise && pendingScanPromise.key === cacheKey) {
+    return pendingScanPromise.promise;
   }
 
-  if (targetDrive && targetDrive !== 'ALL') {
-    const normalizedTarget = targetDrive.toUpperCase().replace(/[/\\]+$/, '');
-    drivesToScan = drivesToScan.filter(d => d.letter.toUpperCase().startsWith(normalizedTarget));
-  }
+  const scanPromise = (async () => {
+    const allDrives = await getDrives();
+    const allowedPaths = driveConfig.getAllowedPaths();
 
-  let allMedia = [];
-  for (const drive of drivesToScan) {
-    const driveMedia = await scanMediaDirectory(drive.letter + path.sep, drive.letter);
-    allMedia = allMedia.concat(driveMedia);
-  }
+    let drivesToScan = allDrives;
+    if (allowedPaths !== null) {
+      drivesToScan = allDrives.filter(d =>
+        allowedPaths.includes(d.letter) || allowedPaths.includes(d.letter + '\\')
+      );
+    }
 
-  const sortedMedia = allMedia.sort((a, b) => new Date(b.modifiedAt) - new Date(a.modifiedAt));
-  mediaGalleryCache = { data: sortedMedia, timestamp: now, targetDrive };
-  return sortedMedia;
+    if (targetDrive && targetDrive !== 'ALL') {
+      const normalizedTarget = targetDrive.toUpperCase().replace(/[/\\]+$/, '');
+      drivesToScan = drivesToScan.filter(d => d.letter.toUpperCase().startsWith(normalizedTarget));
+    }
+
+    let allMedia = [];
+    for (const drive of drivesToScan) {
+      const driveMedia = await scanMediaDirectory(drive.letter + path.sep, drive.letter);
+      allMedia = allMedia.concat(driveMedia);
+    }
+
+    const sortedMedia = allMedia.sort((a, b) => new Date(b.modifiedAt) - new Date(a.modifiedAt));
+    mediaGalleryCache = { data: sortedMedia, timestamp: Date.now(), targetDrive };
+    return sortedMedia;
+  })();
+
+  pendingScanPromise = { key: cacheKey, promise: scanPromise };
+  try {
+    return await scanPromise;
+  } finally {
+    pendingScanPromise = null;
+  }
 }
 
 /**

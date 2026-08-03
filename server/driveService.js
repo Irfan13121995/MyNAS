@@ -1,16 +1,24 @@
 const { exec } = require('child_process');
 const path = require('path');
 
+let driveCache = { data: null, timestamp: 0 };
+const DRIVE_CACHE_TTL = 5000;
+
 /**
  * Retrieves logical drives and detects if they are external USB drives.
  * @returns {Promise<Array<{letter: string, name: string, size: number, freeSpace: number, type: number, isUsb: boolean}>>}
  */
-function getDrives() {
+async function getDrives() {
+  const now = Date.now();
+  if (driveCache.data && now - driveCache.timestamp < DRIVE_CACHE_TTL) {
+    return driveCache.data;
+  }
+
   return new Promise((resolve, reject) => {
     const psScript = `Get-WmiObject Win32_LogicalDisk | ForEach-Object { $disk = $_; $driveLetter = $disk.DeviceID; $driveType = $disk.DriveType; $volumeName = $disk.VolumeName; $size = $disk.Size; $freeSpace = $disk.FreeSpace; $isUsb = $false; if ($driveType -eq 2) { $isUsb = $true } elseif ($driveType -eq 3) { try { $partition = Get-WmiObject -Query "Association of {Win32_LogicalDisk.DeviceID='$driveLetter'} where AssocClass=Win32_LogicalDiskToPartition" -ErrorAction SilentlyContinue; if ($partition) { $partitionId = $partition.DeviceID; $diskDrive = Get-WmiObject -Query "Association of {Win32_DiskPartition.DeviceID='$partitionId'} where AssocClass=Win32_DiskDriveToDiskPartition" -ErrorAction SilentlyContinue; if ($diskDrive -and ($diskDrive.InterfaceType -eq 'USB' -or $diskDrive.Caption -match 'USB')) { $isUsb = $true } } } catch {} }; [PSCustomObject]@{ letter = $driveLetter; name = $volumeName; size = $size; freeSpace = $freeSpace; type = $driveType; isUsb = $isUsb } } | ConvertTo-Json -Compress`;
     const command = `powershell -NoProfile -ExecutionPolicy Bypass -Command "${psScript}"`;
 
-    exec(command, (error, stdout, stderr) => {
+    exec(command, { timeout: 5000 }, (error, stdout, stderr) => {
       if (error) {
         return reject(error);
       }
@@ -31,6 +39,7 @@ function getDrives() {
           isUsb: !!d.isUsb
         }));
         
+        driveCache = { data: formattedDrives, timestamp: Date.now() };
         resolve(formattedDrives);
       } catch (err) {
         reject(new Error(`Failed to parse drives output: ${err.message}. Raw output: ${stdout}`));

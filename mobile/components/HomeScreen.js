@@ -20,7 +20,7 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
   const [exploreVisible, setExploreVisible] = useState(false);
   const [explorePath, setExplorePath] = useState('');
 
-  const fetchRecentFiles = async () => {
+  const fetchRecentFiles = async (signal) => {
     // Stale-While-Revalidate: Load from local cache instantly first
     const cached = await cacheService.get('home_recent_files');
     if (cached && cached.length > 0) {
@@ -30,14 +30,16 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
 
     try {
       const res = await fetch(`${serverUrl}/api/files`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
+        signal
       });
       if (res.ok) {
         const drives = await res.json();
         if (drives && drives.length > 0) {
           const drivePath = drives[0].path;
           const subRes = await fetch(`${serverUrl}/api/files?path=${encodeURIComponent(drivePath)}`, {
-            headers: { Authorization: `Bearer ${token}` }
+            headers: { Authorization: `Bearer ${token}` },
+            signal
           });
           if (subRes.ok) {
             const fileList = await subRes.json();
@@ -47,7 +49,9 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
         }
       }
     } catch (err) {
-      console.warn('Failed to fetch recent files:', err);
+      if (err.name !== 'AbortError') {
+        console.warn('Failed to fetch recent files:', err);
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -55,7 +59,11 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
   };
 
   useEffect(() => {
-    fetchRecentFiles();
+    const controller = new AbortController();
+    fetchRecentFiles(controller.signal);
+    return () => {
+      controller.abort();
+    };
   }, []);
 
   // Global Multi-Disk Search Effect
@@ -66,24 +74,31 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
       return;
     }
 
+    const controller = new AbortController();
     const timer = setTimeout(async () => {
       setIsSearching(true);
       try {
         const res = await fetch(`${serverUrl}/api/files/search?q=${encodeURIComponent(searchQuery.trim())}`, {
-          headers: { Authorization: `Bearer ${token}` }
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal
         });
         if (res.ok) {
           const data = await res.json();
           setSearchResults(data || []);
         }
       } catch (err) {
-        console.warn('Failed to search across NAS disks:', err);
+        if (err.name !== 'AbortError') {
+          console.warn('Failed to search across NAS disks:', err);
+        }
       } finally {
         setIsSearching(false);
       }
     }, 350);
 
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
   }, [searchQuery, serverUrl, token]);
 
   const onRefresh = () => {

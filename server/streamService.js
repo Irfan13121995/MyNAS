@@ -55,8 +55,10 @@ async function streamFile(filePath, req, res) {
     if (range) {
       // Parse Range header format: "bytes=start-end"
       const parts = range.replace(/bytes=/, "").split("-");
-      const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      let start = parts[0] ? parseInt(parts[0], 10) : 0;
+      let end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      if (isNaN(start)) start = Math.max(0, fileSize - (end || 0));
+      if (isNaN(end) || end >= fileSize) end = fileSize - 1;
 
       // Validate range constraints
       if (start >= fileSize || end >= fileSize || start > end) {
@@ -67,6 +69,8 @@ async function streamFile(filePath, req, res) {
       const chunkSize = (end - start) + 1;
       const fileStream = fs.createReadStream(validatedPath, { start, end });
       
+      fileStream.on('error', (err) => { console.error('Stream error:', err); if (!res.headersSent) res.status(500).end(); });
+
       res.writeHead(206, {
         'Content-Range': `bytes ${start}-${end}/${fileSize}`,
         'Content-Length': chunkSize,
@@ -81,6 +85,7 @@ async function streamFile(filePath, req, res) {
     } else {
       res.writeHead(200, { 'Content-Length': fileSize });
       const fileStream = fs.createReadStream(validatedPath);
+      fileStream.on('error', (err) => { console.error('Stream error:', err); if (!res.headersSent) res.status(500).end(); });
       fileStream.pipe(res);
       
       req.on('close', () => {

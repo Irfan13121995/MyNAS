@@ -123,7 +123,7 @@ async function createUser({ username, email, password }) {
   return { user, emailResult };
 }
 
-function verifyPassword(username, password) {
+async function verifyPassword(username, password) {
   const user = getUserByUsername(username);
   if (!user) return { success: false, reason: 'user_not_found' };
 
@@ -137,7 +137,7 @@ function verifyPassword(username, password) {
     };
   }
 
-  const isMatch = bcrypt.compareSync(password, user.passwordHash);
+  const isMatch = await bcrypt.compare(password, user.passwordHash);
   if (isMatch) {
     db.prepare('UPDATE users SET failed_attempts = 0, lock_until = 0 WHERE id = ?').run(user.id);
 
