@@ -214,7 +214,42 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
             placeholderTextColor="#64748B"
             value={searchQuery}
             onChangeText={setSearchQuery}
+            returnKeyType="search"
+            onSubmitEditing={() => {
+              if (searchQuery && searchQuery.trim().length >= 1) {
+                setIsSearching(true);
+                fetch(`${serverUrl}/api/files/search?q=${encodeURIComponent(searchQuery.trim())}`, {
+                  headers: { Authorization: `Bearer ${token}` }
+                })
+                .then(res => res.json())
+                .then(data => setSearchResults(data || []))
+                .catch(err => console.warn('Search error:', err))
+                .finally(() => setIsSearching(false));
+              }
+            }}
           />
+          <TouchableOpacity
+            style={styles.searchSubmitBtn}
+            activeOpacity={0.8}
+            onPress={() => {
+              if (searchQuery && searchQuery.trim().length >= 1) {
+                setIsSearching(true);
+                fetch(`${serverUrl}/api/files/search?q=${encodeURIComponent(searchQuery.trim())}`, {
+                  headers: { Authorization: `Bearer ${token}` }
+                })
+                .then(res => res.json())
+                .then(data => setSearchResults(data || []))
+                .catch(err => console.warn('Search error:', err))
+                .finally(() => setIsSearching(false));
+              }
+            }}
+          >
+            {isSearching ? (
+              <ActivityIndicator size="small" color="#0F172A" />
+            ) : (
+              <Text style={styles.searchSubmitBtnText}>Search</Text>
+            )}
+          </TouchableOpacity>
         </View>
         <TouchableOpacity style={styles.headerBtn} onPress={() => Alert.alert('Activity Log', 'NAS File synchronization active.')}>
           <Text style={styles.headerBtnIcon}>📋</Text>
@@ -394,6 +429,18 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#F8FAFC',
     fontWeight: '500',
+  },
+  searchSubmitBtn: {
+    backgroundColor: '#00BCD4',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    marginLeft: 6,
+  },
+  searchSubmitBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0F172A',
   },
   headerBtn: {
     padding: 10,
