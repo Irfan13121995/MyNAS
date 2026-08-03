@@ -1293,6 +1293,39 @@ async function remote(container) {
     navigate('remote');
   });
 
+  document.getElementById('save-named-tunnel-btn')?.addEventListener('click', async () => {
+    const rawToken = document.getElementById('named-token-input').value.trim();
+    const customUrl = document.getElementById('named-domain-input').value.trim() || 'https://mynas-hi.eu.org';
+    const btn = document.getElementById('save-named-tunnel-btn');
+
+    if (!rawToken) {
+      toast('Please paste your Cloudflare Zero Trust Tunnel Token', 'error');
+      return;
+    }
+
+    // Automatically extract token if user pasted full command like "cloudflared.exe service install eyJh..."
+    let token = rawToken;
+    const tokenMatch = rawToken.match(/ey[A-Za-z0-9_-]+/);
+    if (tokenMatch) {
+      token = tokenMatch[0];
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Connecting Permanent Tunnel...';
+    toast('Starting Cloudflare Named Tunnel...', 'info');
+
+    const res = await POST('/api/tunnel/configure-named', { token, customUrl });
+    btn.disabled = false;
+    btn.textContent = '🔒 Save & Connect ' + customUrl;
+
+    if (res?.ok) {
+      toast('Permanent Named Tunnel connected successfully!', 'success');
+      navigate('remote');
+    } else {
+      toast(res?.data?.error || 'Failed to connect named tunnel', 'error');
+    }
+  });
+
   if (isRunning && tunnel.url) {
     const qrContainer = document.getElementById('qr-container');
     if (qrContainer) {
