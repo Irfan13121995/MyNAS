@@ -1399,36 +1399,7 @@ async function settings(container) {
 
   container.innerHTML = `
     <div class="page">
-      <div class="page-header">
-        <div class="page-header-info">
-          <h2>Settings</h2>
-          <p>Server configuration, user management and security</p>
-        </div>
-        <div id="theme-toggle-switch" class="custom-theme-switch" role="button" tabindex="0" title="Toggle Light/Dark Mode">
-          <div class="switch-track">
-            <span class="switch-label dark-label">DARK<br>MODE</span>
-            <div class="switch-thumb">
-              <svg class="icon-sun" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="4"></circle>
-                <line x1="12" y1="2" x2="12" y2="5"></line>
-                <line x1="12" y1="19" x2="12" y2="22"></line>
-                <line x1="4.22" y1="4.22" x2="6.34" y2="6.34"></line>
-                <line x1="17.66" y1="17.66" x2="19.78" y2="19.78"></line>
-                <line x1="2" y1="12" x2="5" y2="12"></line>
-                <line x1="19" y1="12" x2="22" y2="12"></line>
-                <line x1="4.22" y1="19.78" x2="6.34" y2="17.66"></line>
-                <line x1="17.66" y1="6.34" x2="19.78" y2="4.22"></line>
-              </svg>
-              <svg class="icon-moon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
-                <path d="M18 4l1 2 2 1-2 1-1 2-1-2-2-1 2-1z" fill="currentColor" stroke="none"></path>
-                <path d="M14 2l.5 1 1 .5-1 .5-.5 1-.5-1-1-.5 1-.5z" fill="currentColor" stroke="none"></path>
-              </svg>
-            </div>
-            <span class="switch-label light-label">LIGHT<br>MODE</span>
-          </div>
-        </div>
-      </div>
+      <div class="page-header"><h2>Settings</h2><p>Server configuration, user management and security</p></div>
 
       <div class="card settings-section" style="margin-bottom:20px">
         <div class="card-header" style="margin-bottom:12px">
@@ -1475,22 +1446,6 @@ async function settings(container) {
         <div class="settings-row"><div class="settings-row-info"><h4>Uptime</h4></div><span>${sys.uptime||'—'}</span></div>
       </div>
     </div>`;
-
-  const switchEl = container.querySelector('#theme-toggle-switch');
-  if (switchEl) {
-    switchEl.addEventListener('click', () => {
-      const current = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
-      const nextTheme = current === 'light' ? 'dark' : 'light';
-      localStorage.setItem('nas-theme', nextTheme);
-      applyTheme(nextTheme);
-    });
-    switchEl.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        switchEl.click();
-      }
-    });
-  }
 }
 
 function initPinBoxes() {
