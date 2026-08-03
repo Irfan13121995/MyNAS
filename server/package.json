@@ -1,12 +1,14 @@
 {
   "name": "personal-nas-server",
   "version": "1.0.0",
-  "description": "Windows 11 Personal NAS Server",
-  "bin": "index.js",
-  "main": "index.js",
+  "productName": "Personal NAS",
+  "description": "Enterprise-grade self-hosted Personal NAS Server for Windows",
+  "author": "Irfan",
+  "main": "main.js",
   "scripts": {
     "start": "node index.js",
-    "build:exe": "npx pkg . --targets node18-win-x64 --output dist/personal-nas.exe"
+    "desktop": "electron .",
+    "dist": "electron-builder --win nsis"
   },
   "dependencies": {
     "archiver": "^8.0.0",
@@ -23,9 +25,45 @@
     "nodemailer": "^9.0.3",
     "sharp": "^0.35.3"
   },
-  "pkg": {
-    "assets": [
-      "public/**/*"
-    ]
+  "devDependencies": {
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
+    "pkg": "^5.8.1"
+  },
+  "build": {
+    "appId": "com.irfan.personalnas",
+    "productName": "Personal NAS",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "index.js",
+      "dbService.js",
+      "usersService.js",
+      "fileService.js",
+      "driveService.js",
+      "driveConfigService.js",
+      "thumbnailService.js",
+      "trashService.js",
+      "streamService.js",
+      "tunnelService.js",
+      "emailService.js",
+      "public/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "public/favicon.png"
+    },
+    "npmRebuild": false,
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Personal NAS",
+      "runAfterFinish": true
+    }
   }
 }
