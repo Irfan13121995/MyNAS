@@ -4,6 +4,7 @@ import {
   Switch, ActivityIndicator, Alert, ScrollView, TextInput
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Device from 'expo-device';
 import { requestMediaPermissions, getNewMediaToSync, runFullSync } from '../services/syncService';
 
 export default function AutoSyncModal({ visible, serverUrl, token, drives, onClose }) {
@@ -35,8 +36,12 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
       const savedCount = await AsyncStorage.getItem('autosync_synced_count');
       const savedTime = await AsyncStorage.getItem('autosync_last_sync_time');
 
+      const deviceName = Device.modelName || Device.deviceName || 'Android Phone';
+      const defaultFolder = `Mobile Backups\\${deviceName}\\Photos`;
+
       if (savedDrive) setSelectedDrive(savedDrive);
       if (savedFolder) setSyncFolder(savedFolder);
+      else setSyncFolder(defaultFolder);
       if (savedEnabled !== null) setEnabled(savedEnabled === 'true');
       if (savedType) setMediaType(savedType);
       if (savedCount) setSyncedCount(parseInt(savedCount, 10));
