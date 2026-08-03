@@ -10,8 +10,8 @@ export default function ConnectionScreen({ onConnect }) {
   const [authMode, setAuthMode] = useState('passcode'); // 'passcode' | 'login' | 'register'
 
   // Server location
-  const [ipAddress, setIpAddress] = useState('192.168.1.100');
-  const [port, setPort] = useState('3001');
+  const [ipAddress, setIpAddress] = useState('10.31.30.50');
+  const [port, setPort] = useState('3000');
 
   // Credentials
   const [passcode, setPasscode] = useState('881612');
@@ -33,7 +33,7 @@ export default function ConnectionScreen({ onConnect }) {
       cleanUrl = `http://${cleanUrl}`;
     }
     if (!cleanUrl.includes('trycloudflare.com') && !cleanUrl.includes(':')) {
-      cleanUrl = `${cleanUrl}:${port || '3001'}`;
+      cleanUrl = `${cleanUrl}:${port || '3000'}`;
     }
     return cleanUrl;
   };
@@ -96,7 +96,15 @@ export default function ConnectionScreen({ onConnect }) {
 
       onConnect(cleanUrl, data.token);
     } catch (err) {
-      Alert.alert('Connection Failed', err.message || 'Could not connect to Personal NAS server.');
+      const msg = err.message || '';
+      if (msg.includes('UnknownHostException') || msg.includes('Unable to resolve host') || msg.includes('Network request failed')) {
+        Alert.alert(
+          'Tunnel / Host Expired',
+          `Unable to resolve server address: "${cleanUrl}".\n\nThe Cloudflare Tunnel domain has expired or changed.\n\n👉 Solution:\n1. If on local Wi-Fi, enter IP: http://10.31.30.50:3000\n2. Or scan the fresh QR code on your Windows Web Dashboard.`
+        );
+      } else {
+        Alert.alert('Connection Failed', msg || 'Could not connect to Personal NAS server.');
+      }
     } finally {
       setLoading(false);
     }
