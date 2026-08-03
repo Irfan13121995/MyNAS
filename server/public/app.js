@@ -1166,32 +1166,33 @@ async function backup(container) {
 // PAGE: REMOTE ACCESS
 // ═════════════════════════════════════════════════════════════════════════════
 async function remote(container) {
-  const r = await GET('/api/tunnel/status');
-  const tunnel = r?.data || {};
+  const tunnel = await GET('/api/tunnel/status').then(r => r?.data || {});
+  const sys = await GET('/api/system').then(r => r?.data || {});
   const isRunning = tunnel.status === 'running';
-  const sysR = await GET('/api/system');
-  const sys = sysR?.data || {};
+  const savedConfig = tunnel.savedConfig || {};
 
   container.innerHTML = `
     <div class="page">
-      <div class="page-header"><h2>Remote Access</h2><p>Cloudflare Tunnel — access your NAS from anywhere on the internet</p></div>
+      <div class="page-header">
+        <h2>Remote Access</h2>
+        <p>Access your Personal NAS securely from anywhere over Cloudflare Tunnels (100% Free)</p>
+      </div>
 
-      <div class="card" style="margin-bottom:20px;background:${isRunning?'linear-gradient(135deg,var(--bg-card) 0%,rgba(63,185,80,0.06) 100%)':'var(--bg-card)'}">
+      <div class="card" style="margin-bottom:20px">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px">
           <div style="display:flex;align-items:center;gap:16px">
             <div style="font-size:40px">${isRunning?'🌐':'🔌'}</div>
             <div>
               <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
-                <h3 style="font-size:18px;font-weight:700">${isRunning?'Tunnel Active':'Tunnel Inactive'}</h3>
-                <span class="badge ${isRunning?'badge-green':''}">● ${isRunning?'Running':'Stopped'}</span>
+                <h3 style="font-size:18px;font-weight:700">${isRunning ? (tunnel.mode === 'named' ? 'Permanent Named Tunnel Active' : 'Quick Tunnel Active') : 'Tunnel Inactive'}</h3>
+                <span class="badge ${isRunning ? 'badge-green' : ''}">● ${isRunning ? 'Running' : 'Stopped'}</span>
+                <span class="badge ${tunnel.mode === 'named' ? 'badge-purple' : 'badge-blue'}">${tunnel.mode === 'named' ? 'Custom Domain' : 'Quick URL'}</span>
               </div>
               <p style="color:var(--text-secondary);font-size:13px">
-                ${isRunning?'Your NAS is accessible from the internet via Cloudflare Quick Tunnel.':'Start a Cloudflare Quick Tunnel to access this NAS from any device, anywhere.'}
+                ${isRunning ? `Accessible at ${tunnel.url}` : 'Start a Quick Tunnel or configure a Permanent Named Tunnel with your custom domain.'}
               </p>
             </div>
           </div>
-          <button class="btn ${isRunning?'btn-danger':'btn-primary'}" id="tunnel-toggle-btn">
-            ${isRunning?'⏹ Stop Tunnel':'🚀 Start Tunnel'}
           </button>
         </div>
 

@@ -45,7 +45,7 @@ require('dotenv').config();
 const { getDrives } = require('./driveService');
 const { listFiles, validatePath, getMediaGallery } = require('./fileService');
 const { streamFile } = require('./streamService');
-const { startTunnel, stopTunnel, getTunnelStatus } = require('./tunnelService');
+const { startTunnel, stopTunnel, getTunnelStatus, getNamedTunnelConfig, saveNamedTunnelConfig } = require('./tunnelService');
 const driveConfig = require('./driveConfigService');
 const usersService = require('./usersService');
 const thumbnailService = require('./thumbnailService');
@@ -506,11 +506,37 @@ app.get('/api/tunnel/status', authenticateToken, (req, res) => res.json(getTunne
 
 app.post('/api/tunnel/start', authenticateToken, async (req, res) => {
   try {
-    const url = await startTunnel(PORT);
-    logActivity('tunnel', `Tunnel activated: ${url}`);
-    res.json({ success: true, url });
+    const { mode, token, customUrl } = req.body || {};
+    const savedConfig = getNamedTunnelConfig();
+    
+    const targetMode = mode || savedConfig.mode || 'quick';
+    const targetToken = token || savedConfig.token || '';
+    const targetCustomUrl = customUrl || savedConfig.customUrl || '';
+
+    const url = await startTunnel(PORT, targetMode, targetToken, targetCustomUrl);
+    logActivity('tunnel', `Tunnel (${targetMode}) activated: ${url}`);
+    res.json({ success: true, mode: targetMode, url });
   } catch (err) {
     res.status(500).json({ error: `Failed to start tunnel: ${err.message}` });
+  }
+});
+
+app.post('/api/tunnel/configure-named', authenticateToken, async (req, res) => {
+  try {
+    const { token, customUrl } = req.body || {};
+    if (!token) {
+      return res.status(400).json({ error: 'Cloudflare Zero Trust Tunnel Token is required' });
+    }
+
+    saveNamedTunnelConfig({ mode: 'named', token: token.trim(), customUrl: (customUrl || '').trim() });
+    
+    // Restart tunnel with new named configuration
+    stopTunnel();
+    const url = await startTunnel(PORT, 'named', token.trim(), (customUrl || '').trim());
+    logActivity('tunnel', `Permanent Named Tunnel configured: ${url}`);
+    res.json({ success: true, mode: 'named', url });
+  } catch (err) {
+    res.status(500).json({ error: `Failed to configure named tunnel: ${err.message}` });
   }
 });
 
