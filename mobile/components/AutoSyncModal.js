@@ -87,56 +87,41 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
     }
     
     setIsSyncing(true);
-    setSyncStatus('Requesting permissions...');
+    setSyncStatus('Preparing gallery sync...');
     
-    const hasPerm = await requestMediaPermissions();
-    if (hasPerm && hasPerm.success === false) {
-      Alert.alert('Unavailable', hasPerm.message);
-      setIsSyncing(false);
-      setSyncStatus('Idle');
-      return;
-    }
-    if (!hasPerm) {
-      Alert.alert('Permission Denied', 'Media library access is required for auto-sync.');
-      setIsSyncing(false);
-      setSyncStatus('Idle');
-      return;
-    }
-
     try {
-      setSyncStatus('Scanning phone gallery & fetching manifest...');
       const targetPath = selectedDrive ? `${selectedDrive}\\${syncFolder}` : syncFolder;
-      
-      const { newFiles, totalOnDevice, alreadySynced } = await getNewMediaToSync(serverUrl, token, targetPath, mediaType);
-      
-      setStats(prev => ({
-        ...prev,
-        totalOnDevice,
-        alreadySynced,
-        newItems: newFiles.length
-      }));
-
-      if (newFiles.length === 0) {
-        setSyncStatus('Up to date');
-        Alert.alert('Sync Complete', 'Everything is already backed up!');
-        setIsSyncing(false);
-        return;
-      }
-
-      setSyncStatus(`Uploading 1 of ${newFiles.length}...`);
       
       const result = await runFullSync(serverUrl, token, targetPath, mediaType, (progress) => {
         setSyncStatus(`Uploading ${progress.currentIndex} of ${progress.totalFiles}... (${Math.round(progress.currentFileProgress * 100)}%)`);
       });
 
-      setSyncStatus('Auto-Sync Complete');
-      setSyncedCount(prev => prev + result.synced);
-      Alert.alert('Sync Complete', `${result.synced} items backed up successfully! ${result.failed > 0 ? `(${result.failed} failed)` : ''}`);
-      
+      if (result.cancelled) {
+        setIsSyncing(false);
+        setSyncStatus('Idle');
+        return;
+      }
+
+      if (result.synced === 0 && result.failed === 0 && result.skipped > 0) {
+        setSyncStatus('Up to date');
+        Alert.alert('Sync Complete', 'Everything is already backed up!');
+      } else {
+        setSyncStatus('Auto-Sync Complete');
+        setSyncedCount(prev => prev + (result.synced || 0));
+        Alert.alert('Sync Complete', `${result.synced || 0} items backed up successfully to NAS! ${result.failed > 0 ? `(${result.failed} failed)` : ''}`);
+      }
+
       const savedTime = await AsyncStorage.getItem('autosync_last_sync_time');
       if (savedTime) {
-         setStats(prev => ({ ...prev, lastSyncTime: new Date(parseInt(savedTime, 10)).toLocaleString() }));
+        setStats(prev => ({ ...prev, lastSyncTime: new Date(parseInt(savedTime, 10)).toLocaleString() }));
       }
+    } catch (err) {
+      console.warn('Sync error:', err);
+      Alert.alert('Sync Error', err.message || 'Failed to complete gallery sync.');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
       
     } catch (e) {
       console.warn('Sync error', e);

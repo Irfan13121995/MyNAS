@@ -2,22 +2,34 @@ let MediaLibrary = null;
 try {
   MediaLibrary = require('expo-media-library');
 } catch (e) {
-  console.warn('expo-media-library native module not found. Auto-sync will be disabled.', e);
+  console.warn('expo-media-library native module not found. Using Expo ImagePicker fallback.', e.message);
 }
+
+import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export async function requestMediaPermissions() {
-  if (!MediaLibrary) {
-    return { success: false, message: 'Media Library requires a custom Expo development build or native APK.' };
+  if (MediaLibrary && typeof MediaLibrary.requestPermissionsAsync === 'function') {
+    try {
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      if (status === 'granted') return true;
+    } catch (e) {}
   }
-  const { status } = await MediaLibrary.requestPermissionsAsync();
-  return status === 'granted';
+  
+  // Fallback to ImagePicker permissions
+  try {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    return status === 'granted';
+  } catch (e) {
+    return false;
+  }
 }
 
 export async function getNewMediaToSync(serverUrl, token, syncFolder, mediaType) {
-  if (!MediaLibrary) {
-    return { newFiles: [], totalOnDevice: 0, alreadySynced: 0, success: false };
+  if (!MediaLibrary || typeof MediaLibrary.getAssetsAsync !== 'function') {
+    return { newFiles: [], totalOnDevice: 0, alreadySynced: 0, isExpoGo: true };
   }
+
   // 1. Fetch server manifest
   let serverManifest = [];
   try {
@@ -25,7 +37,8 @@ export async function getNewMediaToSync(serverUrl, token, syncFolder, mediaType)
       headers: { Authorization: `Bearer ${token}` }
     });
     if (res.ok) {
-      serverManifest = await res.json();
+      const data = await res.json();
+      serverManifest = data.files || data;
     }
   } catch (err) {
     console.warn('Failed to fetch server manifest', err);
@@ -48,63 +61,57 @@ export async function getNewMediaToSync(serverUrl, token, syncFolder, mediaType)
   let hasNextPage = true;
   let endCursor = undefined;
 
-  while (hasNextPage) {
-    const page = await MediaLibrary.getAssetsAsync({
-      first: 100,
-      after: endCursor,
-      mediaType: mediaTypes,
-      sortBy: 'creationTime',
-      createdAfter: createdAfter > 0 ? createdAfter : undefined
-    });
+  try {
+    while (hasNextPage) {
+      const page = await MediaLibrary.getAssetsAsync({
+        first: 100,
+        after: endCursor,
+        mediaType: mediaTypes,
+        sortBy: 'creationTime',
+        createdAfter: createdAfter > 0 ? createdAfter : undefined
+      });
 
-    localAssets = localAssets.concat(page.assets);
-    hasNextPage = page.hasNextPage;
-    endCursor = page.endCursor;
+      localAssets = localAssets.concat(page.assets);
+      hasNextPage = page.hasNextPage;
+      endCursor = page.endCursor;
+    }
+  } catch (err) {
+    return { newFiles: [], totalOnDevice: 0, alreadySynced: 0, isExpoGo: true };
   }
 
-  // Fallback for file size (since getAssetsAsync might not return it directly without getAssetInfoAsync)
-  // We'll map them and just use name matching if size isn't immediately available, but getting info is better if possible.
-  // To avoid huge latency, we will rely on filename matching and fallback size if missing, but typically we should fetch info if we really need size.
-  // Actually, MediaLibrary.getAssetInfoAsync(asset) has size. We'll only fetch info for new ones or do a rough check.
-  
   let newFiles = [];
   let alreadySynced = 0;
 
   for (const asset of localAssets) {
-    // If the manifest just uses names, we might just check names to be fast, but instruction says filename + file size.
-    // However, fetching getAssetInfoAsync for all items can be slow. 
-    // We will assume manifest might match on name if size is missing.
-    // Let's just check if name is in set. For a real robust app we'd fetch sizes in batches.
-    const assetKey = asset.filename; // Simplified since getAssetsAsync doesn't give size
-    
-    // We will do a full info fetch ONLY for items that are not obviously skipped by name? No, let's just do a name match for now,
-    // or fetch info in parallel for batches. Let's fetch info for everything to get precise size and real uri (some local uris need info to resolve properly).
-    const info = await MediaLibrary.getAssetInfoAsync(asset);
-    if (!info) continue;
+    try {
+      const info = await MediaLibrary.getAssetInfoAsync(asset);
+      if (!info) continue;
 
-    const size = info.size || 0;
-    const matchKey = `${asset.filename}_${size}`;
+      const size = info.size || 0;
+      const matchKey = `${asset.filename}_${size}`;
 
-    if (serverSet.has(matchKey) || serverSet.has(`${asset.filename}_undefined`)) {
-      alreadySynced++;
-    } else {
-      newFiles.push({
-        uri: info.localUri || info.uri,
-        filename: asset.filename,
-        width: asset.width,
-        height: asset.height,
-        mediaType: asset.mediaType,
-        fileSize: size,
-        creationTime: asset.creationTime,
-        modificationTime: asset.modificationTime
-      });
-    }
+      if (serverSet.has(matchKey) || serverSet.has(`${asset.filename}_undefined`)) {
+        alreadySynced++;
+      } else {
+        newFiles.push({
+          uri: info.localUri || info.uri,
+          filename: asset.filename || `photo_${Date.now()}.jpg`,
+          width: asset.width,
+          height: asset.height,
+          mediaType: asset.mediaType,
+          fileSize: size,
+          creationTime: asset.creationTime,
+          modificationTime: asset.modificationTime
+        });
+      }
+    } catch (e) {}
   }
 
   return {
     newFiles,
     totalOnDevice: localAssets.length,
-    alreadySynced
+    alreadySynced,
+    isExpoGo: false
   };
 }
 
@@ -128,41 +135,103 @@ export async function uploadFile(serverUrl, token, file, destination, onProgress
       }
     };
     
-    xhr.onerror = () => reject(new Error('Upload failed network error'));
+    xhr.onerror = () => reject(new Error('Upload network error'));
 
     const formData = new FormData();
+    const filename = file.filename || file.fileName || `media_${Date.now()}.${file.type === 'video' ? 'mp4' : 'jpg'}`;
+    const mimeType = file.mimeType || (file.mediaType === 'video' || filename.endsWith('.mp4') ? 'video/mp4' : 'image/jpeg');
+
     formData.append('file', {
       uri: file.uri,
-      name: file.filename,
-      type: file.mediaType === 'video' ? 'video/mp4' : 'image/jpeg'
+      name: filename,
+      type: mimeType
     });
 
     xhr.send(formData);
   });
 }
 
-export async function uploadFileChunked(serverUrl, token, fileUri, fileName, destination, onProgress) {
-  // Simplified chunking for React Native since we can't easily slice files natively without native modules.
-  // In a real app we'd use react-native-fs to slice the file, but here we'll simulate the interface or just upload normally 
-  // as fetch/XHR with FormData is standard. If the instruction strictly requires it, we'd need file system access.
-  // We will just fall back to standard upload if file slicing is not available in pure JS.
-  console.warn("Chunked upload requested, falling back to standard upload due to lack of file slicing in standard RN API");
-  return uploadFile(serverUrl, token, {uri: fileUri, filename: fileName, mediaType: 'unknown'}, destination, onProgress);
+export async function pickAndSyncGallery(serverUrl, token, syncFolder, onProgress) {
+  const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  if (!perm.granted) {
+    return { success: false, message: 'Permission to access gallery was denied.' };
+  }
+
+  const result = await ImagePicker.launchImageLibraryAsync({
+    mediaTypes: ['images', 'videos'],
+    allowsMultipleSelection: true,
+    quality: 1,
+    selectionLimit: 0
+  });
+
+  if (result.canceled || !result.assets || result.assets.length === 0) {
+    return { success: true, cancelled: true, synced: 0, failed: 0 };
+  }
+
+  let synced = 0;
+  let failed = 0;
+  const total = result.assets.length;
+
+  for (let i = 0; i < total; i++) {
+    const asset = result.assets[i];
+    const filename = asset.fileName || `media_${Date.now()}_${i}.${asset.type === 'video' ? 'mp4' : 'jpg'}`;
+
+    if (onProgress) {
+      onProgress({
+        currentIndex: i + 1,
+        totalFiles: total,
+        currentFileProgress: 0,
+        filename
+      });
+    }
+
+    try {
+      await uploadFile(serverUrl, token, {
+        uri: asset.uri,
+        filename: filename,
+        mimeType: asset.mimeType,
+        mediaType: asset.type
+      }, syncFolder, (prog) => {
+        if (onProgress) {
+          onProgress({
+            currentIndex: i + 1,
+            totalFiles: total,
+            currentFileProgress: prog,
+            filename
+          });
+        }
+      });
+      synced++;
+    } catch (err) {
+      console.warn('Picker upload failed:', err.message);
+      failed++;
+    }
+  }
+
+  if (synced > 0) {
+    const prevCount = parseInt(await AsyncStorage.getItem('autosync_synced_count') || '0', 10);
+    await AsyncStorage.setItem('autosync_synced_count', (prevCount + synced).toString());
+    await AsyncStorage.setItem('autosync_last_sync_time', Date.now().toString());
+  }
+
+  return { success: true, cancelled: false, synced, failed };
 }
 
 export async function runFullSync(serverUrl, token, syncFolder, mediaType, onProgress, onFileComplete) {
-  if (!MediaLibrary) {
-    return { success: false, message: 'Media Library requires a custom Expo development build or native APK.', synced: 0, failed: 0, skipped: 0 };
+  if (!MediaLibrary || typeof MediaLibrary.getAssetsAsync !== 'function') {
+    // Expo Go fallback to ImagePicker
+    return await pickAndSyncGallery(serverUrl, token, syncFolder, onProgress);
   }
 
   const perm = await requestMediaPermissions();
-  if (perm && perm.success === false) {
-    return { success: false, message: perm.message, synced: 0, failed: 0, skipped: 0 };
-  }
   if (!perm) return { synced: 0, failed: 0, skipped: 0 };
 
-  const { newFiles, alreadySynced } = await getNewMediaToSync(serverUrl, token, syncFolder, mediaType);
+  const { newFiles, alreadySynced, isExpoGo } = await getNewMediaToSync(serverUrl, token, syncFolder, mediaType);
   
+  if (isExpoGo) {
+    return await pickAndSyncGallery(serverUrl, token, syncFolder, onProgress);
+  }
+
   let synced = 0;
   let failed = 0;
   const total = newFiles.length;
@@ -180,29 +249,16 @@ export async function runFullSync(serverUrl, token, syncFolder, mediaType, onPro
     }
 
     try {
-      if (file.fileSize >= 50 * 1024 * 1024) {
-        await uploadFileChunked(serverUrl, token, file.uri, file.filename, syncFolder, (prog) => {
-          if (onProgress) {
-             onProgress({
-               currentIndex: i + 1,
-               totalFiles: total,
-               currentFileProgress: prog,
-               filename: file.filename
-             });
-          }
-        });
-      } else {
-        await uploadFile(serverUrl, token, file, syncFolder, (prog) => {
-          if (onProgress) {
-             onProgress({
-               currentIndex: i + 1,
-               totalFiles: total,
-               currentFileProgress: prog,
-               filename: file.filename
-             });
-          }
-        });
-      }
+      await uploadFile(serverUrl, token, file, syncFolder, (prog) => {
+        if (onProgress) {
+          onProgress({
+            currentIndex: i + 1,
+            totalFiles: total,
+            currentFileProgress: prog,
+            filename: file.filename
+          });
+        }
+      });
       synced++;
       if (onFileComplete) onFileComplete(file);
     } catch (e) {
