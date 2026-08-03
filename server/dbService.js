@@ -186,11 +186,24 @@ function verifyEmail(token) {
   return { success: true, username: row.username };
 }
 
+function getAllUsers() {
+  const rows = db.prepare('SELECT id, username, email, email_verified, failed_attempts, created_at FROM users ORDER BY created_at DESC').all();
+  return rows.map(r => ({
+    id: r.id,
+    username: r.username,
+    email: r.email,
+    emailVerified: Boolean(r.email_verified),
+    failedAttempts: r.failed_attempts,
+    createdAt: r.created_at
+  }));
+}
+
 module.exports = {
   hasAnyUsers,
   getUserByUsername,
   getUserByEmail,
   createUser,
   verifyPassword,
-  verifyEmail
+  verifyEmail,
+  getAllUsers
 };

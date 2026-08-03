@@ -249,6 +249,15 @@ app.get('/api/auth/verify', authenticateToken, (req, res) => {
   res.json({ valid: true });
 });
 
+app.get('/api/users', authenticateToken, (req, res) => {
+  try {
+    const users = usersService.getAllUsers();
+    return res.json({ success: true, count: users.length, users });
+  } catch (err) {
+    return res.status(500).json({ error: `Failed to fetch users: ${err.message}` });
+  }
+});
+
 // ─── 4. SYSTEM ENDPOINT ────────────────────────────────────────────────────────
 
 app.get('/api/system', authenticateToken, (req, res) => {

@@ -6,5 +6,6 @@ module.exports = {
   getUserByEmail: dbService.getUserByEmail,
   createUser: dbService.createUser,
   verifyPassword: dbService.verifyPassword,
-  verifyEmail: dbService.verifyEmail
+  verifyEmail: dbService.verifyEmail,
+  getAllUsers: dbService.getAllUsers
 };

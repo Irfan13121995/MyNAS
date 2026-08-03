@@ -1274,10 +1274,39 @@ async function remote(container) {
 async function settings(container) {
   const sysR = await GET('/api/system');
   const sys = sysR?.data || {};
+  const usersR = await GET('/api/users');
+  const usersList = usersR?.data?.users || [];
 
   container.innerHTML = `
     <div class="page">
-      <div class="page-header"><h2>Settings</h2><p>Server configuration and security</p></div>
+      <div class="page-header"><h2>Settings</h2><p>Server configuration, user management and security</p></div>
+
+      <div class="card settings-section" style="margin-bottom:20px">
+        <div class="card-header" style="margin-bottom:12px">
+          <h3 style="margin-bottom:0;border-bottom:none;padding-bottom:0">👥 Registered NAS Accounts (${usersList.length})</h3>
+          <span class="badge badge-blue">SQLite DB</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Username</th>
+                <th>Status</th>
+                <th>Created At</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${usersList.length > 0 ? usersList.map(u => `
+                <tr>
+                  <td style="font-weight:700;color:var(--text-primary)">👤 ${escapeHtml(u.username)}</td>
+                  <td><span class="badge ${u.emailVerified ? 'badge-green' : 'badge-yellow'}">${u.emailVerified ? 'Verified' : 'Pending'}</span></td>
+                  <td style="font-size:12px;color:var(--text-secondary)">${formatTime(u.createdAt)}</td>
+                </tr>
+              `).join('') : '<tr><td colspan="3" style="text-align:center;color:var(--text-muted)">No registered accounts found</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
       <div class="card settings-section" style="margin-bottom:20px">
         <h3>🔒 Security</h3>
