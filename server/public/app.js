@@ -22,6 +22,24 @@ function applyTheme(theme) {
     document.documentElement.removeAttribute('data-theme');
   }
 }
+
+function bindThemeSwitches() {
+  document.querySelectorAll('.custom-theme-switch').forEach(sw => {
+    sw.onclick = () => {
+      const current = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+      const nextTheme = current === 'light' ? 'dark' : 'light';
+      localStorage.setItem('nas-theme', nextTheme);
+      applyTheme(nextTheme);
+    };
+    sw.onkeydown = (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        sw.click();
+      }
+    };
+  });
+}
+
 const savedTheme = localStorage.getItem('nas-theme') || 'dark';
 applyTheme(savedTheme);
 
@@ -224,7 +242,11 @@ function navigate(page, params = null) {
   const content = document.getElementById('content');
   content.innerHTML = '<div class="page-loading"><div class="spinner large"></div><p>Loading...</p></div>';
 
-  if (pages[page]) pages[page](content, params);
+  if (pages[page]) {
+    Promise.resolve(pages[page](content, params)).then(() => {
+      bindThemeSwitches();
+    });
+  }
 }
 
 let activePasscode = '';
@@ -1683,6 +1705,7 @@ async function init() {
   if (token) {
     const r = await fetch('/api/auth/verify', { headers: { Authorization: `Bearer ${token}` } });
     if (r.ok) {
+      bindThemeSwitches();
       showApp();
       await loadSystemInfo();
       navigate('dashboard');
