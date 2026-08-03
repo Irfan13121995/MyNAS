@@ -1299,10 +1299,73 @@ async function settings(container) {
     </div>`;
 }
 
+function initPinBoxes() {
+  const pinBoxes = document.querySelectorAll('.pin-box');
+  const hiddenInput = document.getElementById('passcode-input');
+  if (!pinBoxes.length || !hiddenInput) return;
+
+  const updateHiddenPasscode = () => {
+    let passcode = '';
+    pinBoxes.forEach(box => {
+      passcode += box.value;
+      if (box.value) {
+        box.classList.add('filled');
+      } else {
+        box.classList.remove('filled');
+      }
+    });
+    hiddenInput.value = passcode;
+    return passcode;
+  };
+
+  pinBoxes.forEach((box, idx) => {
+    box.addEventListener('input', (e) => {
+      const val = e.target.value.replace(/[^0-9]/g, '');
+      e.target.value = val;
+      const fullCode = updateHiddenPasscode();
+
+      if (val && idx < pinBoxes.length - 1) {
+        pinBoxes[idx + 1].focus();
+      }
+
+      if (fullCode.length === 6) {
+        document.getElementById('login-form').dispatchEvent(new Event('submit'));
+      }
+    });
+
+    box.addEventListener('keydown', (e) => {
+      if (e.key === 'Backspace' && !box.value && idx > 0) {
+        pinBoxes[idx - 1].focus();
+      }
+    });
+
+    box.addEventListener('paste', (e) => {
+      e.preventDefault();
+      const pasted = (e.clipboardData || window.clipboardData).getData('text').replace(/[^0-9]/g, '');
+      if (!pasted) return;
+
+      const digits = pasted.slice(0, 6).split('');
+      digits.forEach((digit, i) => {
+        if (pinBoxes[i]) {
+          pinBoxes[i].value = digit;
+        }
+      });
+      const fullCode = updateHiddenPasscode();
+      const nextIdx = Math.min(digits.length, pinBoxes.length - 1);
+      if (pinBoxes[nextIdx]) pinBoxes[nextIdx].focus();
+
+      if (fullCode.length === 6) {
+        document.getElementById('login-form').dispatchEvent(new Event('submit'));
+      }
+    });
+  });
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // INIT
 // ═════════════════════════════════════════════════════════════════════════════
 async function init() {
+  initPinBoxes();
   document.getElementById('login-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const passcode = document.getElementById('passcode-input').value;

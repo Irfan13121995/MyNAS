@@ -39,13 +39,19 @@
 
       <div id="tab-login" class="auth-tab-content active">
         <form id="login-form" autocomplete="off">
-          <label for="passcode-input">Passcode</label>
-          <div class="input-group">
-            <input id="passcode-input" type="password" placeholder="Enter 6-digit passcode"
-                   maxlength="8" inputmode="numeric" autocomplete="current-password" />
+          <label class="pin-header-label">Enter 6-digit authentication code</label>
+          <div class="pin-input-row" id="pin-input-row">
+            <input type="text" maxlength="1" inputmode="numeric" class="pin-box" data-idx="0" autocomplete="off" />
+            <input type="text" maxlength="1" inputmode="numeric" class="pin-box" data-idx="1" autocomplete="off" />
+            <input type="text" maxlength="1" inputmode="numeric" class="pin-box" data-idx="2" autocomplete="off" />
+            <input type="text" maxlength="1" inputmode="numeric" class="pin-box" data-idx="3" autocomplete="off" />
+            <input type="text" maxlength="1" inputmode="numeric" class="pin-box" data-idx="4" autocomplete="off" />
+            <input type="text" maxlength="1" inputmode="numeric" class="pin-box" data-idx="5" autocomplete="off" />
           </div>
+          <input id="passcode-input" type="hidden" name="passcode" />
+
           <button type="submit" id="login-btn" class="btn btn-primary btn-full">
-            <span id="login-btn-text">Unlock Dashboard</span>
+            <span id="login-btn-text">Verify & Unlock</span>
             <span id="login-spinner" class="spinner hidden"></span>
           </button>
         </form>
