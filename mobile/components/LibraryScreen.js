@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   StyleSheet, View, Text, FlatList, TouchableOpacity,
-  ActivityIndicator, RefreshControl, Dimensions, Alert, Platform, StatusBar, ScrollView
+  ActivityIndicator, RefreshControl, Dimensions, Alert, Platform, StatusBar, ScrollView, Modal
 } from 'react-native';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
@@ -38,6 +38,8 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
   const [hasPermission, setHasPermission] = useState(null);
   const [filterMode, setFilterMode] = useState(initialFilter);
   const [extFilter, setExtFilter] = useState('ALL');
+  const [showCatModal, setShowCatModal] = useState(false);
+  const [showExtModal, setShowExtModal] = useState(false);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
 
@@ -289,40 +291,37 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
           </TouchableOpacity>
         </View>
 
-        {/* Filter Pills */}
-        <View style={styles.filterRow}>
-          {[
-            { key: 'all', label: 'All', icon: '' },
-            { key: 'photos', label: 'Photos', icon: ' 🖼️' },
-            { key: 'videos', label: 'Videos', icon: ' 🎬' },
-          ].map(f => (
+        {/* DUAL DROPDOWN SELECT PICKERS */}
+        <View style={styles.dropdownRow}>
+          {/* Media Type Dropdown */}
+          <View style={styles.dropdownPickerWrap}>
+            <Text style={styles.dropdownLabel}>MEDIA TYPE</Text>
             <TouchableOpacity
-              key={f.key}
-              style={[styles.filterPill, filterMode === f.key && styles.filterPillActive]}
-              activeOpacity={0.7}
-              onPress={() => setFilterMode(f.key)}
+              style={styles.dropdownSelectBtn}
+              activeOpacity={0.8}
+              onPress={() => setShowCatModal(true)}
             >
-              <Text style={[styles.filterPillText, filterMode === f.key && styles.filterPillTextActive]}>
-                {f.label}{f.icon}
+              <Text style={styles.dropdownSelectBtnText} numberOfLines={1}>
+                {filterMode === 'photos' ? '🖼️ Photos' : filterMode === 'videos' ? '🎬 Videos' : 'All Media'}
               </Text>
+              <Text style={styles.dropdownChevron}>▼</Text>
             </TouchableOpacity>
-          ))}
-        </View>
+          </View>
 
-        {/* EXTENSION FILTER BAR */}
-        <View style={{ marginTop: 12 }}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-            {['ALL', '.JPG', '.PNG', '.WEBP', '.MP4', '.MKV'].map(ext => (
-              <TouchableOpacity
-                key={ext}
-                style={[styles.filterPill, extFilter === ext && styles.filterPillActive]}
-                activeOpacity={0.7}
-                onPress={() => setExtFilter(ext)}
-              >
-                <Text style={[styles.filterPillText, extFilter === ext && styles.filterPillTextActive]}>{ext}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
+          {/* Extension Filter Dropdown */}
+          <View style={styles.dropdownPickerWrap}>
+            <Text style={styles.dropdownLabel}>FORMAT EXTENSION</Text>
+            <TouchableOpacity
+              style={styles.dropdownSelectBtn}
+              activeOpacity={0.8}
+              onPress={() => setShowExtModal(true)}
+            >
+              <Text style={styles.dropdownSelectBtnText} numberOfLines={1}>
+                {extFilter === 'ALL' ? 'All Types (.ALL)' : extFilter}
+              </Text>
+              <Text style={styles.dropdownChevron}>▼</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
 
@@ -381,6 +380,54 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
           }
         />
       )}
+
+      {/* CATEGORY PICKER MODAL */}
+      <Modal visible={showCatModal} animationType="fade" transparent={true} onRequestClose={() => setShowCatModal(false)}>
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowCatModal(false)}>
+          <View style={styles.pickerModalCard}>
+            <Text style={styles.pickerModalTitle}>Select Media Type</Text>
+            {[
+              { key: 'all', label: 'All Media (Photos & Videos)', icon: '🎬🖼️' },
+              { key: 'photos', label: 'Photos Only', icon: '🖼️' },
+              { key: 'videos', label: 'Videos Only', icon: '🎬' },
+            ].map(item => (
+              <TouchableOpacity
+                key={item.key}
+                style={[styles.pickerItem, filterMode === item.key && styles.pickerItemActive]}
+                onPress={() => {
+                  setFilterMode(item.key);
+                  setShowCatModal(false);
+                }}
+              >
+                <Text style={styles.pickerItemText}>{item.icon} {item.label}</Text>
+                {filterMode === item.key && <Text style={styles.checkIcon}>✓</Text>}
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* EXTENSION PICKER MODAL */}
+      <Modal visible={showExtModal} animationType="fade" transparent={true} onRequestClose={() => setShowExtModal(false)}>
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowExtModal(false)}>
+          <View style={styles.pickerModalCard}>
+            <Text style={styles.pickerModalTitle}>Filter by Extension</Text>
+            {['ALL', '.JPG', '.PNG', '.WEBP', '.MP4', '.MKV', '.GIF'].map(ext => (
+              <TouchableOpacity
+                key={ext}
+                style={[styles.pickerItem, extFilter === ext && styles.pickerItemActive]}
+                onPress={() => {
+                  setExtFilter(ext);
+                  setShowExtModal(false);
+                }}
+              >
+                <Text style={styles.pickerItemText}>{ext === 'ALL' ? 'All Extensions (.ALL)' : ext}</Text>
+                {extFilter === ext && <Text style={styles.checkIcon}>✓</Text>}
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }
@@ -389,6 +436,96 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0B0F17',
+  },
+
+  // DUAL DROPDOWN ROW
+  dropdownRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 4,
+  },
+  dropdownPickerWrap: {
+    flex: 1,
+  },
+  dropdownLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#00BCD4',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  dropdownSelectBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(30, 41, 59, 0.85)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 188, 212, 0.3)',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  dropdownSelectBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#F8FAFC',
+    flex: 1,
+  },
+  dropdownChevron: {
+    fontSize: 10,
+    color: '#00BCD4',
+    marginLeft: 6,
+  },
+
+  // PICKER MODAL
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(7, 10, 15, 0.75)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  pickerModalCard: {
+    width: '100%',
+    maxWidth: 340,
+    backgroundColor: '#0F172A',
+    borderRadius: 20,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 188, 212, 0.4)',
+    elevation: 10,
+  },
+  pickerModalTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#F8FAFC',
+    marginBottom: 16,
+    letterSpacing: -0.3,
+  },
+  pickerItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    marginBottom: 6,
+    backgroundColor: 'rgba(30, 41, 59, 0.5)',
+  },
+  pickerItemActive: {
+    backgroundColor: 'rgba(0, 188, 212, 0.18)',
+    borderWidth: 1,
+    borderColor: '#00BCD4',
+  },
+  pickerItemText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#F8FAFC',
+  },
+  checkIcon: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#00BCD4',
   },
 
   // TOPBAR
