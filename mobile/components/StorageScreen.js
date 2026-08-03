@@ -160,7 +160,12 @@ export default function StorageScreen({ serverUrl, token, onOpenAddStorage }) {
                     <TouchableOpacity 
                       style={styles.exploreBtn} 
                       onPress={() => {
-                        setExplorePath(drive.path || (drive.letter ? drive.letter + ':\\' : 'C:\\'));
+                        const raw = drive.path || drive.letter || 'C:\\';
+                        let clean = raw.replace(/::+/g, ':').trim();
+                        if (/^[a-zA-Z]:?$/.test(clean)) {
+                          clean = clean.replace(':', '') + ':\\';
+                        }
+                        setExplorePath(clean);
                         setExploreVisible(true);
                       }}
                     >

@@ -417,7 +417,12 @@ app.get('/api/files', authenticateToken, async (req, res) => {
       return res.json(driveDirectories);
     }
 
-    const normalizedTargetPath = /^[a-zA-Z]:$/.test(targetPath) ? targetPath + '\\' : targetPath;
+    // Clean double-colon or malformed drive path parameters (e.g. D::\ -> D:\)
+    let cleanPath = targetPath.replace(/::+/g, ':').trim();
+    if (/^[a-zA-Z]:?$/.test(cleanPath)) {
+      cleanPath = cleanPath.replace(':', '') + ':\\';
+    }
+    const normalizedTargetPath = cleanPath;
     const files = await listFiles(normalizedTargetPath);
     logActivity('browse', `Browsed: ${normalizedTargetPath}`);
     const results = files.map(f => ({ ...f, path: path.join(normalizedTargetPath, f.name) }));

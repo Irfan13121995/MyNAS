@@ -1,18 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import {
   Modal, View, Text, StyleSheet, FlatList, TouchableOpacity,
-  ActivityIndicator, RefreshControl, SafeAreaView
+  ActivityIndicator, RefreshControl, Platform, StatusBar
 } from 'react-native';
 
 export default function FileExplorerModal({ visible, initialPath, serverUrl, token, onClose, onFilePress }) {
-  const [currentPath, setCurrentPath] = useState(initialPath || '');
+  const [currentPath, setCurrentPath] = useState('');
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     if (visible && initialPath) {
-      setCurrentPath(initialPath);
+      let clean = initialPath.replace(/::+/g, ':').trim();
+      if (/^[a-zA-Z]:?$/.test(clean)) {
+        clean = clean.replace(':', '') + ':\\';
+      }
+      setCurrentPath(clean);
     }
   }, [visible, initialPath]);
 
@@ -93,7 +97,7 @@ export default function FileExplorerModal({ visible, initialPath, serverUrl, tok
   return (
     <Modal visible={visible} animationType="slide" transparent={true} onRequestClose={onClose}>
       <View style={styles.modalBg}>
-        <SafeAreaView style={styles.container}>
+        <View style={[styles.container, { paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 8 : 16 }]}>
           <View style={styles.header}>
             <TouchableOpacity onPress={handleUp} style={styles.backBtn}>
               <Text style={styles.backText}>⬆ Back</Text>
@@ -119,13 +123,13 @@ export default function FileExplorerModal({ visible, initialPath, serverUrl, tok
               renderItem={renderItem}
               refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#00BCD4" />}
               ListEmptyComponent={
-                <View style={styles.center}>
+                <View style={styles.empty}>
                   <Text style={styles.emptyText}>Folder is empty</Text>
                 </View>
               }
             />
           )}
-        </SafeAreaView>
+        </View>
       </View>
     </Modal>
   );
