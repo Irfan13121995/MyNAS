@@ -158,8 +158,79 @@ async function getMediaGallery(targetDrive = null) {
   return allMedia.sort((a, b) => new Date(b.modifiedAt) - new Date(a.modifiedAt));
 }
 
+/**
+ * Recursive search directory scanner across files & folders.
+ */
+async function scanSearchDirectory(dirPath, queryLower, results, depth = 0) {
+  if (depth > 6 || results.length >= 100) return results;
+
+  try {
+    const entries = await fs.readdir(dirPath, { withFileTypes: true });
+
+    for (const entry of entries) {
+      if (results.length >= 100) break;
+      // Skip system or hidden folders
+      if (entry.name.startsWith('$') || entry.name.startsWith('.') || entry.name === 'System Volume Information' || entry.name === 'node_modules') continue;
+
+      const fullPath = path.join(dirPath, entry.name);
+
+      if (entry.name.toLowerCase().includes(queryLower)) {
+        try {
+          const stats = await fs.stat(fullPath);
+          results.push({
+            name: entry.name,
+            path: fullPath,
+            isDirectory: entry.isDirectory(),
+            size: stats.size,
+            modifiedAt: stats.mtime,
+            ext: path.extname(entry.name).toLowerCase()
+          });
+        } catch (e) {}
+      }
+
+      if (entry.isDirectory()) {
+        await scanSearchDirectory(fullPath, queryLower, results, depth + 1);
+      }
+    }
+  } catch (err) {}
+
+  return results;
+}
+
+/**
+ * Searches for files/folders matching query across ALL active registered NAS drives.
+ */
+async function searchFiles(query, targetDrive = null) {
+  if (!query || !query.trim()) return [];
+  const queryLower = query.trim().toLowerCase();
+
+  const allDrives = await getDrives();
+  const allowedPaths = driveConfig.getAllowedPaths();
+
+  let drivesToScan = allDrives;
+  if (allowedPaths !== null) {
+    drivesToScan = allDrives.filter(d =>
+      allowedPaths.includes(d.letter) || allowedPaths.includes(d.letter + '\\')
+    );
+  }
+
+  if (targetDrive && targetDrive !== 'ALL') {
+    const normalizedTarget = targetDrive.toUpperCase().replace(/[/\\]+$/, '');
+    drivesToScan = drivesToScan.filter(d => d.letter.toUpperCase().startsWith(normalizedTarget));
+  }
+
+  let results = [];
+  for (const drive of drivesToScan) {
+    if (results.length >= 100) break;
+    await scanSearchDirectory(drive.letter + path.sep, queryLower, results, 0);
+  }
+
+  return results;
+}
+
 module.exports = {
   validatePath,
   listFiles,
-  getMediaGallery
+  getMediaGallery,
+  searchFiles
 };

@@ -43,7 +43,7 @@ if (!fs.existsSync(envPath)) {
 require('dotenv').config();
 
 const { getDrives } = require('./driveService');
-const { listFiles, validatePath, getMediaGallery } = require('./fileService');
+const { listFiles, validatePath, getMediaGallery, searchFiles } = require('./fileService');
 const { streamFile } = require('./streamService');
 const { startTunnel, stopTunnel, getTunnelStatus, getNamedTunnelConfig, saveNamedTunnelConfig } = require('./tunnelService');
 const driveConfig = require('./driveConfigService');
@@ -429,6 +429,25 @@ app.get('/api/files', authenticateToken, async (req, res) => {
     res.json(results);
   } catch (err) {
     res.status(500).json({ error: `Failed to list files: ${err.message}` });
+  }
+});
+
+// ─── 7.2. GLOBAL DISK SEARCH ENDPOINT ───────────────────────────────────────
+
+app.get('/api/files/search', authenticateToken, async (req, res) => {
+  const query = req.query.q;
+  const targetDrive = req.query.drive;
+
+  if (!query || !query.trim()) {
+    return res.json([]);
+  }
+
+  try {
+    const results = await searchFiles(query, targetDrive);
+    logActivity('search', `Global search for: "${query}" (${results.length} found)`);
+    res.json(results);
+  } catch (err) {
+    res.status(500).json({ error: `Failed to execute search: ${err.message}` });
   }
 });
 

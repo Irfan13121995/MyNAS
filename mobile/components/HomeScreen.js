@@ -8,6 +8,8 @@ import FileExplorerModal from './FileExplorerModal';
 
 export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileBrowser, onOpenLibrary }) {
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState(null);
+  const [isSearching, setIsSearching] = useState(false);
   const [activeSubTab, setActiveSubTab] = useState('recent');
   const [categoryFilter, setCategoryFilter] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -47,6 +49,34 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
     fetchRecentFiles();
   }, []);
 
+  // Global Multi-Disk Search Effect
+  useEffect(() => {
+    if (!searchQuery || searchQuery.trim().length < 2) {
+      setSearchResults(null);
+      setIsSearching(false);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      setIsSearching(true);
+      try {
+        const res = await fetch(`${serverUrl}/api/files/search?q=${encodeURIComponent(searchQuery.trim())}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setSearchResults(data || []);
+        }
+      } catch (err) {
+        console.warn('Failed to search across NAS disks:', err);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery, serverUrl, token]);
+
   const onRefresh = () => {
     setRefreshing(true);
     fetchRecentFiles();
@@ -60,7 +90,7 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
   ];
 
   const filteredFiles = useMemo(() => {
-    let displayFiles = files.length > 0 ? files : defaultItems;
+    let displayFiles = searchResults !== null ? searchResults : (files.length > 0 ? files : defaultItems);
 
     if (activeSubTab === 'starred') {
       displayFiles = displayFiles.filter(f => starredFiles.includes(f.name));
@@ -78,10 +108,8 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
       displayFiles = displayFiles.filter(f => (f.ext || f.name || '').match(/\.(mp4|mkv|avi|mov|wmv|flv|webm|m4v)$/i) || f.type === 'video');
     }
 
-    return displayFiles.filter(f =>
-      f.name.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-  }, [files, activeSubTab, categoryFilter, searchQuery, starredFiles]);
+    return displayFiles;
+  }, [files, searchResults, activeSubTab, categoryFilter, starredFiles]);
 
   const toggleStar = (fileName) => {
     if (starredFiles.includes(fileName)) {
