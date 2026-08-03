@@ -90,6 +90,12 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
     setSyncStatus('Requesting permissions...');
     
     const hasPerm = await requestMediaPermissions();
+    if (hasPerm && hasPerm.success === false) {
+      Alert.alert('Unavailable', hasPerm.message);
+      setIsSyncing(false);
+      setSyncStatus('Idle');
+      return;
+    }
     if (!hasPerm) {
       Alert.alert('Permission Denied', 'Media library access is required for auto-sync.');
       setIsSyncing(false);

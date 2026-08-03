@@ -1,12 +1,23 @@
-import * as MediaLibrary from 'expo-media-library';
+let MediaLibrary = null;
+try {
+  MediaLibrary = require('expo-media-library');
+} catch (e) {
+  console.warn('expo-media-library native module not found. Auto-sync will be disabled.', e);
+}
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export async function requestMediaPermissions() {
+  if (!MediaLibrary) {
+    return { success: false, message: 'Media Library requires a custom Expo development build or native APK.' };
+  }
   const { status } = await MediaLibrary.requestPermissionsAsync();
   return status === 'granted';
 }
 
 export async function getNewMediaToSync(serverUrl, token, syncFolder, mediaType) {
+  if (!MediaLibrary) {
+    return { newFiles: [], totalOnDevice: 0, alreadySynced: 0, success: false };
+  }
   // 1. Fetch server manifest
   let serverManifest = [];
   try {
@@ -140,7 +151,14 @@ export async function uploadFileChunked(serverUrl, token, fileUri, fileName, des
 }
 
 export async function runFullSync(serverUrl, token, syncFolder, mediaType, onProgress, onFileComplete) {
+  if (!MediaLibrary) {
+    return { success: false, message: 'Media Library requires a custom Expo development build or native APK.', synced: 0, failed: 0, skipped: 0 };
+  }
+
   const perm = await requestMediaPermissions();
+  if (perm && perm.success === false) {
+    return { success: false, message: perm.message, synced: 0, failed: 0, skipped: 0 };
+  }
   if (!perm) return { synced: 0, failed: 0, skipped: 0 };
 
   const { newFiles, alreadySynced } = await getNewMediaToSync(serverUrl, token, syncFolder, mediaType);
