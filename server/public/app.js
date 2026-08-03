@@ -1193,12 +1193,16 @@ async function remote(container) {
               </p>
             </div>
           </div>
-          </button>
+          <div style="display:flex;gap:10px">
+            <button class="btn ${isRunning ? 'btn-danger' : 'btn-primary'}" id="tunnel-toggle-btn">
+              ${isRunning ? '⏹ Stop Tunnel' : '🚀 Start Quick Tunnel'}
+            </button>
+          </div>
         </div>
 
         ${isRunning ? `
           <hr class="divider"/>
-          <div style="margin-bottom:8px"><label>Your Public URL</label></div>
+          <div style="margin-bottom:8px"><label>Your Public Tunnel URL</label></div>
           <div class="tunnel-url-box">
             <span id="tunnel-url-text">${tunnel.url}</span>
             <div style="display:flex;gap:6px">
@@ -1207,6 +1211,46 @@ async function remote(container) {
             </div>
           </div>
         ` : ''}
+      </div>
+
+      <!-- PERMANENT NAMED TUNNEL CONFIGURATION CARD FOR MYNAS.EU.ORG -->
+      <div class="card" style="margin-bottom:20px">
+        <div class="card-header">
+          <div>
+            <h3 class="card-title">🌐 Permanent Named Tunnel — <code>mynas.eu.org</code></h3>
+            <p class="card-subtitle">Connect your free permanent <code>mynas.eu.org</code> domain using your free Cloudflare Zero Trust token ($0 cost forever).</p>
+          </div>
+          <span class="badge badge-green">$0.00 Free Domain</span>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:14px;margin-top:12px">
+          <div>
+            <label for="named-token-input">Cloudflare Zero Trust Tunnel Token</label>
+            <textarea id="named-token-input" class="input font-mono" style="height:70px;font-size:11px;resize:none" placeholder="Paste your cloudflared tunnel token (eyJh...)"></textarea>
+          </div>
+
+          <div>
+            <label for="named-domain-input">Custom Public Domain URL</label>
+            <input id="named-domain-input" class="input font-mono" type="text" placeholder="https://mynas.eu.org" value="${escapeHtml(savedConfig.customUrl || 'https://mynas.eu.org')}" />
+          </div>
+
+          <div style="display:flex;justify-content:flex-end;gap:10px">
+            <button class="btn btn-primary" id="save-named-tunnel-btn">
+              🔒 Save & Connect https://mynas.eu.org
+            </button>
+          </div>
+        </div>
+
+        <hr class="divider"/>
+
+        <div style="background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:12px;padding:16px">
+          <h4 style="font-size:13px;font-weight:700;color:var(--accent);margin-bottom:10px">📋 3-Step Setup for <code>mynas.eu.org</code> on Cloudflare ($0.00):</h4>
+          <ol style="margin-left:18px;font-size:12px;color:var(--text-secondary);display:flex;flex-direction:column;gap:6px">
+            <li><b>Register Free Domain</b>: Register <code>mynas.eu.org</code> at <a href="https://nic.eu.org" target="_blank" style="color:var(--accent);text-decoration:underline">nic.eu.org</a> ($0 cost).</li>
+            <li><b>Add to Cloudflare</b>: Add <code>mynas.eu.org</code> to your free account at <a href="https://dash.cloudflare.com" target="_blank" style="color:var(--accent);text-decoration:underline">dash.cloudflare.com</a> and point NS records to Cloudflare nameservers.</li>
+            <li><b>Create Tunnel & Paste Token</b>: Go to <a href="https://one.dash.cloudflare.com" target="_blank" style="color:var(--accent);text-decoration:underline">one.dash.cloudflare.com</a> ➔ <b>Networks ➔ Tunnels</b>, map <code>https://mynas.eu.org</code> to <code>http://localhost:3000</code>, copy your token (`eyJh...`), and paste it above!</li>
+          </ol>
+        </div>
       </div>
 
       ${isRunning ? `
