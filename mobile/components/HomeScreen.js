@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import CircularGauge from './CircularGauge';
 import FileExplorerModal from './FileExplorerModal';
+import { cacheService } from '../services/cacheService';
 
 export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileBrowser, onOpenLibrary }) {
   const [searchQuery, setSearchQuery] = useState('');
@@ -20,6 +21,13 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
   const [explorePath, setExplorePath] = useState('');
 
   const fetchRecentFiles = async () => {
+    // Stale-While-Revalidate: Load from local cache instantly first
+    const cached = await cacheService.get('home_recent_files');
+    if (cached && cached.length > 0) {
+      setFiles(cached);
+      setLoading(false);
+    }
+
     try {
       const res = await fetch(`${serverUrl}/api/files`, {
         headers: { Authorization: `Bearer ${token}` }
@@ -34,6 +42,7 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
           if (subRes.ok) {
             const fileList = await subRes.json();
             setFiles(fileList || []);
+            await cacheService.set('home_recent_files', fileList || []);
           }
         }
       }

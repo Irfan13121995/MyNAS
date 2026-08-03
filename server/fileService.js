@@ -129,10 +129,22 @@ async function scanMediaDirectory(dirPath, driveLetter, mediaList = [], depth = 
   return mediaList;
 }
 
+let mediaGalleryCache = { data: null, timestamp: 0, targetDrive: null };
+const GALLERY_CACHE_TTL = 5000; // 5 seconds in-memory TTL cache
+
 /**
  * Collects all media files across all or specific registered NAS drives.
  */
 async function getMediaGallery(targetDrive = null) {
+  const now = Date.now();
+  if (
+    mediaGalleryCache.data &&
+    mediaGalleryCache.targetDrive === targetDrive &&
+    now - mediaGalleryCache.timestamp < GALLERY_CACHE_TTL
+  ) {
+    return mediaGalleryCache.data;
+  }
+
   const allDrives = await getDrives();
   const allowedPaths = driveConfig.getAllowedPaths();
 
@@ -154,8 +166,9 @@ async function getMediaGallery(targetDrive = null) {
     allMedia = allMedia.concat(driveMedia);
   }
 
-  // Sort by modification date descending (newest first)
-  return allMedia.sort((a, b) => new Date(b.modifiedAt) - new Date(a.modifiedAt));
+  const sortedMedia = allMedia.sort((a, b) => new Date(b.modifiedAt) - new Date(a.modifiedAt));
+  mediaGalleryCache = { data: sortedMedia, timestamp: now, targetDrive };
+  return sortedMedia;
 }
 
 /**

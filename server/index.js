@@ -3,6 +3,7 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const express = require('express');
+const compression = require('compression');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const { Bonjour } = require('bonjour-service');
@@ -77,12 +78,22 @@ const globalApiLimiter = rateLimit({
   message: { error: 'Rate limit exceeded. Please slow down requests.' }
 });
 
-// Serve the Windows Dashboard UI as static files
+// Enable Gzip/Brotli HTTP response compression for static assets and API payloads
+app.use(compression());
+
+// Serve the Windows Dashboard UI as static files with HTTP cache headers
 app.use(helmet({
   contentSecurityPolicy: false, // Allows media streaming & blobs
   crossOriginResourcePolicy: false
 }));
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  maxAge: '1d',
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.png') || filePath.endsWith('.jpg') || filePath.endsWith('.ico') || filePath.endsWith('.svg')) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    }
+  }
+}));
 app.use(cors({
   origin: function(origin, callback) {
     // Allow requests with no origin (mobile apps, curl, same-origin)

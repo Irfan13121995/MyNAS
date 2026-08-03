@@ -6,6 +6,7 @@ import {
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { requestMediaPermissions } from '../services/syncService';
+import { cacheService } from '../services/cacheService';
 
 const { width } = Dimensions.get('window');
 const GAP = 3;
@@ -61,7 +62,20 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
     checkPermissions();
   }, []);
 
+  const getItemLayout = useCallback((data, index) => ({
+    length: COLUMN_WIDTH + GAP,
+    offset: (COLUMN_WIDTH + GAP) * Math.floor(index / 3),
+    index,
+  }), []);
+
   const fetchGallery = async () => {
+    // Stale-While-Revalidate: Load from local cache instantly first
+    const cached = await cacheService.get('gallery_media_items');
+    if (cached && cached.length > 0) {
+      setMediaItems(cached);
+      setLoading(false);
+    }
+
     try {
       const res = await fetch(`${serverUrl}/api/gallery?page=1&limit=50`, {
         headers: { Authorization: `Bearer ${token}` }
@@ -71,6 +85,7 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
         setMediaItems(data.items || []);
         setPage(data.page || 1);
         setHasMore(data.hasMore ?? false);
+        await cacheService.set('gallery_media_items', data.items || []);
       }
     } catch (err) {
       console.warn('Failed to fetch gallery media:', err);
@@ -368,6 +383,7 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
           keyExtractor={(item, index) => item.path || item.uri || index.toString()}
           numColumns={3}
           renderItem={renderMediaItem}
+          getItemLayout={getItemLayout}
           contentContainerStyle={styles.gridContainer}
           windowSize={5}
           maxToRenderPerBatch={12}
