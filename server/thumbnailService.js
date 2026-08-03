@@ -32,6 +32,8 @@ async function getOrGenerateThumbnail(filePath, size = 250) {
 
   // Generate thumbnail using sharp if available
   if (sharp && fs.existsSync(filePath)) {
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile()) return filePath;
     try {
       await sharp(filePath)
         .resize(size, size, { fit: 'cover' })

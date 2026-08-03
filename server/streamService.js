@@ -14,6 +14,9 @@ async function streamFile(filePath, req, res) {
     
     // Get file statistics
     const stat = await fs.promises.stat(validatedPath);
+    if (stat.isDirectory()) {
+      return res.status(400).json({ error: 'Cannot stream a directory path' });
+    }
     const fileSize = stat.size;
     const range = req.headers.range;
 
