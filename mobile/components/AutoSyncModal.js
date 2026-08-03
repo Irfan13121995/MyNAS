@@ -122,15 +122,6 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
       setIsSyncing(false);
     }
   };
-      
-    } catch (e) {
-      console.warn('Sync error', e);
-      setSyncStatus('Sync Failed');
-      Alert.alert('Error', 'An error occurred during sync');
-    } finally {
-      setIsSyncing(false);
-    }
-  };
 
   return (
     <Modal visible={visible} animationType="slide" transparent={true} onRequestClose={onClose}>
