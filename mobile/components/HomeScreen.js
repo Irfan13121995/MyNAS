@@ -3,6 +3,8 @@ import {
   StyleSheet, View, Text, TextInput, ScrollView, TouchableOpacity,
   FlatList, ActivityIndicator, RefreshControl, Alert, Platform, StatusBar
 } from 'react-native';
+import CircularGauge from './CircularGauge';
+import FileExplorerModal from './FileExplorerModal';
 
 export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileBrowser, onOpenLibrary }) {
   const [searchQuery, setSearchQuery] = useState('');
@@ -12,6 +14,8 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
   const [refreshing, setRefreshing] = useState(false);
   const [files, setFiles] = useState([]);
   const [starredFiles, setStarredFiles] = useState([]);
+  const [exploreVisible, setExploreVisible] = useState(false);
+  const [explorePath, setExplorePath] = useState('');
 
   const fetchRecentFiles = async () => {
     try {
@@ -251,15 +255,33 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
         keyExtractor={(item, index) => item.path || index.toString()}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#00BCD4" />}
         ListHeaderComponent={
-          <View style={styles.listHeaderRow}>
-            <Text style={styles.dateHeader}>
-              {categoryFilter ? `Filtered: ${categoryFilter.toUpperCase()}` : 'Files'}
-            </Text>
-            {categoryFilter && (
-              <TouchableOpacity onPress={() => setCategoryFilter(null)}>
-                <Text style={styles.clearFilterText}>Show All ✕</Text>
-              </TouchableOpacity>
-            )}
+          <View>
+            <TouchableOpacity 
+              style={styles.storageCard} 
+              activeOpacity={0.8}
+              onPress={() => {
+                setExplorePath('C:\\');
+                setExploreVisible(true);
+              }}
+            >
+              <View style={styles.storageCardInfo}>
+                <Text style={styles.storageCardTitle}>Main Storage</Text>
+                <Text style={styles.storageCardDesc}>1.2 TB / 2.0 TB Used</Text>
+                <Text style={styles.storageCardTap}>Tap to explore disk</Text>
+              </View>
+              <CircularGauge percentage={60} size={50} strokeWidth={5} />
+            </TouchableOpacity>
+
+            <View style={styles.listHeaderRow}>
+              <Text style={styles.dateHeader}>
+                {categoryFilter ? `Filtered: ${categoryFilter.toUpperCase()}` : 'Files'}
+              </Text>
+              {categoryFilter && (
+                <TouchableOpacity onPress={() => setCategoryFilter(null)}>
+                  <Text style={styles.clearFilterText}>Show All ✕</Text>
+                </TouchableOpacity>
+              )}
+            </View>
           </View>
         }
         ListEmptyComponent={
@@ -280,9 +302,23 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
       />
 
       {/* ── FAB BUTTON ────────────────────────────────────────────── */}
-      <TouchableOpacity style={styles.fab} activeOpacity={0.8} onPress={onOpenFileBrowser}>
+      <TouchableOpacity style={styles.fab} activeOpacity={0.8} onPress={() => {
+        if (onOpenFileBrowser) onOpenFileBrowser();
+        else {
+          setExplorePath('C:\\');
+          setExploreVisible(true);
+        }
+      }}>
         <Text style={styles.fabIcon}>+</Text>
       </TouchableOpacity>
+      
+      <FileExplorerModal
+        visible={exploreVisible}
+        initialPath={explorePath}
+        serverUrl={serverUrl}
+        token={token}
+        onClose={() => setExploreVisible(false)}
+      />
     </View>
   );
 }
@@ -422,7 +458,37 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
 
-  /* ── File List ─── */
+  /* ── File List & Storage Card ─── */
+  storageCard: {
+    backgroundColor: 'rgba(30, 41, 59, 0.65)',
+    borderRadius: 16,
+    padding: 16,
+    marginTop: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  storageCardInfo: {
+    flex: 1,
+  },
+  storageCardTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#F8FAFC',
+    marginBottom: 4,
+  },
+  storageCardDesc: {
+    fontSize: 13,
+    color: '#94A3B8',
+    marginBottom: 6,
+  },
+  storageCardTap: {
+    fontSize: 12,
+    color: '#00BCD4',
+    fontWeight: '600',
+  },
   fileList: {
     flex: 1,
     paddingHorizontal: 16,

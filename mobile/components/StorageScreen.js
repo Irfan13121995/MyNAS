@@ -3,12 +3,16 @@ import {
   StyleSheet, View, Text, ScrollView, TouchableOpacity,
   ActivityIndicator, RefreshControl, Platform, StatusBar
 } from 'react-native';
+import CircularGauge from './CircularGauge';
+import FileExplorerModal from './FileExplorerModal';
 
 export default function StorageScreen({ serverUrl, token, onOpenAddStorage }) {
   const [activeTab, setActiveTab] = useState('storage'); // 'storage' | 'external'
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [drives, setDrives] = useState([]);
+  const [exploreVisible, setExploreVisible] = useState(false);
+  const [explorePath, setExplorePath] = useState('');
 
   const fetchDrives = async () => {
     try {
@@ -140,32 +144,44 @@ export default function StorageScreen({ serverUrl, token, onOpenAddStorage }) {
 
                 {/* Progress Bar & Storage Utilization */}
                 <View style={styles.volumeCard}>
-                  <View style={styles.volumeHeader}>
-                    <View style={styles.volumeTitleRow}>
-                      <Text style={styles.volumeIcon}>📂</Text>
-                      <Text style={styles.volumeTitle}>Storage Volume</Text>
+                  <View style={{ flex: 1, marginRight: 16 }}>
+                    <View style={styles.volumeHeader}>
+                      <View style={styles.volumeTitleRow}>
+                        <Text style={styles.volumeIcon}>📂</Text>
+                        <Text style={styles.volumeTitle}>Storage Volume</Text>
+                      </View>
                     </View>
-                    <Text style={styles.pctText}>{pct}% Used</Text>
+                    <View style={styles.capacityRow}>
+                      <Text style={styles.capacityText}>Free: {formatBytes(drive.freeSpace)}</Text>
+                    </View>
+                    <View style={styles.capacityRow}>
+                      <Text style={styles.capacityText}>Used: {formatBytes(usedSpace)}</Text>
+                    </View>
+                    <TouchableOpacity 
+                      style={styles.exploreBtn} 
+                      onPress={() => {
+                        setExplorePath(drive.path || (drive.letter ? drive.letter + ':\\' : 'C:\\'));
+                        setExploreVisible(true);
+                      }}
+                    >
+                      <Text style={styles.exploreBtnText}>📂 Explore Disk</Text>
+                    </TouchableOpacity>
                   </View>
-
-                  <View style={styles.progressTrack}>
-                    <View style={[styles.progressFill, { width: `${pct}%`, backgroundColor: pct > 85 ? '#EF4444' : '#00BCD4' }]} />
-                  </View>
-
-                  <View style={styles.capacityRow}>
-                    <Text style={styles.capacityText}>
-                      Free: {formatBytes(drive.freeSpace)}
-                    </Text>
-                    <Text style={styles.capacityText}>
-                      Used: {formatBytes(usedSpace)}
-                    </Text>
-                  </View>
+                  <CircularGauge percentage={pct} size={68} strokeWidth={7} />
                 </View>
               </View>
             );
           })
         )}
       </ScrollView>
+
+      <FileExplorerModal
+        visible={exploreVisible}
+        initialPath={explorePath}
+        serverUrl={serverUrl}
+        token={token}
+        onClose={() => setExploreVisible(false)}
+      />
 
       {/* FAB button to configure storage */}
       <TouchableOpacity style={styles.fab} activeOpacity={0.8} onPress={onOpenAddStorage}>
@@ -342,6 +358,9 @@ const styles = StyleSheet.create({
     padding: 14,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.06)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   volumeHeader: {
     flexDirection: 'row',
@@ -367,16 +386,20 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#22D3EE',
   },
-  progressTrack: {
-    height: 8,
-    backgroundColor: 'rgba(30, 41, 59, 0.8)',
-    borderRadius: 4,
-    overflow: 'hidden',
-    marginBottom: 8,
+  exploreBtn: {
+    marginTop: 10,
+    backgroundColor: 'rgba(0, 188, 212, 0.15)',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 188, 212, 0.3)',
   },
-  progressFill: {
-    height: '100%',
-    borderRadius: 4,
+  exploreBtnText: {
+    color: '#22D3EE',
+    fontSize: 12,
+    fontWeight: 'bold',
   },
   capacityRow: {
     flexDirection: 'row',
