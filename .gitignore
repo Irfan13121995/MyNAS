@@ -8,6 +8,10 @@ web-build/
 .env
 .env.*
 !.env.example
+*.db
+*.db-wal
+*.db-shm
+nas_data.db
 temp_uploads/
 cloudflared/
 users.json
