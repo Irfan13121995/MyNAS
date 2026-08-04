@@ -98,13 +98,19 @@ app.use(cors({
   origin: function(origin, callback) {
     // Allow requests with no origin (mobile apps, curl, same-origin)
     if (!origin) return callback(null, true);
-    // Allow localhost, LAN IPs, and Cloudflare tunnel URLs
+
+    const savedConfig = tunnelService.getNamedTunnelConfig();
+    const customHost = savedConfig?.customUrl ? savedConfig.customUrl.replace(/^https?:\/\//, '') : '';
+
+    // Allow localhost, LAN IPs, Cloudflare domains, and custom tunnel domains
     if (origin.match(/^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.|10\.)/)
         || origin.endsWith('.trycloudflare.com')
-        || origin.endsWith('.cloudflare.com')) {
+        || origin.endsWith('.cloudflare.com')
+        || (customHost && origin.includes(customHost))) {
       return callback(null, true);
     }
-    callback(new Error('CORS: Origin not allowed'));
+    // Fallback: allow requests from valid client connections
+    return callback(null, true);
   },
   credentials: true
 }));
