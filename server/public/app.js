@@ -958,6 +958,8 @@ async function renderFiles(container) {
 // ═════════════════════════════════════════════════════════════════════════════
 let selectedGalleryDrive = 'ALL';
 let selectedMediaType = 'ALL';
+let currentGalleryPage = 1;
+const galleryPageLimit = 500;
 
 function toggleFolderMinimize(headerEl) {
   const block = headerEl.closest('.gallery-folder-block');
@@ -993,7 +995,7 @@ async function gallery(container) {
       <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
         <div>
           <h2>Media Gallery</h2>
-          <p>Photos and videos across all your registered NAS disks</p>
+          <p>Photos and videos across all your registered NAS disks (Max 500 items per page)</p>
         </div>
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
           <!-- Photos & Videos Filter Pills -->
@@ -1023,29 +1025,39 @@ async function gallery(container) {
       });
       btn.className = 'btn btn-sm btn-primary';
       selectedMediaType = btn.dataset.type;
+      currentGalleryPage = 1;
       loadGalleryMedia();
     });
   });
 
   document.getElementById('gallery-drive-filter').addEventListener('change', (e) => {
     selectedGalleryDrive = e.target.value;
+    currentGalleryPage = 1;
     loadGalleryMedia();
   });
 
-  document.getElementById('refresh-gallery-btn').addEventListener('click', () => loadGalleryMedia());
+  document.getElementById('refresh-gallery-btn').addEventListener('click', () => {
+    currentGalleryPage = 1;
+    loadGalleryMedia();
+  });
 
   await loadGalleryMedia();
 }
 
-async function loadGalleryMedia() {
+async function loadGalleryMedia(targetPage = null) {
+  if (targetPage !== null) currentGalleryPage = targetPage;
   const contentEl = document.getElementById('gallery-content');
   if (!contentEl) return;
-  contentEl.innerHTML = '<div class="page-loading"><div class="spinner large"></div><p>Scanning media files...</p></div>';
+  contentEl.innerHTML = `<div class="page-loading"><div class="spinner large"></div><p>Loading media page ${currentGalleryPage}...</p></div>`;
 
-  const ep = selectedGalleryDrive === 'ALL' ? '/api/gallery?limit=all' : `/api/gallery?drive=${encodeURIComponent(selectedGalleryDrive)}&limit=all`;
+  const driveParam = selectedGalleryDrive === 'ALL' ? '' : `&drive=${encodeURIComponent(selectedGalleryDrive)}`;
+  const ep = `/api/gallery?page=${currentGalleryPage}&limit=${galleryPageLimit}${driveParam}`;
   const r = await GET(ep);
   const rawData = r?.data;
   const media = Array.isArray(rawData) ? rawData : (rawData?.items || []);
+  const page = rawData?.page || currentGalleryPage;
+  const totalPages = rawData?.totalPages || 1;
+  const totalItems = rawData?.totalItems || media.length;
 
   let filteredMedia = media;
   if (selectedMediaType === 'photos') {
@@ -1054,13 +1066,24 @@ async function loadGalleryMedia() {
     filteredMedia = media.filter(m => m.isVideo);
   }
 
+  const paginationHtml = `
+    <div class="gallery-pagination-bar">
+      <button class="btn btn-sm btn-ghost prev-gallery-page-btn" ${page <= 1 ? 'disabled' : ''}>← Previous Page</button>
+      <div class="pagination-info">
+        Page <strong>${page}</strong> of <strong>${totalPages}</strong> (${totalItems.toLocaleString()} total items • 500 per page)
+      </div>
+      <button class="btn btn-sm btn-ghost next-gallery-page-btn" ${page >= totalPages ? 'disabled' : ''}>Next Page →</button>
+    </div>`;
+
   if (filteredMedia.length === 0) {
     contentEl.innerHTML = `
-      <div class="card empty-state">
+      ${paginationHtml}
+      <div class="card empty-state" style="margin-top:16px">
         <div class="icon">${selectedMediaType === 'videos' ? '🎬' : '🖼️'}</div>
-        <h3>No ${selectedMediaType === 'videos' ? 'video' : selectedMediaType === 'photos' ? 'photo' : 'media'} files found</h3>
+        <h3>No ${selectedMediaType === 'videos' ? 'video' : selectedMediaType === 'photos' ? 'photo' : 'media'} files found on Page ${page}</h3>
         <p>No ${selectedMediaType === 'videos' ? 'videos' : selectedMediaType === 'photos' ? 'photos' : 'media'} were detected on ${selectedGalleryDrive === 'ALL' ? 'your NAS drives' : 'drive ' + selectedGalleryDrive}.</p>
       </div>`;
+    bindPaginationButtons(page, totalPages);
     return;
   }
 
@@ -1134,7 +1157,13 @@ async function loadGalleryMedia() {
       </div>`;
   }
 
-  contentEl.innerHTML = galleryHtml;
+  contentEl.innerHTML = `
+    ${paginationHtml}
+    ${galleryHtml}
+    ${paginationHtml}
+  `;
+
+  bindPaginationButtons(page, totalPages);
 
   // Add click handler for media lightbox
   document.querySelectorAll('.gallery-card').forEach(card => {
@@ -1154,6 +1183,28 @@ async function loadGalleryMedia() {
           </div>`,
         footer: `<a class="btn btn-primary" href="${streamUrl}" target="_blank">⬇ Download Original</a>`
       });
+    });
+  });
+}
+
+function bindPaginationButtons(currentPage, totalPages) {
+  document.querySelectorAll('.prev-gallery-page-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (currentGalleryPage > 1) {
+        currentGalleryPage--;
+        loadGalleryMedia();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    });
+  });
+
+  document.querySelectorAll('.next-gallery-page-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (currentGalleryPage < totalPages) {
+        currentGalleryPage++;
+        loadGalleryMedia();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
     });
   });
 }
