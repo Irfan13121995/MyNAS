@@ -70,12 +70,13 @@ function logActivity(type, detail) {
 
 const helmet = require('helmet');
 
-// Global Rate Limiter for API Endpoints (150 requests per min per IP)
+// Global Rate Limiter for API Endpoints (2000 req/min; skips media thumbnails & streaming)
 const globalApiLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 150,
+  max: 2000,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => req.path.startsWith('/thumbnail') || req.path.startsWith('/stream') || req.path.startsWith('/gallery'),
   message: { error: 'Rate limit exceeded. Please slow down requests.' }
 });
 
