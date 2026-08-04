@@ -44,7 +44,7 @@ if (!fs.existsSync(envPath)) {
 require('dotenv').config();
 
 const { getDrives } = require('./driveService');
-const { listFiles, validatePath, getMediaGallery, searchFiles } = require('./fileService');
+const { listFiles, validatePath, getMediaGallery, rescanMediaGallery, searchFiles } = require('./fileService');
 const { streamFile } = require('./streamService');
 const tunnelService = require('./tunnelService');
 const { startTunnel, stopTunnel, getTunnelStatus, getNamedTunnelConfig, saveNamedTunnelConfig } = tunnelService;
@@ -499,6 +499,11 @@ app.get('/api/gallery', authenticateToken, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: `Failed to fetch gallery media: ${err.message}` });
   }
+});
+
+app.post('/api/gallery/rescan', authenticateToken, (req, res) => {
+  rescanMediaGallery();
+  res.json({ success: true, message: 'Media gallery background rescan started.' });
 });
 
 // ─── 8. STREAM ENDPOINT ──────────────────────────────────────────────────────

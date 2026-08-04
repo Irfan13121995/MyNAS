@@ -1048,7 +1048,9 @@ async function gallery(container) {
     loadGalleryMedia();
   });
 
-  document.getElementById('refresh-gallery-btn').addEventListener('click', () => {
+  document.getElementById('refresh-gallery-btn').addEventListener('click', async () => {
+    toast('Scanning NAS drives for photos & videos in background...', 'info');
+    await POST('/api/gallery/rescan');
     currentGalleryPage = 1;
     loadGalleryMedia();
   });

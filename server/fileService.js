@@ -82,34 +82,88 @@ async function listFiles(dirPath) {
   });
 }
 
+const BASE_DIR = process.pkg ? path.dirname(process.execPath) : __dirname;
+const CACHE_DIR = path.join(BASE_DIR, '.nas_cache');
+const MEDIA_CACHE_FILE = path.join(CACHE_DIR, 'media_cache.json');
+
+let globalMediaList = [];
+let lastScanTimestamp = 0;
+let isScanning = false;
+
+// Ensure .nas_cache directory exists and load persistent cache on load
+(async () => {
+  try {
+    const fsSync = require('fs');
+    if (!fsSync.existsSync(CACHE_DIR)) {
+      fsSync.mkdirSync(CACHE_DIR, { recursive: true });
+    }
+    if (fsSync.existsSync(MEDIA_CACHE_FILE)) {
+      const raw = fsSync.readFileSync(MEDIA_CACHE_FILE, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed.items)) {
+        globalMediaList = parsed.items;
+        lastScanTimestamp = parsed.timestamp || Date.now();
+        console.log(`[MediaCache] Loaded ${globalMediaList.length} items from persistent disk cache.`);
+      }
+    }
+  } catch (err) {
+    console.warn('[MediaCache] Error loading persistent cache:', err.message);
+  }
+})();
+
+async function saveMediaCacheToDisk(items) {
+  try {
+    const fsSync = require('fs');
+    if (!fsSync.existsSync(CACHE_DIR)) {
+      fsSync.mkdirSync(CACHE_DIR, { recursive: true });
+    }
+    const payload = JSON.stringify({ timestamp: Date.now(), items }, null, 2);
+    await fs.writeFile(MEDIA_CACHE_FILE, payload, 'utf8');
+  } catch (err) {
+    console.warn('[MediaCache] Failed to save persistent cache:', err.message);
+  }
+}
+
 /**
- * Recursively scans a directory for photos and videos.
- * Support depth up to 25 levels and up to 100,000 media items.
+ * Priority media directory check for faster targeted scanning.
  */
-async function scanMediaDirectory(dirPath, driveLetter, mediaList = [], depth = 0, maxDepth = 25, maxItems = 100000) {
+function isPriorityMediaDir(dirName) {
+  const lower = dirName.toLowerCase();
+  return lower === 'pictures' || lower === 'videos' || lower === 'dcim' ||
+         lower === 'photos' || lower === 'camera' || lower === 'downloads' ||
+         lower === 'desktop' || lower === 'users' || lower === 'mobile backups' ||
+         lower === 'onedrive' || lower === 'media' || lower === 'gallery';
+}
+
+/**
+ * Recursively scans a directory for photos and videos with parallel traversal.
+ */
+async function scanMediaDirectory(dirPath, driveLetter, mediaList = [], depth = 0, maxDepth = 10, maxItems = 100000) {
   if (depth > maxDepth || mediaList.length >= maxItems) return mediaList;
 
   try {
     const entries = await fs.readdir(dirPath, { withFileTypes: true });
+    const subdirs = [];
 
     for (const entry of entries) {
       if (mediaList.length >= maxItems) break;
 
-      // Skip system, hidden, cache, build, and OS system folders
       const lowerName = entry.name.toLowerCase();
+      // Skip system, hidden, cache, build, and OS system folders
       if (entry.name.startsWith('.') || entry.name.startsWith('$') ||
           lowerName === 'node_modules' || lowerName === 'appdata' ||
           lowerName === 'windows' || lowerName === 'program files' ||
           lowerName === 'program files (x86)' || lowerName === 'programdata' ||
           lowerName === 'system volume information' || lowerName === 'recovery' ||
-          lowerName === 'recycler' || lowerName === '$recycle.bin') {
+          lowerName === 'recycler' || lowerName === '$recycle.bin' || lowerName === 'temp') {
         continue;
       }
 
       const fullPath = path.join(dirPath, entry.name);
 
       if (entry.isDirectory()) {
-        await scanMediaDirectory(fullPath, driveLetter, mediaList, depth + 1, maxDepth, maxItems);
+        const nextMaxDepth = isPriorityMediaDir(entry.name) ? 12 : Math.min(maxDepth, 6);
+        subdirs.push({ fullPath, nextMaxDepth });
       } else if (entry.isFile()) {
         const ext = path.extname(entry.name).toLowerCase();
         if (MEDIA_EXTENSIONS.has(ext)) {
@@ -132,34 +186,27 @@ async function scanMediaDirectory(dirPath, driveLetter, mediaList = [], depth = 
         }
       }
     }
+
+    // Traverse subdirectories in parallel chunks (up to 5 concurrently)
+    const chunkSize = 5;
+    for (let i = 0; i < subdirs.length && mediaList.length < maxItems; i += chunkSize) {
+      const chunk = subdirs.slice(i, i + chunkSize);
+      await Promise.all(chunk.map(sub => scanMediaDirectory(sub.fullPath, driveLetter, mediaList, depth + 1, sub.nextMaxDepth, maxItems)));
+    }
   } catch (err) {}
 
   return mediaList;
 }
 
-let mediaGalleryCache = { data: null, timestamp: 0, targetDrive: null };
-const GALLERY_CACHE_TTL = 5000; // 5 seconds in-memory TTL cache
-let pendingScanPromise = null;
-
 /**
- * Collects all media files across all or specific registered NAS drives and custom paths.
+ * Triggers a full background rescan across all registered NAS drives and custom paths.
  */
-async function getMediaGallery(targetDrive = null) {
-  const now = Date.now();
-  if (
-    mediaGalleryCache.data &&
-    mediaGalleryCache.targetDrive === targetDrive &&
-    now - mediaGalleryCache.timestamp < GALLERY_CACHE_TTL
-  ) {
-    return mediaGalleryCache.data;
-  }
+async function rescanMediaGallery() {
+  if (isScanning) return globalMediaList;
+  isScanning = true;
 
-  const cacheKey = targetDrive || '__all__';
-  if (pendingScanPromise && pendingScanPromise.key === cacheKey) {
-    return pendingScanPromise.promise;
-  }
-
-  const scanPromise = (async () => {
+  console.log('[MediaCache] Starting background media scan...');
+  try {
     const allDrives = await getDrives();
     const allowedPaths = driveConfig.getAllowedPaths();
     const customPaths = driveConfig.getCustomPaths() || [];
@@ -171,26 +218,18 @@ async function getMediaGallery(targetDrive = null) {
       );
     }
 
-    if (targetDrive && targetDrive !== 'ALL') {
-      const normalizedTarget = targetDrive.toUpperCase().replace(/[/\\]+$/, '');
-      drivesToScan = drivesToScan.filter(d => d.letter.toUpperCase().startsWith(normalizedTarget));
-    }
-
     let allMedia = [];
     for (const drive of drivesToScan) {
-      const driveMedia = await scanMediaDirectory(drive.letter + path.sep, drive.letter, [], 0, 25, 100000);
+      const driveMedia = await scanMediaDirectory(drive.letter + path.sep, drive.letter, [], 0, 10, 100000);
       allMedia = allMedia.concat(driveMedia);
     }
 
-    // Also scan custom NAS folders registered by user
-    if (!targetDrive || targetDrive === 'ALL') {
-      for (const customItem of customPaths) {
-        if (customItem && customItem.path) {
-          try {
-            const customMedia = await scanMediaDirectory(customItem.path, customItem.label || 'Custom Path', [], 0, 25, 100000);
-            allMedia = allMedia.concat(customMedia);
-          } catch (e) {}
-        }
+    for (const customItem of customPaths) {
+      if (customItem && customItem.path) {
+        try {
+          const customMedia = await scanMediaDirectory(customItem.path, customItem.label || 'Custom Path', [], 0, 12, 100000);
+          allMedia = allMedia.concat(customMedia);
+        } catch (e) {}
       }
     }
 
@@ -205,16 +244,40 @@ async function getMediaGallery(targetDrive = null) {
     }
 
     const sortedMedia = uniqueMedia.sort((a, b) => new Date(b.modifiedAt) - new Date(a.modifiedAt));
-    mediaGalleryCache = { data: sortedMedia, timestamp: Date.now(), targetDrive };
-    return sortedMedia;
-  })();
+    globalMediaList = sortedMedia;
+    lastScanTimestamp = Date.now();
 
-  pendingScanPromise = { key: cacheKey, promise: scanPromise };
-  try {
-    return await scanPromise;
+    await saveMediaCacheToDisk(globalMediaList);
+    console.log(`[MediaCache] Background scan finished: ${globalMediaList.length} items cached.`);
+  } catch (err) {
+    console.warn('[MediaCache] Background scan error:', err.message);
   } finally {
-    pendingScanPromise = null;
+    isScanning = false;
   }
+
+  return globalMediaList;
+}
+
+/**
+ * Collects all media files across all or specific registered NAS drives.
+ * Returns cached items immediately (< 5ms) and triggers background refresh if stale.
+ */
+async function getMediaGallery(targetDrive = null) {
+  const now = Date.now();
+
+  // If cache is empty or older than 2 minutes, trigger a background rescan non-blockingly
+  if (globalMediaList.length === 0 || now - lastScanTimestamp > 120000) {
+    rescanMediaGallery();
+  }
+
+  // Filter cached items by target drive
+  let items = globalMediaList;
+  if (targetDrive && targetDrive !== 'ALL') {
+    const normalizedTarget = targetDrive.toUpperCase().replace(/[/\\]+$/, '');
+    items = items.filter(item => item.drive && item.drive.toUpperCase().startsWith(normalizedTarget));
+  }
+
+  return items;
 }
 
 /**
@@ -292,5 +355,6 @@ module.exports = {
   validatePath,
   listFiles,
   getMediaGallery,
+  rescanMediaGallery,
   searchFiles
 };
