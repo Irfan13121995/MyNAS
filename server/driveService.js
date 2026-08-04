@@ -1,5 +1,4 @@
 const { exec } = require('child_process');
-const path = require('path');
 
 let driveCache = { data: null, timestamp: 0 };
 const DRIVE_CACHE_TTL = 5000;

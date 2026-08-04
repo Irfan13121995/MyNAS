@@ -1,5 +1,9 @@
 const nodemailer = require('nodemailer');
 
+/**
+ * Creates an SMTP transporter if SMTP configuration env variables are present.
+ * @returns {object|null} Nodemailer transporter instance or null.
+ */
 function createTransporter() {
   const host = process.env.SMTP_HOST;
   const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 587;
@@ -21,6 +25,16 @@ function createTransporter() {
   return null;
 }
 
+/**
+ * Sends an email verification link to a user.
+ * Falls back to logging the URL in dev mode if SMTP is not configured.
+ * @param {object} options
+ * @param {string} options.email User email.
+ * @param {string} options.username User name.
+ * @param {string} options.token Verification token.
+ * @param {string} [options.baseUrl] Server base URL.
+ * @returns {Promise<{sent: boolean, mode: string, error?: string, devLink?: string}>}
+ */
 async function sendVerificationEmail({ email, username, token, baseUrl }) {
   const transporter = createTransporter();
   const verifyUrl = `${baseUrl || 'http://localhost:3000'}/api/auth/verify-email?token=${token}`;

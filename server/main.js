@@ -4,7 +4,6 @@ const http = require('http');
 
 let mainWindow = null;
 let tray = null;
-let serverProcess = null;
 const PORT = process.env.PORT || 3000;
 
 // Ensure single instance of app

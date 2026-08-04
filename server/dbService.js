@@ -58,40 +58,53 @@ if (fs.existsSync(legacyFile)) {
   }
 }
 
+/**
+ * Internal helper to format database user row to domain object.
+ * @param {object} row Raw database row from SQLite users table.
+ * @returns {object|null} Formatted user object.
+ */
+function mapUserRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    username: row.username,
+    email: row.email,
+    passwordHash: row.password_hash,
+    emailVerified: Boolean(row.email_verified),
+    failedAttempts: row.failed_attempts,
+    lockUntil: row.lock_until,
+    createdAt: row.created_at
+  };
+}
+
+/**
+ * Checks if any users exist in the database.
+ * @returns {boolean}
+ */
 function hasAnyUsers() {
   const row = db.prepare('SELECT COUNT(*) as count FROM users').get();
   return row.count > 0;
 }
 
+/**
+ * Retrieves a user record by case-insensitive username.
+ * @param {string} username
+ * @returns {object|null}
+ */
 function getUserByUsername(username) {
   const row = db.prepare('SELECT * FROM users WHERE LOWER(username) = LOWER(?)').get(username);
-  if (!row) return null;
-  return {
-    id: row.id,
-    username: row.username,
-    email: row.email,
-    passwordHash: row.password_hash,
-    emailVerified: Boolean(row.email_verified),
-    failedAttempts: row.failed_attempts,
-    lockUntil: row.lock_until,
-    createdAt: row.created_at
-  };
+  return mapUserRow(row);
 }
 
+/**
+ * Retrieves a user record by case-insensitive email.
+ * @param {string} email
+ * @returns {object|null}
+ */
 function getUserByEmail(email) {
   if (!email) return null;
   const row = db.prepare('SELECT * FROM users WHERE LOWER(email) = LOWER(?)').get(email);
-  if (!row) return null;
-  return {
-    id: row.id,
-    username: row.username,
-    email: row.email,
-    passwordHash: row.password_hash,
-    emailVerified: Boolean(row.email_verified),
-    failedAttempts: row.failed_attempts,
-    lockUntil: row.lock_until,
-    createdAt: row.created_at
-  };
+  return mapUserRow(row);
 }
 
 async function createUser({ username, email, password }) {

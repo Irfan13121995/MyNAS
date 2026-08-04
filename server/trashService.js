@@ -6,6 +6,9 @@ const TRASH_DIR = path.join(__dirname, '.nas_trash');
 const TRASH_FILES_DIR = path.join(TRASH_DIR, 'files');
 const MANIFEST_FILE = path.join(TRASH_DIR, 'manifest.json');
 
+/**
+ * Ensures trash storage directory and manifest file exist.
+ */
 function ensureTrashDirs() {
   if (!fs.existsSync(TRASH_FILES_DIR)) {
     fs.mkdirSync(TRASH_FILES_DIR, { recursive: true });
@@ -15,6 +18,10 @@ function ensureTrashDirs() {
   }
 }
 
+/**
+ * Reads the trash manifest.
+ * @returns {Array<object>} List of items in trash.
+ */
 function getManifest() {
   ensureTrashDirs();
   try {
@@ -25,11 +32,20 @@ function getManifest() {
   }
 }
 
+/**
+ * Saves items list to the trash manifest.
+ * @param {Array<object>} items
+ */
 function saveManifest(items) {
   ensureTrashDirs();
   fs.writeFileSync(MANIFEST_FILE, JSON.stringify(items, null, 2), 'utf8');
 }
 
+/**
+ * Moves a file to the NAS trash bin.
+ * @param {string} filePath Absolute path to file.
+ * @returns {object} Trash item details.
+ */
 function moveToTrash(filePath) {
   ensureTrashDirs();
   if (!fs.existsSync(filePath)) {
@@ -58,10 +74,19 @@ function moveToTrash(filePath) {
   return trashItem;
 }
 
+/**
+ * Lists all items currently in the trash bin.
+ * @returns {Array<object>}
+ */
 function listTrash() {
   return getManifest();
 }
 
+/**
+ * Restores an item from the trash bin to its original location.
+ * @param {string} id Trash item ID.
+ * @returns {object} Restored item metadata.
+ */
 function restoreFromTrash(id) {
   const manifest = getManifest();
   const index = manifest.findIndex(item => item.id === id);
@@ -91,6 +116,11 @@ function restoreFromTrash(id) {
   return item;
 }
 
+/**
+ * Purges trash items by ID or removes items older than 30 days.
+ * @param {string|null} id Specific item ID to purge, or null to auto-purge expired items.
+ * @returns {{success: boolean}}
+ */
 function purgeTrash(id = null) {
   let manifest = getManifest();
 
@@ -104,7 +134,7 @@ function purgeTrash(id = null) {
       manifest.splice(index, 1);
     }
   } else {
-    // Purge all or older than 30 days
+    // Purge items older than 30 days
     const now = Date.now();
     const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 

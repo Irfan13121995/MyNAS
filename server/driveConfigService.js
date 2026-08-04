@@ -4,6 +4,10 @@ const path = require('path');
 const BASE_DIR = process.pkg ? path.dirname(process.execPath) : __dirname;
 const CONFIG_PATH = path.join(BASE_DIR, 'drives_config.json');
 
+/**
+ * Reads configuration from drives_config.json.
+ * @returns {{allowedPaths: Array<string>|null, customPaths: Array<object>}}
+ */
 function readConfig() {
   if (!fs.existsSync(CONFIG_PATH)) {
     // First run: no config — null means "allow all auto-detected drives"
@@ -16,6 +20,10 @@ function readConfig() {
   }
 }
 
+/**
+ * Persists updated configuration object to drives_config.json.
+ * @param {object} config
+ */
 function saveConfig(config) {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
 }
