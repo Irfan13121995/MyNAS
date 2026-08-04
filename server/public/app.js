@@ -1323,14 +1323,14 @@ async function remote(container) {
         ` : ''}
       </div>
 
-      <!-- PERMANENT NAMED TUNNEL CONFIGURATION CARD FOR MYNAS-HI.EU.ORG -->
+      <!-- PERMANENT NAMED TUNNEL CONFIGURATION CARD FOR MYNAS-HI.ONLINE -->
       <div class="card" style="margin-bottom:20px">
         <div class="card-header">
           <div>
-            <h3 class="card-title">🌐 Permanent Named Tunnel — <code>mynas-hi.eu.org</code></h3>
-            <p class="card-subtitle">Connect your free permanent <code>mynas-hi.eu.org</code> domain using your free Cloudflare Zero Trust token ($0 cost forever).</p>
+            <h3 class="card-title">🌐 Permanent Named Tunnel — <code>mynas-hi.online</code></h3>
+            <p class="card-subtitle">Connect your custom <code>mynas-hi.online</code> domain using your Cloudflare Zero Trust token.</p>
           </div>
-          <span class="badge badge-green">$0.00 Free Domain</span>
+          <span class="badge badge-green">Custom Domain</span>
         </div>
 
         <div style="display:flex;flex-direction:column;gap:14px;margin-top:12px">
@@ -1341,12 +1341,12 @@ async function remote(container) {
 
           <div>
             <label for="named-domain-input">Custom Public Domain URL</label>
-            <input id="named-domain-input" class="input font-mono" type="text" placeholder="https://mynas-hi.eu.org" value="${escapeHtml(savedConfig.customUrl || 'https://mynas-hi.eu.org')}" />
+            <input id="named-domain-input" class="input font-mono" type="text" placeholder="https://mynas-hi.online" value="${escapeHtml(savedConfig.customUrl || 'https://mynas-hi.online')}" />
           </div>
 
           <div style="display:flex;justify-content:flex-end;gap:10px">
             <button class="btn btn-primary" id="save-named-tunnel-btn">
-              🔒 Save & Connect https://mynas-hi.eu.org
+              🔒 Save & Connect https://mynas-hi.online
             </button>
           </div>
         </div>
@@ -1354,11 +1354,11 @@ async function remote(container) {
         <hr class="divider"/>
 
         <div style="background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:12px;padding:16px">
-          <h4 style="font-size:13px;font-weight:700;color:var(--accent);margin-bottom:10px">📋 3-Step Setup for <code>mynas-hi.eu.org</code> on Cloudflare ($0.00):</h4>
+          <h4 style="font-size:13px;font-weight:700;color:var(--accent);margin-bottom:10px">📋 3-Step Setup for <code>mynas-hi.online</code> on Cloudflare:</h4>
           <ol style="margin-left:18px;font-size:12px;color:var(--text-secondary);display:flex;flex-direction:column;gap:6px">
-            <li><b>Domain Validated</b>: <code>mynas-hi.eu.org</code> approved at <a href="https://nic.eu.org" target="_blank" style="color:var(--accent);text-decoration:underline">nic.eu.org</a> with Cloudflare nameservers.</li>
-            <li><b>Cloudflare Active</b>: Site added at <a href="https://dash.cloudflare.com" target="_blank" style="color:var(--accent);text-decoration:underline">dash.cloudflare.com</a>.</li>
-            <li><b>Create Tunnel & Paste Token</b>: Go to <a href="https://one.dash.cloudflare.com" target="_blank" style="color:var(--accent);text-decoration:underline">one.dash.cloudflare.com</a> ➔ <b>Networks ➔ Tunnels</b>, map <code>https://mynas-hi.eu.org</code> to <code>http://localhost:3000</code>, copy your token (<code>eyJh...</code>), and paste it above!</li>
+            <li><b>Cloudflare Active</b>: Site <code>mynas-hi.online</code> added at <a href="https://dash.cloudflare.com" target="_blank" style="color:var(--accent);text-decoration:underline">dash.cloudflare.com</a>.</li>
+            <li><b>DNS Configured</b>: Delete standard A record and ensure CNAME points to your Tunnel target.</li>
+            <li><b>Create Tunnel & Paste Token</b>: Go to <a href="https://one.dash.cloudflare.com" target="_blank" style="color:var(--accent);text-decoration:underline">one.dash.cloudflare.com</a> ➔ <b>Networks ➔ Tunnels</b>, map <code>https://mynas-hi.online</code> to <code>http://localhost:3000</code>, copy your token (<code>eyJh...</code>), and paste it above!</li>
           </ol>
         </div>
       </div>
@@ -1405,7 +1405,7 @@ async function remote(container) {
 
   document.getElementById('save-named-tunnel-btn')?.addEventListener('click', async () => {
     const rawToken = document.getElementById('named-token-input').value.trim();
-    const customUrl = document.getElementById('named-domain-input').value.trim() || 'https://mynas-hi.eu.org';
+    const customUrl = document.getElementById('named-domain-input').value.trim() || 'https://mynas-hi.online';
     const btn = document.getElementById('save-named-tunnel-btn');
 
     if (!rawToken) {
