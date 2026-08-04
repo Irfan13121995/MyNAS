@@ -24,7 +24,7 @@ function getNamedTunnelConfig() {
   } catch (err) {
     console.warn('[Tunnel] Error reading tunnel config:', err.message);
   }
-  return { mode: 'quick', token: '', customUrl: 'https://mynas-hi.eu.org' };
+  return { mode: 'quick', token: '', customUrl: 'https://mynas-hi.online' };
 }
 
 function saveNamedTunnelConfig(config) {
