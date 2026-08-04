@@ -45,16 +45,21 @@ applyTheme(savedTheme);
 
 // ─── API HELPERS ──────────────────────────────────────────────────────────────
 async function api(method, endpoint, body) {
-  const opts = { method, headers: Auth.headers() };
-  if (body) opts.body = JSON.stringify(body);
-  const res = await fetch(API_BASE + endpoint, opts);
-  if (res.status === 401 || res.status === 403) {
-    Auth.clear();
-    showLogin();
-    return null;
+  try {
+    const opts = { method, headers: Auth.headers() };
+    if (body) opts.body = JSON.stringify(body);
+    const res = await fetch(API_BASE + endpoint, opts);
+    if (res.status === 401 || res.status === 403) {
+      Auth.clear();
+      showLogin();
+      return null;
+    }
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, status: res.status, data };
+  } catch (err) {
+    console.warn(`API ${method} ${endpoint} error:`, err);
+    return { ok: false, status: 0, data: {}, error: err.message };
   }
-  const data = await res.json().catch(() => ({}));
-  return { ok: res.ok, status: res.status, data };
 }
 const GET    = (ep)      => api('GET', ep);
 const POST   = (ep, b)   => api('POST', ep, b);
@@ -243,9 +248,21 @@ function navigate(page, params = null) {
   content.innerHTML = '<div class="page-loading"><div class="spinner large"></div><p>Loading...</p></div>';
 
   if (pages[page]) {
-    Promise.resolve(pages[page](content, params)).then(() => {
-      bindThemeSwitches();
-    });
+    Promise.resolve(pages[page](content, params))
+      .then(() => {
+        bindThemeSwitches();
+      })
+      .catch(err => {
+        console.error(`Error rendering page ${page}:`, err);
+        content.innerHTML = `
+          <div class="page">
+            <div class="card" style="padding:32px;text-align:center">
+              <h3 style="color:var(--red)">⚠️ Unable to load ${titles[page] || page}</h3>
+              <p style="margin-top:8px;color:var(--text-secondary)">${escapeHtml(err.message || 'Unable to connect to NAS server.')}</p>
+              <button class="btn btn-primary" style="margin-top:16px" onclick="navigate('${page}')">Retry</button>
+            </div>
+          </div>`;
+      });
   }
 }
 
@@ -1392,60 +1409,75 @@ async function remote(container) {
 // PAGE: SETTINGS
 // ═════════════════════════════════════════════════════════════════════════════
 async function settings(container) {
-  const sysR = await GET('/api/system');
-  const sys = sysR?.data || {};
-  const usersR = await GET('/api/users');
-  const usersList = usersR?.data?.users || [];
+  try {
+    const [sysR, usersR] = await Promise.all([
+      GET('/api/system').catch(() => null),
+      GET('/api/users').catch(() => null)
+    ]);
+    const sys = sysR?.data || {};
+    const usersList = Array.isArray(usersR?.data?.users) ? usersR.data.users : [];
 
-  container.innerHTML = `
-    <div class="page">
-      <div class="page-header"><h2>Settings</h2><p>Server configuration, user management and security</p></div>
+    container.innerHTML = `
+      <div class="page">
+        <div class="page-header"><h2>Settings</h2><p>Server configuration, user management and security</p></div>
 
-      <div class="card settings-section" style="margin-bottom:20px">
-        <div class="card-header" style="margin-bottom:12px">
-          <h3 style="margin-bottom:0;border-bottom:none;padding-bottom:0">👥 Registered NAS Accounts (${usersList.length})</h3>
-          <span class="badge badge-blue">SQLite DB</span>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Username</th>
-                <th>Status</th>
-                <th>Created At</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${usersList.length > 0 ? usersList.map(u => `
-                <tr>
-                  <td style="font-weight:700;color:var(--text-primary)">👤 ${escapeHtml(u.username)}</td>
-                  <td><span class="badge ${u.emailVerified ? 'badge-green' : 'badge-yellow'}">${u.emailVerified ? 'Verified' : 'Pending'}</span></td>
-                  <td style="font-size:12px;color:var(--text-secondary)">${formatTime(u.createdAt)}</td>
-                </tr>
-              `).join('') : '<tr><td colspan="3" style="text-align:center;color:var(--text-muted)">No registered accounts found</td></tr>'}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div class="card settings-section" style="margin-bottom:20px">
-        <h3>🔒 Security</h3>
-        <div class="settings-row">
-          <div class="settings-row-info">
-            <h4>Active Passcode</h4>
-            <p>Used to authenticate the mobile app and dashboard.</p>
+        <div class="card settings-section" style="margin-bottom:20px">
+          <div class="card-header" style="margin-bottom:12px">
+            <h3 style="margin-bottom:0;border-bottom:none;padding-bottom:0">👥 Registered NAS Accounts (${usersList.length})</h3>
+            <span class="badge badge-blue">SQLite DB</span>
           </div>
-          <span class="badge badge-yellow font-mono" style="font-size:14px;padding:6px 14px">${sys.passcode || '——'}</span>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Username</th>
+                  <th>Status</th>
+                  <th>Created At</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${usersList.length > 0 ? usersList.map(u => `
+                  <tr>
+                    <td style="font-weight:700;color:var(--text-primary)">👤 ${escapeHtml(u.username)}</td>
+                    <td><span class="badge ${u.emailVerified ? 'badge-green' : 'badge-yellow'}">${u.emailVerified ? 'Verified' : 'Pending'}</span></td>
+                    <td style="font-size:12px;color:var(--text-secondary)">${formatTime(u.createdAt)}</td>
+                  </tr>
+                `).join('') : '<tr><td colspan="3" style="text-align:center;color:var(--text-muted);padding:18px">No registered accounts found</td></tr>'}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
 
-      <div class="card settings-section">
-        <h3>⚙️ Server Info</h3>
-        <div class="settings-row"><div class="settings-row-info"><h4>Hostname</h4></div><span class="font-mono">${sys.hostname||'—'}</span></div>
-        <div class="settings-row"><div class="settings-row-info"><h4>Port</h4></div><span class="font-mono" style="color:var(--accent)">${sys.port||3000}</span></div>
-        <div class="settings-row"><div class="settings-row-info"><h4>Uptime</h4></div><span>${sys.uptime||'—'}</span></div>
-      </div>
-    </div>`;
+        <div class="card settings-section" style="margin-bottom:20px">
+          <h3>🔒 Security</h3>
+          <div class="settings-row">
+            <div class="settings-row-info">
+              <h4>Active Passcode</h4>
+              <p>Used to authenticate the mobile app and dashboard.</p>
+            </div>
+            <span class="badge badge-yellow font-mono" style="font-size:14px;padding:6px 14px">${escapeHtml(sys.passcode || activePasscode || '881612')}</span>
+          </div>
+        </div>
+
+        <div class="card settings-section">
+          <h3>⚙️ Server Info</h3>
+          <div class="settings-row"><div class="settings-row-info"><h4>Hostname</h4></div><span class="font-mono">${escapeHtml(sys.hostname || '—')}</span></div>
+          <div class="settings-row"><div class="settings-row-info"><h4>Port</h4></div><span class="font-mono" style="color:var(--accent)">${sys.port || 3000}</span></div>
+          <div class="settings-row"><div class="settings-row-info"><h4>Uptime</h4></div><span>${escapeHtml(sys.uptime || '—')}</span></div>
+        </div>
+      </div>`;
+  } catch (err) {
+    console.error('Error rendering settings page:', err);
+    container.innerHTML = `
+      <div class="page">
+        <div class="page-header"><h2>Settings</h2><p>Server configuration, user management and security</p></div>
+        <div class="card" style="padding:28px;text-align:center">
+          <h3 style="color:var(--red)">⚠️ Unable to load Settings</h3>
+          <p style="margin-top:8px;color:var(--text-secondary)">${escapeHtml(err.message || 'Server connection error.')}</p>
+          <button class="btn btn-primary" style="margin-top:16px" onclick="navigate('settings')">Retry</button>
+        </div>
+      </div>`;
+  }
 }
 
 function initPinBoxes() {
