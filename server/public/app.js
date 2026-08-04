@@ -44,6 +44,18 @@ const savedTheme = localStorage.getItem('nas-theme') || 'dark';
 applyTheme(savedTheme);
 
 // ─── API HELPERS ──────────────────────────────────────────────────────────────
+async function parseResponse(res) {
+  const contentType = res.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    try {
+      return await res.json();
+    } catch (e) {}
+  }
+  const text = await res.text();
+  const clean = text.replace(/<[^>]*>?/gm, '').trim();
+  return { error: clean || `Server returned HTTP ${res.status} (${res.statusText || 'Error'})` };
+}
+
 async function api(method, endpoint, body) {
   try {
     const opts = { method, headers: Auth.headers() };
@@ -54,7 +66,7 @@ async function api(method, endpoint, body) {
       showLogin();
       return null;
     }
-    const data = await res.json().catch(() => ({}));
+    const data = await parseResponse(res);
     return { ok: res.ok, status: res.status, data };
   } catch (err) {
     console.warn(`API ${method} ${endpoint} error:`, err);
@@ -181,7 +193,7 @@ async function doLogin(credentials) {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   });
-  const data = await res.json();
+  const data = await parseResponse(res);
   if (!res.ok) throw new Error(data.error || 'Login failed');
   Auth.setToken(data.token);
   const username = body.username || 'Passcode Admin';
@@ -193,7 +205,7 @@ async function doRegister(username, password) {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password })
   });
-  const data = await res.json();
+  const data = await parseResponse(res);
   if (!res.ok) throw new Error(data.error || 'Registration failed');
   Auth.setToken(data.token);
   localStorage.setItem('nas_user', username);

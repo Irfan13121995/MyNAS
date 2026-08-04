@@ -806,12 +806,26 @@ app.post('/api/upload/chunk', authenticateToken, upload.single('chunk'), async (
   }
 });
 
-// ─── 11. SPA FALLBACK ─────────────────────────────────────────────────────────
+// ─── 11. API 404 & GLOBAL JSON ERROR HANDLERS ───────────────────────────────
+app.all('/api/*', (req, res) => {
+  res.status(404).json({ error: `API endpoint not found: ${req.method} ${req.path}` });
+});
+
+app.use((err, req, res, next) => {
+  console.error('[Server Error]', err.stack || err.message || err);
+  if (res.headersSent) {
+    return next(err);
+  }
+  const status = err.status || err.statusCode || 500;
+  res.status(status).json({
+    error: err.message || 'An unexpected server error occurred.'
+  });
+});
+
+// ─── 12. SPA FALLBACK ─────────────────────────────────────────────────────────
 // Serve index.html for any non-API route (needed for SPA routing)
 app.get('*', (req, res) => {
-  if (!req.path.startsWith('/api')) {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-  }
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // ─── 12. START SERVER ─────────────────────────────────────────────────────────
