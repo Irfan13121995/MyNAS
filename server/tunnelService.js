@@ -19,7 +19,13 @@ function getNamedTunnelConfig() {
   try {
     if (fs.existsSync(TUNNEL_CONFIG_PATH)) {
       const raw = fs.readFileSync(TUNNEL_CONFIG_PATH, 'utf8');
-      return JSON.parse(raw);
+      const cfg = JSON.parse(raw);
+      if (cfg) {
+        if (!cfg.customUrl || cfg.customUrl.includes('eu.org')) {
+          cfg.customUrl = 'https://mynas-hi.online';
+        }
+        return cfg;
+      }
     }
   } catch (err) {
     console.warn('[Tunnel] Error reading tunnel config:', err.message);
@@ -111,7 +117,11 @@ async function startTunnel(port = 3000, requestedMode = 'quick', token = '', cus
       if (requestedMode === 'named' && token) {
         // Permanent Named Tunnel with token
         args = ['tunnel', 'run', '--token', token.trim()];
-        tunnelUrl = customUrl.trim() || 'Permanent Named Tunnel Active';
+        let formattedUrl = customUrl ? customUrl.trim() : '';
+        if (!formattedUrl || formattedUrl.includes('eu.org')) {
+          formattedUrl = 'https://mynas-hi.online';
+        }
+        tunnelUrl = formattedUrl;
       } else {
         // Free Quick Tunnel (*.trycloudflare.com)
         args = ['tunnel', '--url', `http://localhost:${port}`];
