@@ -7,9 +7,8 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
-  SafeAreaView,
-  ProgressBarAndroid, // Obsolete, we use Custom Progress Bar for cross platform stability
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import * as MediaLibrary from 'expo-media-library';
 import * as Device from 'expo-device';
 import AsyncStorage from '@react-native-async-storage/async-storage';

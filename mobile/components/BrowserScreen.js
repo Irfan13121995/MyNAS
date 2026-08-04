@@ -8,8 +8,8 @@ import {
   ActivityIndicator,
   Alert,
   Modal,
-  SafeAreaView,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import FileViewer from './FileViewer';
 import BackupPanel from './BackupPanel';
 import TunnelPanel from './TunnelPanel';

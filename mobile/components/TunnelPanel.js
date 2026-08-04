@@ -6,10 +6,10 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
-  SafeAreaView,
   Clipboard,
   Linking,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function TunnelPanel({ serverUrl, token, onClose }) {
   const [status, setStatus] = useState('loading'); // 'loading'|'stopped'|'starting'|'running'|'error'

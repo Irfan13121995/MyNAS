@@ -8,11 +8,11 @@ import {
   ScrollView,
   ActivityIndicator,
   Dimensions,
-  SafeAreaView,
   Alert,
   Platform,
   Linking,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 // expo-av is NOT used here — it requires native compilation (dev build only).
 // For Expo Go compatibility, videos show a stream link & open in system player via Linking.

@@ -1,12 +1,17 @@
-let MediaLibrary = null;
-try {
-  MediaLibrary = require('expo-media-library');
-} catch (e) {
-  console.warn('expo-media-library native module not found. Using Expo ImagePicker fallback.', e.message);
-}
-
+import Constants from 'expo-constants';
 import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+
+let MediaLibrary = null;
+const isExpoGo = Constants.appOwnership === 'expo' || Constants.executionEnvironment === 'storeClient';
+
+if (!isExpoGo) {
+  try {
+    MediaLibrary = require('expo-media-library');
+  } catch (e) {
+    MediaLibrary = null;
+  }
+}
 
 export async function requestMediaPermissions() {
   if (MediaLibrary && typeof MediaLibrary.requestPermissionsAsync === 'function') {

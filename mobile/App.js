@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, ActivityIndicator, StatusBar, Text, SafeAreaView, Platform } from 'react-native';
+import { StyleSheet, View, ActivityIndicator, StatusBar, Text, Platform } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Constants from 'expo-constants';
 import ConnectionScreen from './components/ConnectionScreen';
 import HomeScreen from './components/HomeScreen';
 import StorageScreen from './components/StorageScreen';
@@ -12,30 +14,32 @@ import FileViewerModal from './components/FileViewerModal';
 import { authenticateBiometric } from './services/biometricService';
 import { getSecureItem, setSecureItem, deleteSecureItem } from './services/secureStoreService';
 import * as TaskManager from 'expo-task-manager';
-import * as BackgroundFetch from 'expo-background-fetch';
 import { runFullSync } from './services/syncService';
 
+const isExpoGo = Constants.appOwnership === 'expo' || Constants.executionEnvironment === 'storeClient';
 const BACKGROUND_SYNC_TASK = 'background-nas-sync';
 
-TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
+if (!isExpoGo) {
   try {
-    const serverUrl = await getSecureItem('nas_server_url');
-    const token = await getSecureItem('nas_jwt_token');
-    const syncFolder = await AsyncStorage.getItem('autosync_folder');
-    const mediaType = await AsyncStorage.getItem('autosync_type') || 'all';
-    
-    if (!serverUrl || !token || !syncFolder) {
-      return BackgroundFetch.BackgroundFetchResult.NoData;
-    }
-    
-    const result = await runFullSync(serverUrl, token, syncFolder, mediaType, null, null);
-    return result.synced > 0 
-      ? BackgroundFetch.BackgroundFetchResult.NewData 
-      : BackgroundFetch.BackgroundFetchResult.NoData;
-  } catch (err) {
-    return BackgroundFetch.BackgroundFetchResult.Failed;
-  }
-});
+    TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
+      try {
+        const serverUrl = await getSecureItem('nas_server_url');
+        const token = await getSecureItem('nas_jwt_token');
+        const syncFolder = await AsyncStorage.getItem('autosync_folder');
+        const mediaType = await AsyncStorage.getItem('autosync_type') || 'all';
+        
+        if (!serverUrl || !token || !syncFolder) {
+          return 1; // NoData
+        }
+        
+        const result = await runFullSync(serverUrl, token, syncFolder, mediaType, null, null);
+        return result.synced > 0 ? 2 : 1; // NewData : NoData
+      } catch (err) {
+        return 0; // Failed
+      }
+    });
+  } catch (e) {}
+}
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
