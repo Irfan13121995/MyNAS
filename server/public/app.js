@@ -1571,12 +1571,12 @@ async function init() {
     }
   });
 
-  document.getElementById('login-account-btn')?.addEventListener('click', async (e) => {
-    e.preventDefault();
+  const handleUserPasswordLogin = async (e) => {
+    if (e) e.preventDefault();
     const username = document.getElementById('username-input').value.trim();
     const password = document.getElementById('password-input').value;
     const errEl = document.getElementById('login-error');
-    const btn = document.getElementById('login-account-btn');
+    const btn = document.getElementById('user-login-btn') || document.getElementById('login-account-btn');
 
     errEl.classList.add('hidden');
     if (!username || !password) {
@@ -1585,7 +1585,7 @@ async function init() {
       return;
     }
 
-    btn.disabled = true;
+    if (btn) btn.disabled = true;
     try {
       await doLogin({ username, password });
       showApp();
@@ -1595,8 +1595,18 @@ async function init() {
       errEl.textContent = err.message;
       errEl.classList.remove('hidden');
     } finally {
-      btn.disabled = false;
+      if (btn) btn.disabled = false;
     }
+  };
+
+  const userBtn = document.getElementById('user-login-btn') || document.getElementById('login-account-btn');
+  userBtn?.addEventListener('click', handleUserPasswordLogin);
+
+  document.getElementById('password-input')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') handleUserPasswordLogin(e);
+  });
+  document.getElementById('username-input')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') handleUserPasswordLogin(e);
   });
 
   document.querySelectorAll('.auth-tab').forEach(tab => {
