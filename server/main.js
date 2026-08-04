@@ -112,7 +112,7 @@ function createTray() {
     {
       label: '📋 Copy Passcode to Clipboard',
       click: () => {
-        const passcode = process.env.PASSCODE || '881612';
+        const passcode = process.env.PASSCODE || '';
         clipboard.writeText(passcode);
         if (Notification.isSupported()) {
           new Notification({

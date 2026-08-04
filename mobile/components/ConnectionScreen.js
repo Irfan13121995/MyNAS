@@ -15,7 +15,7 @@ export default function ConnectionScreen({ onConnect }) {
   const [port, setPort] = useState('3000');
 
   // Credentials
-  const [passcode, setPasscode] = useState('881612');
+  const [passcode, setPasscode] = useState('');
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');

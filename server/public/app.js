@@ -1518,7 +1518,7 @@ async function settings(container) {
               <h4>Active Passcode</h4>
               <p>Used to authenticate the mobile app and dashboard.</p>
             </div>
-            <span class="badge badge-yellow font-mono" style="font-size:14px;padding:6px 14px">${escapeHtml(sys.passcode || activePasscode || '881612')}</span>
+            <span class="badge badge-yellow font-mono" style="font-size:14px;padding:6px 14px">${escapeHtml(sys.passcode || activePasscode || '******')}</span>
           </div>
         </div>
 

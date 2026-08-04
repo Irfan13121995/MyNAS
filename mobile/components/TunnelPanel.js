@@ -160,7 +160,7 @@ export default function TunnelPanel({ serverUrl, token, onClose }) {
               </TouchableOpacity>
             </View>
             <Text style={styles.pairingHint}>
-              Use this URL in the mobile app's "Remote Access" tab with your passcode (881612) to connect from anywhere.
+              Use this URL in the mobile app's "Remote Access" tab with your NAS passcode to connect from anywhere.
             </Text>
           </View>
         )}
