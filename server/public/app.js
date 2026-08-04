@@ -1042,7 +1042,7 @@ async function loadGalleryMedia() {
   if (!contentEl) return;
   contentEl.innerHTML = '<div class="page-loading"><div class="spinner large"></div><p>Scanning media files...</p></div>';
 
-  const ep = selectedGalleryDrive === 'ALL' ? '/api/gallery?limit=200' : `/api/gallery?drive=${encodeURIComponent(selectedGalleryDrive)}&limit=200`;
+  const ep = selectedGalleryDrive === 'ALL' ? '/api/gallery?limit=all' : `/api/gallery?drive=${encodeURIComponent(selectedGalleryDrive)}&limit=all`;
   const r = await GET(ep);
   const rawData = r?.data;
   const media = Array.isArray(rawData) ? rawData : (rawData?.items || []);

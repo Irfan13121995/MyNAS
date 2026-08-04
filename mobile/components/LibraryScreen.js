@@ -99,7 +99,7 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
     }
 
     try {
-      const res = await fetch(`${serverUrl}/api/gallery?page=1&limit=50`, {
+      const res = await fetch(`${serverUrl}/api/gallery?page=1&limit=100`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -122,7 +122,7 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
     setLoadingMore(true);
     try {
       const nextPage = page + 1;
-      const res = await fetch(`${serverUrl}/api/gallery?page=${nextPage}&limit=50`, {
+      const res = await fetch(`${serverUrl}/api/gallery?page=${nextPage}&limit=100`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {

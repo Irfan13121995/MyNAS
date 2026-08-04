@@ -4,8 +4,14 @@ const { getDrives } = require('./driveService');
 const driveConfig = require('./driveConfigService');
 
 const MEDIA_EXTENSIONS = new Set([
-  '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg',
-  '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.webm', '.m4v'
+  // Images
+  '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg', '.heic', '.heif', '.avif', '.tif', '.tiff', '.dng', '.cr2', '.nef', '.arw',
+  // Videos
+  '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.webm', '.m4v', '.3gp', '.flv', '.mts', '.m2ts', '.ts', '.vob', '.ogv'
+]);
+
+const VIDEO_EXTENSIONS = new Set([
+  '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.webm', '.m4v', '.3gp', '.flv', '.mts', '.m2ts', '.ts', '.vob', '.ogv'
 ]);
 
 /**
@@ -78,36 +84,38 @@ async function listFiles(dirPath) {
 
 /**
  * Recursively scans a directory for photos and videos.
+ * Support depth up to 25 levels and up to 100,000 media items.
  */
-async function scanMediaDirectory(dirPath, driveLetter, mediaList = [], depth = 0) {
-  if (depth > 6 || mediaList.length >= 5000) return mediaList;
+async function scanMediaDirectory(dirPath, driveLetter, mediaList = [], depth = 0, maxDepth = 25, maxItems = 100000) {
+  if (depth > maxDepth || mediaList.length >= maxItems) return mediaList;
 
   try {
     const entries = await fs.readdir(dirPath, { withFileTypes: true });
 
     for (const entry of entries) {
-      if (mediaList.length >= 5000) break;
+      if (mediaList.length >= maxItems) break;
 
-      // Skip system, hidden, cache, and heavy program folders
+      // Skip system, hidden, cache, build, and OS system folders
       const lowerName = entry.name.toLowerCase();
       if (entry.name.startsWith('.') || entry.name.startsWith('$') ||
           lowerName === 'node_modules' || lowerName === 'appdata' ||
           lowerName === 'windows' || lowerName === 'program files' ||
           lowerName === 'program files (x86)' || lowerName === 'programdata' ||
-          lowerName === 'system volume information' || lowerName === 'recovery') {
+          lowerName === 'system volume information' || lowerName === 'recovery' ||
+          lowerName === 'recycler' || lowerName === '$recycle.bin') {
         continue;
       }
 
       const fullPath = path.join(dirPath, entry.name);
 
       if (entry.isDirectory()) {
-        await scanMediaDirectory(fullPath, driveLetter, mediaList, depth + 1);
+        await scanMediaDirectory(fullPath, driveLetter, mediaList, depth + 1, maxDepth, maxItems);
       } else if (entry.isFile()) {
         const ext = path.extname(entry.name).toLowerCase();
         if (MEDIA_EXTENSIONS.has(ext)) {
           try {
             const stats = await fs.stat(fullPath);
-            const isVideo = ['.mp4','.mkv','.avi','.mov','.wmv','.webm','.m4v'].includes(ext);
+            const isVideo = VIDEO_EXTENSIONS.has(ext);
             const folderPath = path.dirname(fullPath);
             mediaList.push({
               name: entry.name,
@@ -134,7 +142,7 @@ const GALLERY_CACHE_TTL = 5000; // 5 seconds in-memory TTL cache
 let pendingScanPromise = null;
 
 /**
- * Collects all media files across all or specific registered NAS drives.
+ * Collects all media files across all or specific registered NAS drives and custom paths.
  */
 async function getMediaGallery(targetDrive = null) {
   const now = Date.now();
@@ -154,6 +162,7 @@ async function getMediaGallery(targetDrive = null) {
   const scanPromise = (async () => {
     const allDrives = await getDrives();
     const allowedPaths = driveConfig.getAllowedPaths();
+    const customPaths = driveConfig.getCustomPaths() || [];
 
     let drivesToScan = allDrives;
     if (allowedPaths !== null) {
@@ -169,11 +178,33 @@ async function getMediaGallery(targetDrive = null) {
 
     let allMedia = [];
     for (const drive of drivesToScan) {
-      const driveMedia = await scanMediaDirectory(drive.letter + path.sep, drive.letter);
+      const driveMedia = await scanMediaDirectory(drive.letter + path.sep, drive.letter, [], 0, 25, 100000);
       allMedia = allMedia.concat(driveMedia);
     }
 
-    const sortedMedia = allMedia.sort((a, b) => new Date(b.modifiedAt) - new Date(a.modifiedAt));
+    // Also scan custom NAS folders registered by user
+    if (!targetDrive || targetDrive === 'ALL') {
+      for (const customItem of customPaths) {
+        if (customItem && customItem.path) {
+          try {
+            const customMedia = await scanMediaDirectory(customItem.path, customItem.label || 'Custom Path', [], 0, 25, 100000);
+            allMedia = allMedia.concat(customMedia);
+          } catch (e) {}
+        }
+      }
+    }
+
+    // Deduplicate items by unique path
+    const seenPaths = new Set();
+    const uniqueMedia = [];
+    for (const item of allMedia) {
+      if (!seenPaths.has(item.path)) {
+        seenPaths.add(item.path);
+        uniqueMedia.push(item);
+      }
+    }
+
+    const sortedMedia = uniqueMedia.sort((a, b) => new Date(b.modifiedAt) - new Date(a.modifiedAt));
     mediaGalleryCache = { data: sortedMedia, timestamp: Date.now(), targetDrive };
     return sortedMedia;
   })();
@@ -187,18 +218,19 @@ async function getMediaGallery(targetDrive = null) {
 }
 
 /**
- * Recursive search directory scanner across files & folders.
+ * Recursive search directory scanner across files & folders up to 25 levels.
  */
-async function scanSearchDirectory(dirPath, queryLower, results, depth = 0) {
-  if (depth > 6 || results.length >= 100) return results;
+async function scanSearchDirectory(dirPath, queryLower, results, depth = 0, maxDepth = 25, maxResults = 1000) {
+  if (depth > maxDepth || results.length >= maxResults) return results;
 
   try {
     const entries = await fs.readdir(dirPath, { withFileTypes: true });
 
     for (const entry of entries) {
-      if (results.length >= 100) break;
+      if (results.length >= maxResults) break;
       // Skip system or hidden folders
-      if (entry.name.startsWith('$') || entry.name.startsWith('.') || entry.name === 'System Volume Information' || entry.name === 'node_modules') continue;
+      const lowerName = entry.name.toLowerCase();
+      if (entry.name.startsWith('$') || entry.name.startsWith('.') || lowerName === 'system volume information' || lowerName === 'node_modules' || lowerName === 'appdata' || lowerName === 'windows') continue;
 
       const fullPath = path.join(dirPath, entry.name);
 
@@ -217,7 +249,7 @@ async function scanSearchDirectory(dirPath, queryLower, results, depth = 0) {
       }
 
       if (entry.isDirectory()) {
-        await scanSearchDirectory(fullPath, queryLower, results, depth + 1);
+        await scanSearchDirectory(fullPath, queryLower, results, depth + 1, maxDepth, maxResults);
       }
     }
   } catch (err) {}
@@ -249,8 +281,8 @@ async function searchFiles(query, targetDrive = null) {
 
   let results = [];
   for (const drive of drivesToScan) {
-    if (results.length >= 100) break;
-    await scanSearchDirectory(drive.letter + path.sep, queryLower, results, 0);
+    if (results.length >= 1000) break;
+    await scanSearchDirectory(drive.letter + path.sep, queryLower, results, 0, 25, 1000);
   }
 
   return results;

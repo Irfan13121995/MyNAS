@@ -466,12 +466,17 @@ app.get('/api/files/search', authenticateToken, async (req, res) => {
 
 app.get('/api/gallery', authenticateToken, async (req, res) => {
   const targetDrive = req.query.drive;
-  const page = parseInt(req.query.page) || 1;
-  const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+  const page = parseInt(req.query.page, 10) || 1;
+  let limit = 50;
+  if (req.query.limit === 'all') {
+    limit = 100000;
+  } else if (req.query.limit) {
+    limit = Math.min(parseInt(req.query.limit, 10) || 50, 100000);
+  }
   try {
     const allMedia = await getMediaGallery(targetDrive);
     const totalItems = allMedia.length;
-    const totalPages = Math.ceil(totalItems / limit);
+    const totalPages = Math.max(1, Math.ceil(totalItems / limit));
     const startIndex = (page - 1) * limit;
     const paginatedMedia = allMedia.slice(startIndex, startIndex + limit);
 
