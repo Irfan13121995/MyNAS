@@ -3,8 +3,9 @@ import {
   StyleSheet, View, Text, TouchableOpacity,
   ScrollView, ActivityIndicator, Dimensions, SafeAreaView,
   Alert, Linking, Platform, Modal, StatusBar, Share,
-  TouchableWithoutFeedback, FlatList
+  TouchableWithoutFeedback, FlatList, BackHandler
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { useVideoPlayer, VideoView } from 'expo-video';
 
@@ -57,6 +58,14 @@ export default function FileViewerModal({ file, mediaList = [], serverUrl, token
   const items = (mediaList && mediaList.length > 0) ? mediaList : (file ? [file] : []);
   const initialIndex = items.findIndex(m => m.path === file?.path);
   const [currentIndex, setCurrentIndex] = useState(initialIndex >= 0 ? initialIndex : 0);
+
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      onClose();
+      return true;
+    });
+    return () => sub.remove();
+  }, [onClose]);
 
   const flatListRef = useRef(null);
 

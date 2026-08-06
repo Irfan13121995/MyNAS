@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, ActivityIndicator, StatusBar, Text, Platform } from 'react-native';
+import { StyleSheet, View, ActivityIndicator, StatusBar, Text, Platform, BackHandler, Modal, TextInput, TouchableOpacity, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
@@ -76,6 +76,12 @@ export default function App() {
   const [libraryFilter, setLibraryFilter] = useState('all'); // 'all' | 'photos' | 'videos'
   const [drives, setDrives] = useState([]);
 
+  // Biometric PIN Fallback State
+  const [pinFallbackVisible, setPinFallbackVisible] = useState(false);
+  const [fallbackPin, setFallbackPin] = useState('');
+  const [pendingUrl, setPendingUrl] = useState('');
+  const [pendingToken, setPendingToken] = useState('');
+
   // Modals
   const [autoSyncVisible, setAutoSyncVisible] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
@@ -89,6 +95,29 @@ export default function App() {
       controller.abort();
     };
   }, []);
+
+  // Global Hardware BackHandler Listener
+  useEffect(() => {
+    const onBackPress = () => {
+      if (selectedFile) {
+        setSelectedFile(null);
+        setActiveMediaList([]);
+        return true;
+      }
+      if (autoSyncVisible) {
+        setAutoSyncVisible(false);
+        return true;
+      }
+      if (activeTab !== 'home') {
+        setActiveTab('home');
+        return true;
+      }
+      return false; // Exit app
+    };
+
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => backHandler.remove();
+  }, [selectedFile, autoSyncVisible, activeTab]);
 
   const registerBackgroundSync = async () => {
     try {
@@ -120,7 +149,10 @@ export default function App() {
             setToken(storedToken);
             fetchDrives(storedUrl, storedToken, signal);
           } else {
-            handleLogout();
+            // Show passcode PIN fallback modal instead of logging out
+            setPendingUrl(storedUrl);
+            setPendingToken(storedToken);
+            setPinFallbackVisible(true);
           }
         } else {
           handleLogout();
@@ -187,6 +219,74 @@ export default function App() {
       console.error('Failed to clear credentials', e);
     }
   };
+
+  const handlePinSubmit = async () => {
+    if (!fallbackPin) {
+      Alert.alert('Error', 'Please enter your passcode PIN');
+      return;
+    }
+
+    try {
+      const res = await fetch(`${pendingUrl}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passcode: fallbackPin })
+      });
+      if (res.ok) {
+        setServerUrl(pendingUrl);
+        setToken(pendingToken);
+        fetchDrives(pendingUrl, pendingToken);
+        setPinFallbackVisible(false);
+        setFallbackPin('');
+      } else {
+        Alert.alert('Invalid PIN', 'Passcode PIN is incorrect. Please try again.');
+      }
+    } catch (e) {
+      Alert.alert('Error', 'Could not verify passcode.');
+    }
+  };
+
+  if (pinFallbackVisible) {
+    return (
+      <View style={styles.loadingContainer}>
+        <StatusBar barStyle="light-content" backgroundColor="#0B0F17" translucent={false} />
+        <Modal visible={true} transparent={true} animationType="slide">
+          <View style={{ flex: 1, backgroundColor: 'rgba(11,15,23,0.95)', justifyContent: 'center', alignItems: 'center', padding: 24 }}>
+            <View style={{ width: '100%', maxWidth: 340, backgroundColor: '#0F172A', borderRadius: 20, padding: 24, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }}>
+              <Text style={{ fontSize: 24, textAlign: 'center', marginBottom: 8 }}>🔒</Text>
+              <Text style={{ fontSize: 18, fontWeight: '700', color: '#F8FAFC', textAlign: 'center', marginBottom: 6 }}>Enter Passcode PIN</Text>
+              <Text style={{ fontSize: 13, color: '#94A3B8', textAlign: 'center', marginBottom: 20 }}>Biometric verification failed. Enter your NAS Passcode PIN to unlock.</Text>
+              
+              <TextInput
+                style={{ backgroundColor: 'rgba(30,41,59,0.8)', color: '#F8FAFC', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12, fontSize: 18, textAlign: 'center', letterSpacing: 4, borderWidth: 1, borderColor: '#00BCD4', marginBottom: 20 }}
+                placeholder="••••••"
+                placeholderTextColor="#475569"
+                keyboardType="numeric"
+                secureTextEntry
+                value={fallbackPin}
+                onChangeText={setFallbackPin}
+                maxLength={6}
+              />
+
+              <TouchableOpacity
+                style={{ backgroundColor: '#00BCD4', borderRadius: 12, paddingVertical: 13, alignItems: 'center', marginBottom: 12 }}
+                onPress={handlePinSubmit}
+              >
+                <Text style={{ color: '#0F172A', fontSize: 15, fontWeight: '700' }}>Unlock NAS</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={{ paddingVertical: 10, alignItems: 'center' }}
+                onPress={handleLogout}
+              >
+                <Text style={{ color: '#EF4444', fontSize: 13, fontWeight: '600' }}>Log Out & Switch Server</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      </View>
+    );
+  }
 
   if (loading) {
     return (

@@ -1,6 +1,9 @@
 import Constants from 'expo-constants';
 import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Battery from 'expo-battery';
+import * as Network from 'expo-network';
+import { offlineQueueService } from './offlineQueueService';
 
 let MediaLibrary = null;
 const isExpoGo = Constants.appOwnership === 'expo' || Constants.executionEnvironment === 'storeClient';
@@ -13,11 +16,51 @@ if (!isExpoGo) {
   }
 }
 
+export async function checkSyncConstraints() {
+  try {
+    const wifiOnly = (await AsyncStorage.getItem('autosync_wifi_only')) === 'true';
+    const chargingOnly = (await AsyncStorage.getItem('autosync_charging_only')) === 'true';
+    const lowBatteryPause = (await AsyncStorage.getItem('autosync_low_battery_pause')) !== 'false'; // default true
+
+    if (wifiOnly) {
+      const netState = await Network.getNetworkStateAsync();
+      if (netState.type !== Network.NetworkStateType.WIFI) {
+        return { allowed: false, reason: 'Auto-sync is set to Wi-Fi only.' };
+      }
+    }
+
+    if (chargingOnly) {
+      const batteryState = await Battery.getBatteryStateAsync();
+      const isCharging = batteryState === Battery.BatteryState.CHARGING || batteryState === Battery.BatteryState.FULL;
+      if (!isCharging) {
+        return { allowed: false, reason: 'Auto-sync is set to sync only while charging.' };
+      }
+    }
+
+    if (lowBatteryPause) {
+      const batteryLevel = await Battery.getBatteryLevelAsync();
+      if (batteryLevel > 0 && batteryLevel < 0.20) {
+        const batteryState = await Battery.getBatteryStateAsync();
+        const isCharging = batteryState === Battery.BatteryState.CHARGING || batteryState === Battery.BatteryState.FULL;
+        if (!isCharging) {
+          return { allowed: false, reason: 'Battery is below 20%. Auto-sync paused.' };
+        }
+      }
+    }
+
+    return { allowed: true };
+  } catch (e) {
+    return { allowed: true };
+  }
+}
+
 export async function requestMediaPermissions() {
   if (MediaLibrary && typeof MediaLibrary.requestPermissionsAsync === 'function') {
     try {
-      const { status } = await MediaLibrary.requestPermissionsAsync();
-      if (status === 'granted') return true;
+      const res = await MediaLibrary.requestPermissionsAsync();
+      if (res.granted || res.status === 'granted' || res.accessPrivileges === 'all' || res.accessPrivileges === 'limited') {
+        return true;
+      }
     } catch (e) {}
   }
   
@@ -157,6 +200,11 @@ export async function uploadFile(serverUrl, token, file, destination, onProgress
 }
 
 export async function pickAndSyncGallery(serverUrl, token, syncFolder, onProgress) {
+  const constraint = await checkSyncConstraints();
+  if (!constraint.allowed) {
+    return { success: false, message: constraint.reason };
+  }
+
   const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (!perm.granted) {
     return { success: false, message: 'Permission to access gallery was denied.' };
@@ -209,6 +257,12 @@ export async function pickAndSyncGallery(serverUrl, token, syncFolder, onProgres
       synced++;
     } catch (err) {
       console.warn('Picker upload failed:', err.message);
+      await offlineQueueService.addToQueue({
+        uri: asset.uri,
+        filename,
+        mimeType: asset.mimeType,
+        mediaType: asset.type
+      }, syncFolder);
       failed++;
     }
   }
@@ -223,6 +277,11 @@ export async function pickAndSyncGallery(serverUrl, token, syncFolder, onProgres
 }
 
 export async function runFullSync(serverUrl, token, syncFolder, mediaType, onProgress, onFileComplete) {
+  const constraint = await checkSyncConstraints();
+  if (!constraint.allowed) {
+    return { synced: 0, failed: 0, skipped: 0, constraintBlocked: true, message: constraint.reason };
+  }
+
   if (!MediaLibrary || typeof MediaLibrary.getAssetsAsync !== 'function') {
     // Expo Go fallback to ImagePicker
     return await pickAndSyncGallery(serverUrl, token, syncFolder, onProgress);
@@ -268,9 +327,17 @@ export async function runFullSync(serverUrl, token, syncFolder, mediaType, onPro
       if (onFileComplete) onFileComplete(file);
     } catch (e) {
       console.warn('Failed to upload file', file.filename, e);
+      await offlineQueueService.addToQueue(file, syncFolder);
       failed++;
     }
   }
+
+  // Attempt to process any queued offline files
+  try {
+    await offlineQueueService.processQueue(
+      (f, dest, progCb) => uploadFile(serverUrl, token, f, dest, progCb)
+    );
+  } catch (qErr) {}
 
   if (synced > 0) {
     const prevCount = parseInt(await AsyncStorage.getItem('autosync_synced_count') || '0', 10);
@@ -280,3 +347,4 @@ export async function runFullSync(serverUrl, token, syncFolder, mediaType, onPro
 
   return { synced, failed, skipped: alreadySynced };
 }
+

@@ -9,6 +9,9 @@ import { requestMediaPermissions, getNewMediaToSync, runFullSync } from '../serv
 
 export default function AutoSyncModal({ visible, serverUrl, token, drives, onClose }) {
   const [enabled, setEnabled] = useState(false);
+  const [wifiOnly, setWifiOnly] = useState(false);
+  const [chargingOnly, setChargingOnly] = useState(false);
+  const [lowBatteryPause, setLowBatteryPause] = useState(true);
   const [selectedDrive, setSelectedDrive] = useState('');
   const [mediaType, setMediaType] = useState('both'); // 'photos' | 'videos' | 'both'
   const [syncStatus, setSyncStatus] = useState('Idle');
@@ -36,6 +39,10 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
       const savedCount = await AsyncStorage.getItem('autosync_synced_count');
       const savedTime = await AsyncStorage.getItem('autosync_last_sync_time');
 
+      const savedWifi = await AsyncStorage.getItem('autosync_wifi_only');
+      const savedCharging = await AsyncStorage.getItem('autosync_charging_only');
+      const savedLowBat = await AsyncStorage.getItem('autosync_low_battery_pause');
+
       const deviceName = Device.modelName || Device.deviceName || 'Android Phone';
       const defaultFolder = `Mobile Backups\\${deviceName}\\Photos`;
 
@@ -45,6 +52,10 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
       if (savedEnabled !== null) setEnabled(savedEnabled === 'true');
       if (savedType) setMediaType(savedType);
       if (savedCount) setSyncedCount(parseInt(savedCount, 10));
+
+      if (savedWifi !== null) setWifiOnly(savedWifi === 'true');
+      if (savedCharging !== null) setChargingOnly(savedCharging === 'true');
+      if (savedLowBat !== null) setLowBatteryPause(savedLowBat === 'true');
       
       if (savedTime) {
         setStats(prev => ({ ...prev, lastSyncTime: new Date(parseInt(savedTime, 10)).toLocaleString() }));
@@ -54,12 +65,15 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
     }
   };
 
-  const saveSettings = async (drive, folder, isEnabled, type) => {
+  const saveSettings = async (drive, folder, isEnabled, type, wOnly = wifiOnly, cOnly = chargingOnly, lbPause = lowBatteryPause) => {
     try {
       await AsyncStorage.setItem('autosync_drive', drive);
       await AsyncStorage.setItem('autosync_folder', folder);
       await AsyncStorage.setItem('autosync_enabled', String(isEnabled));
       await AsyncStorage.setItem('autosync_type', type);
+      await AsyncStorage.setItem('autosync_wifi_only', String(wOnly));
+      await AsyncStorage.setItem('autosync_charging_only', String(cOnly));
+      await AsyncStorage.setItem('autosync_low_battery_pause', String(lbPause));
     } catch (e) {
       console.warn('Failed to save autosync settings:', e);
     }
@@ -214,6 +228,58 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
                   </TouchableOpacity>
                 );
               })}
+            </View>
+
+            {/* Power & Network Constraints */}
+            <Text style={styles.sectionTitle}>Network & Battery Conditions</Text>
+            <View style={styles.constraintBox}>
+              <View style={styles.toggleRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.toggleLabel}>Wi-Fi Only Sync</Text>
+                  <Text style={styles.toggleSub}>Avoid using cellular mobile data</Text>
+                </View>
+                <Switch
+                  value={wifiOnly}
+                  onValueChange={(val) => {
+                    setWifiOnly(val);
+                    saveSettings(selectedDrive, syncFolder, enabled, mediaType, val, chargingOnly, lowBatteryPause);
+                  }}
+                  trackColor={{ false: '#334155', true: '#00BCD4' }}
+                  thumbColor="#FFFFFF"
+                />
+              </View>
+
+              <View style={styles.toggleRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.toggleLabel}>Sync Only While Charging</Text>
+                  <Text style={styles.toggleSub}>Only run backups when plugged into power</Text>
+                </View>
+                <Switch
+                  value={chargingOnly}
+                  onValueChange={(val) => {
+                    setChargingOnly(val);
+                    saveSettings(selectedDrive, syncFolder, enabled, mediaType, wifiOnly, val, lowBatteryPause);
+                  }}
+                  trackColor={{ false: '#334155', true: '#00BCD4' }}
+                  thumbColor="#FFFFFF"
+                />
+              </View>
+
+              <View style={styles.toggleRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.toggleLabel}>Pause on Low Battery (&lt;20%)</Text>
+                  <Text style={styles.toggleSub}>Pause background sync when battery is low</Text>
+                </View>
+                <Switch
+                  value={lowBatteryPause}
+                  onValueChange={(val) => {
+                    setLowBatteryPause(val);
+                    saveSettings(selectedDrive, syncFolder, enabled, mediaType, wifiOnly, chargingOnly, val);
+                  }}
+                  trackColor={{ false: '#334155', true: '#00BCD4' }}
+                  thumbColor="#FFFFFF"
+                />
+              </View>
             </View>
 
             {/* Status Summary Card */}
@@ -455,5 +521,29 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     fontSize: 14,
     fontWeight: '800',
+  },
+  constraintBox: {
+    backgroundColor: 'rgba(30, 41, 59, 0.5)',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+  },
+  toggleLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#F8FAFC',
+  },
+  toggleSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
   },
 });

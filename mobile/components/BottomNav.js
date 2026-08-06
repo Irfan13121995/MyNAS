@@ -1,5 +1,6 @@
 import React from 'react';
 import { StyleSheet, View, Text, TouchableOpacity, Platform } from 'react-native';
+import * as Haptics from 'expo-haptics';
 
 export default function BottomNav({ activeTab, onTabChange }) {
   const tabs = [
@@ -8,6 +9,11 @@ export default function BottomNav({ activeTab, onTabChange }) {
     { key: 'library', label: 'Library', icon: '🖼️' },
     { key: 'control', label: 'Control', icon: '⚙️' },
   ];
+
+  const handlePress = (key) => {
+    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch (e) {}
+    onTabChange(key);
+  };
 
   return (
     <View style={styles.floatingWrapper} pointerEvents="box-none">
@@ -19,7 +25,7 @@ export default function BottomNav({ activeTab, onTabChange }) {
               key={tab.key}
               style={[styles.tabItem, isActive && styles.tabItemActive]}
               activeOpacity={0.65}
-              onPress={() => onTabChange(tab.key)}
+              onPress={() => handlePress(tab.key)}
             >
               {isActive && <View style={styles.activeGlow} />}
               <Text style={[styles.tabIcon, isActive && styles.tabIconActive]}>

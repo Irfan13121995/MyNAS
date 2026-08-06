@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
-  StyleSheet, View, Text, FlatList, TouchableOpacity,
+  StyleSheet, View, Text, TouchableOpacity,
   ActivityIndicator, RefreshControl, Dimensions, Alert, Platform, StatusBar, ScrollView, Modal
 } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
+import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { requestMediaPermissions } from '../services/syncService';
@@ -44,7 +46,9 @@ const ImageItem = React.memo(({ thumbUri }) => {
       source={{ uri: thumbUri }}
       style={styles.thumbnail}
       contentFit="cover"
-      transition={200}
+      transition={150}
+      diskCachePolicy="always"
+      recyclingKey={thumbUri}
       placeholder={require('../assets/icon.png')}
       onError={() => setError(true)}
     />
@@ -242,7 +246,10 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
       <TouchableOpacity
         style={styles.gridCard}
         activeOpacity={0.8}
-        onPress={() => onSelectMedia && onSelectMedia(item, filteredMedia)}
+        onPress={() => {
+          try { Haptics.selectionAsync(); } catch (e) {}
+          if (onSelectMedia) onSelectMedia(item, filteredMedia);
+        }}
       >
         {isVid ? (
           <View style={styles.videoPlaceholder}>
@@ -382,17 +389,13 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
           )}
         </View>
       ) : (
-        <FlatList
+        <FlashList
           data={filteredMedia}
           keyExtractor={(item, index) => item.path || item.uri || index.toString()}
           numColumns={3}
+          estimatedItemSize={COLUMN_WIDTH + GAP}
           renderItem={renderMediaItem}
-          getItemLayout={getItemLayout}
           contentContainerStyle={styles.gridContainer}
-          windowSize={5}
-          maxToRenderPerBatch={12}
-          initialNumToRender={18}
-          removeClippedSubviews={true}
           onEndReached={loadMoreMedia}
           onEndReachedThreshold={0.5}
           refreshControl={

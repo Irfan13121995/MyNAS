@@ -21,12 +21,48 @@ export default function ConnectionScreen({ onConnect }) {
   const [password, setPassword] = useState('');
 
   const [loading, setLoading] = useState(false);
+  const [isScanningNetwork, setIsScanningNetwork] = useState(false);
 
   // QR Modal & Camera state
   const [qrModalVisible, setQrModalVisible] = useState(false);
   const [scannedUrl, setScannedUrl] = useState('');
   const [scanned, setScanned] = useState(false);
   const [permission, requestPermission] = useCameraPermissions();
+
+  const handleScanNetwork = async () => {
+    setIsScanningNetwork(true);
+    const candidateHosts = [
+      'http://10.31.30.50:3000',
+      'http://192.168.1.100:3000',
+      'http://192.168.1.50:3000',
+      'http://192.168.1.2:3000',
+      'http://192.168.0.100:3000',
+      'http://192.168.0.10:3000',
+      'https://mynas-hi.eu.org'
+    ];
+
+    let foundUrl = null;
+    for (const host of candidateHosts) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 1200);
+        const res = await fetch(`${host}/api/tunnel/status`, { signal: controller.signal }).catch(() => null);
+        clearTimeout(timeoutId);
+        if (res && res.status < 500) {
+          foundUrl = host;
+          break;
+        }
+      } catch (e) {}
+    }
+
+    setIsScanningNetwork(false);
+    if (foundUrl) {
+      setIpAddress(foundUrl);
+      Alert.alert('NAS Found!', `Discovered active NAS server at:\n${foundUrl}`);
+    } else {
+      Alert.alert('Scan Complete', 'No NAS server found on standard local Wi-Fi addresses. Please check host IP or scan QR code.');
+    }
+  };
 
   const getCleanUrl = (rawUrl = null) => {
     let cleanUrl = (rawUrl || ipAddress).trim();
@@ -222,14 +258,28 @@ export default function ConnectionScreen({ onConnect }) {
 
           {/* Card Form */}
           <View style={styles.card}>
-            {/* Quick QR Scanner Button */}
-            <TouchableOpacity
-              style={styles.qrScanBtn}
-              onPress={openQrScanner}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.qrScanBtnText}>📷 Scan QR Code to Login</Text>
-            </TouchableOpacity>
+            {/* Quick Actions Row */}
+            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 16 }}>
+              <TouchableOpacity
+                style={[styles.qrScanBtn, { flex: 1, marginBottom: 0 }]}
+                onPress={openQrScanner}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.qrScanBtnText}>📷 QR Scan</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.qrScanBtn, { flex: 1, marginBottom: 0, backgroundColor: 'rgba(0, 188, 212, 0.15)', borderColor: '#00BCD4' }]}
+                onPress={handleScanNetwork}
+                disabled={isScanningNetwork}
+                activeOpacity={0.85}
+              >
+                {isScanningNetwork ? (
+                  <ActivityIndicator size="small" color="#00BCD4" />
+                ) : (
+                  <Text style={[styles.qrScanBtnText, { color: '#22D3EE' }]}>🔍 Scan Wi-Fi</Text>
+                )}
+              </TouchableOpacity>
+            </View>
 
             {/* Auth Mode Tabs */}
             <View style={styles.tabContainer}>

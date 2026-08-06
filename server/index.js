@@ -554,6 +554,62 @@ app.post('/api/upload', authenticateToken, upload.single('file'), async (req, re
   }
 });
 
+// ─── 9.5. CHUNKED UPLOAD ENDPOINT ───────────────────────────────────────────
+
+app.post('/api/upload/chunk', authenticateToken, upload.single('chunk'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No chunk file provided' });
+
+  const fileId = req.headers['x-file-id'] || req.query.fileId;
+  const chunkIndex = parseInt(req.headers['x-chunk-index'] || req.query.chunkIndex || '0', 10);
+  const totalChunks = parseInt(req.headers['x-total-chunks'] || req.query.totalChunks || '1', 10);
+  const originalName = req.headers['x-filename'] || req.query.filename || req.file.originalname;
+  const destinationDir = req.query.destination;
+
+  if (!fileId || !destinationDir) {
+    try { await fs.promises.unlink(req.file.path); } catch {}
+    return res.status(400).json({ error: 'Missing fileId or destination parameter' });
+  }
+
+  const chunkDir = path.join(__dirname, 'temp_uploads', 'chunks', fileId.replace(/[^a-zA-Z0-9_-]/g, ''));
+
+  try {
+    await fs.promises.mkdir(chunkDir, { recursive: true });
+    const chunkPath = path.join(chunkDir, `chunk_${chunkIndex}`);
+    await fs.promises.rename(req.file.path, chunkPath);
+
+    // Check if all chunks have been received
+    const files = await fs.promises.readdir(chunkDir);
+    if (files.length >= totalChunks) {
+      const validatedDir = await validatePath(destinationDir);
+      await fs.promises.mkdir(validatedDir, { recursive: true });
+      const finalPath = path.join(validatedDir, originalName);
+
+      // Concatenate all chunks in order
+      const writeStream = fs.createWriteStream(finalPath);
+      for (let i = 0; i < totalChunks; i++) {
+        const partPath = path.join(chunkDir, `chunk_${i}`);
+        if (fs.existsSync(partPath)) {
+          const buffer = await fs.promises.readFile(partPath);
+          writeStream.write(buffer);
+          await fs.promises.unlink(partPath).catch(() => {});
+        }
+      }
+      writeStream.end();
+
+      // Clean up chunk directory
+      await fs.promises.rmdir(chunkDir).catch(() => {});
+
+      logActivity('upload', `Uploaded (chunked): ${originalName}`);
+      return res.json({ success: true, completed: true, path: finalPath });
+    }
+
+    res.json({ success: true, completed: false, chunkIndex, totalChunks });
+  } catch (err) {
+    try { await fs.promises.unlink(req.file.path); } catch {}
+    res.status(500).json({ error: `Chunk upload failed: ${err.message}` });
+  }
+});
+
 // ─── 10. TUNNEL ENDPOINTS ─────────────────────────────────────────────────────
 
 app.get('/api/tunnel/status', authenticateToken, (req, res) => res.json(getTunnelStatus()));
