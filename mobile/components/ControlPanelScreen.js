@@ -4,13 +4,27 @@ import {
   TextInput, Modal, ActivityIndicator, Alert, Platform, StatusBar
 } from 'react-native';
 
-export default function ControlPanelScreen({ serverUrl, token, onNavigateModule, onOpenAutoSync, onLogout }) {
+import { getSavedTheme, saveThemePreference, THEME_MODES } from '../services/themeService';
+
+export default function ControlPanelScreen({ serverUrl, token, onNavigateModule, onOpenAutoSync, onLogout, onThemeChange }) {
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeModal, setActiveModal] = useState(null); // 'hardware' | 'network' | 'security' | 'tunnel' | 'users' | 'about'
+  const [activeModal, setActiveModal] = useState(null); // 'theme' | 'hardware' | 'network' | 'security' | 'tunnel' | 'users' | 'about'
   const [modalLoading, setModalLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [systemData, setSystemData] = useState(null);
   const [tunnelData, setTunnelData] = useState(null);
+  const [currentTheme, setCurrentTheme] = useState(THEME_MODES.SYSTEM);
+
+  React.useEffect(() => {
+    getSavedTheme().then(setCurrentTheme);
+  }, []);
+
+  const handleSelectTheme = async (mode) => {
+    setCurrentTheme(mode);
+    await saveThemePreference(mode);
+    if (onThemeChange) onThemeChange(mode);
+    Alert.alert('Theme Updated', `App theme set to ${mode.toUpperCase()}`);
+  };
 
   const sections = [
     {
@@ -25,6 +39,7 @@ export default function ControlPanelScreen({ serverUrl, token, onNavigateModule,
     {
       title: 'General & Maintenance',
       modules: [
+        { id: 'theme', label: 'App Theme Mode', icon: '☀️', bg: 'rgba(245, 158, 11, 0.25)', color: '#F59E0B' },
         { id: 'hardware', label: 'Hardware & Power', icon: '🔋', bg: 'rgba(16, 185, 129, 0.25)', color: '#34D399' },
         { id: 'trash', label: 'Recycle Bin', icon: '🗑️', bg: 'rgba(239, 68, 68, 0.25)', color: '#F87171' },
         { id: 'network', label: 'Network', icon: '🌐', bg: 'rgba(59, 130, 246, 0.25)', color: '#60A5FA' },
@@ -274,6 +289,33 @@ export default function ControlPanelScreen({ serverUrl, token, onNavigateModule,
                             <Text style={styles.actionBtnText}>🔥 Purge All Trash</Text>
                           </TouchableOpacity>
                         )}
+                      </View>
+                    )}
+
+                    {activeModal === 'theme' && (
+                      <View style={styles.modalSection}>
+                        <Text style={styles.modalSubTitle}>Select App Theme Preference:</Text>
+                        {[
+                          { key: THEME_MODES.SYSTEM, label: 'System Default', icon: '🌓', desc: 'Follow device system appearance' },
+                          { key: THEME_MODES.LIGHT, label: 'Light Mode', icon: '☀️', desc: 'Clean bright layout' },
+                          { key: THEME_MODES.DARK, label: 'Dark Mode', icon: '🌙', desc: 'Deep liquid glass dark layout' }
+                        ].map((t) => {
+                          const isSelected = currentTheme === t.key;
+                          return (
+                            <TouchableOpacity
+                              key={t.key}
+                              style={[styles.userCard, isSelected && { borderColor: '#00BCD4', backgroundColor: 'rgba(0, 188, 212, 0.15)' }]}
+                              onPress={() => handleSelectTheme(t.key)}
+                            >
+                              <Text style={{ fontSize: 22, marginRight: 10 }}>{t.icon}</Text>
+                              <View style={{ flex: 1 }}>
+                                <Text style={styles.userName}>{t.label}</Text>
+                                <Text style={styles.userRole}>{t.desc}</Text>
+                              </View>
+                              {isSelected && <Text style={{ color: '#22D3EE', fontWeight: '800', fontSize: 18 }}>✓</Text>}
+                            </TouchableOpacity>
+                          );
+                        })}
                       </View>
                     )}
 
