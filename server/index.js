@@ -779,6 +779,45 @@ app.post('/api/files/batch-zip', authenticateToken, async (req, res) => {
 
 // ─── 10.9. SYNC MANIFEST & CHUNKED UPLOAD ───────────────────────────────────
 
+// Validate target directory availability, write permissions, and available disk space
+app.post('/api/sync/validate-target', authenticateToken, async (req, res) => {
+  const { destination, requiredBytes } = req.body || {};
+  if (!destination) return res.status(400).json({ error: 'destination is required' });
+
+  try {
+    const validatedDir = await validatePath(destination);
+    const fsSync = require('fs');
+    if (!fsSync.existsSync(validatedDir)) {
+      await fs.promises.mkdir(validatedDir, { recursive: true });
+    }
+
+    // Test write permission
+    const testFile = path.join(validatedDir, `.write_test_${Date.now()}.tmp`);
+    await fs.promises.writeFile(testFile, 'test');
+    await fs.promises.unlink(testFile);
+
+    // Get disk space info
+    const drives = await getDrives();
+    const driveLetter = validatedDir.substring(0, 2).toUpperCase();
+    const matchedDrive = drives.find(d => d.letter.toUpperCase().startsWith(driveLetter));
+
+    const freeBytes = matchedDrive ? matchedDrive.free : null;
+    const isSpaceSufficient = (freeBytes !== null && requiredBytes) ? freeBytes >= requiredBytes : true;
+
+    res.json({
+      valid: true,
+      writable: true,
+      path: validatedDir,
+      drive: matchedDrive ? matchedDrive.letter : driveLetter,
+      freeBytes,
+      requiredBytes: requiredBytes || 0,
+      sufficientSpace: isSpaceSufficient
+    });
+  } catch (err) {
+    res.status(400).json({ valid: false, error: err.message });
+  }
+});
+
 // Returns a list of filenames+sizes already in a target folder (for mobile dedup)
 app.get('/api/sync/manifest', authenticateToken, async (req, res) => {
   const folder = req.query.folder;

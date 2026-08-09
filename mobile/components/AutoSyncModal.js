@@ -26,6 +26,9 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
     lastSyncTime: 'Never'
   });
 
+  const [folderStructure, setFolderStructure] = useState('flat'); // 'flat' | 'album' | 'date'
+  const [targetValidation, setTargetValidation] = useState(null);
+
   useEffect(() => {
     loadSettings();
   }, []);
@@ -36,6 +39,7 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
       const savedFolder = await AsyncStorage.getItem('autosync_folder');
       const savedEnabled = await AsyncStorage.getItem('autosync_enabled');
       const savedType = await AsyncStorage.getItem('autosync_type');
+      const savedStruct = await AsyncStorage.getItem('autosync_folder_structure');
       const savedCount = await AsyncStorage.getItem('autosync_synced_count');
       const savedTime = await AsyncStorage.getItem('autosync_last_sync_time');
 
@@ -51,12 +55,13 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
       else setSyncFolder(defaultFolder);
       if (savedEnabled !== null) setEnabled(savedEnabled === 'true');
       if (savedType) setMediaType(savedType);
+      if (savedStruct) setFolderStructure(savedStruct);
       if (savedCount) setSyncedCount(parseInt(savedCount, 10));
 
       if (savedWifi !== null) setWifiOnly(savedWifi === 'true');
       if (savedCharging !== null) setChargingOnly(savedCharging === 'true');
       if (savedLowBat !== null) setLowBatteryPause(savedLowBat === 'true');
-      
+
       if (savedTime) {
         setStats(prev => ({ ...prev, lastSyncTime: new Date(parseInt(savedTime, 10)).toLocaleString() }));
       }
@@ -65,12 +70,13 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
     }
   };
 
-  const saveSettings = async (drive, folder, isEnabled, type, wOnly = wifiOnly, cOnly = chargingOnly, lbPause = lowBatteryPause) => {
+  const saveSettings = async (drive, folder, isEnabled, type, wOnly = wifiOnly, cOnly = chargingOnly, lbPause = lowBatteryPause, struct = folderStructure) => {
     try {
       await AsyncStorage.setItem('autosync_drive', drive);
       await AsyncStorage.setItem('autosync_folder', folder);
       await AsyncStorage.setItem('autosync_enabled', String(isEnabled));
       await AsyncStorage.setItem('autosync_type', type);
+      await AsyncStorage.setItem('autosync_folder_structure', struct);
       await AsyncStorage.setItem('autosync_wifi_only', String(wOnly));
       await AsyncStorage.setItem('autosync_charging_only', String(cOnly));
       await AsyncStorage.setItem('autosync_low_battery_pause', String(lbPause));
@@ -88,7 +94,7 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
     setSelectedDrive(driveLetter);
     saveSettings(driveLetter, syncFolder, enabled, mediaType);
   };
-  
+
   const handleFolderChange = (text) => {
     setSyncFolder(text);
     saveSettings(selectedDrive, text, enabled, mediaType);
@@ -99,18 +105,34 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
     saveSettings(selectedDrive, syncFolder, enabled, type);
   };
 
+  const handleFolderStructureSelect = (struct) => {
+    setFolderStructure(struct);
+    saveSettings(selectedDrive, syncFolder, enabled, mediaType, wifiOnly, chargingOnly, lowBatteryPause, struct);
+  };
+
   const handleSyncNow = async () => {
     if (!syncFolder) {
       Alert.alert('Error', 'Please enter a target folder path');
       return;
     }
-    
+
     setIsSyncing(true);
-    setSyncStatus('Preparing gallery sync...');
-    
+    setSyncStatus('Validating NAS storage target...');
+
     try {
       const targetPath = selectedDrive ? `${selectedDrive}\\${syncFolder}` : syncFolder;
-      
+
+      // 1. Validate NAS target path & free disk space
+      const validation = await validateTargetNASFolder(serverUrl, token, targetPath);
+      if (!validation.valid || !validation.writable) {
+        setIsSyncing(false);
+        setSyncStatus('Target invalid');
+        Alert.alert('NAS Target Error', validation.error || 'The target NAS folder is invalid or not writable.');
+        return;
+      }
+
+      setSyncStatus('Preparing gallery sync...');
+
       const result = await runFullSync(serverUrl, token, targetPath, mediaType, (progress) => {
         setSyncStatus(`Uploading ${progress.currentIndex} of ${progress.totalFiles}... (${Math.round(progress.currentFileProgress * 100)}%)`);
       });
@@ -204,6 +226,30 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
                     onChangeText={handleFolderChange}
                  />
                </View>
+            </View>
+
+            {/* Folder Structure Selector */}
+            <Text style={styles.sectionTitle}>Folder Organization Structure</Text>
+            <View style={styles.typeRow}>
+              {[
+                { key: 'flat', label: 'Flat (Photos)', icon: '📁' },
+                { key: 'album', label: 'By Album', icon: '🖼️' },
+                { key: 'date', label: 'By YYYY/MM', icon: '📅' },
+              ].map((item) => {
+                const isSelected = folderStructure === item.key;
+                return (
+                  <TouchableOpacity
+                    key={item.key}
+                    style={[styles.typeBtn, isSelected && styles.typeBtnSelected]}
+                    onPress={() => handleFolderStructureSelect(item.key)}
+                  >
+                    <Text style={styles.typeIcon}>{item.icon}</Text>
+                    <Text style={[styles.typeLabel, isSelected && styles.typeLabelSelected]}>
+                      {item.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
 
             {/* Media Type Selector */}
