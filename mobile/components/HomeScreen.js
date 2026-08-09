@@ -6,8 +6,10 @@ import {
 import CircularGauge from './CircularGauge';
 import FileExplorerModal from './FileExplorerModal';
 import { cacheService } from '../services/cacheService';
+import { getSavedTheme, saveThemePreference, THEME_MODES } from '../services/themeService';
 
 export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileBrowser, onOpenLibrary }) {
+  const [currentTheme, setCurrentTheme] = useState(THEME_MODES.SYSTEM);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState(null);
   const [isSearching, setIsSearching] = useState(false);
@@ -19,6 +21,28 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
   const [starredFiles, setStarredFiles] = useState([]);
   const [exploreVisible, setExploreVisible] = useState(false);
   const [explorePath, setExplorePath] = useState('');
+
+  useEffect(() => {
+    getSavedTheme().then(setCurrentTheme);
+  }, []);
+
+  const cycleTheme = async () => {
+    const nextTheme = currentTheme === THEME_MODES.DARK
+      ? THEME_MODES.LIGHT
+      : currentTheme === THEME_MODES.LIGHT
+        ? THEME_MODES.SYSTEM
+        : THEME_MODES.DARK;
+
+    setCurrentTheme(nextTheme);
+    await saveThemePreference(nextTheme);
+    Alert.alert('App Theme Mode', `Theme preference set to ${nextTheme.toUpperCase()}`);
+  };
+
+  const getThemeIcon = () => {
+    if (currentTheme === THEME_MODES.LIGHT) return '☀️';
+    if (currentTheme === THEME_MODES.DARK) return '🌙';
+    return '🌓';
+  };
 
   const fetchRecentFiles = async (signal) => {
     // Stale-While-Revalidate: Load from local cache instantly first
@@ -277,6 +301,9 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
         </View>
         <TouchableOpacity style={styles.headerBtn} onPress={() => Alert.alert('Activity Log', 'NAS File synchronization active.')}>
           <Text style={styles.headerBtnIcon}>📋</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.headerBtn} onPress={cycleTheme}>
+          <Text style={styles.headerBtnIcon}>{getThemeIcon()}</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.headerBtn} onPress={() => Alert.alert('Notifications', 'No new system alerts.')}>
           <Text style={styles.headerBtnIcon}>🔔</Text>
