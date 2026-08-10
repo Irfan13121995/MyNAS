@@ -26,17 +26,23 @@ if (!isExpoGo) {
       try {
         const serverUrl = await getSecureItem('nas_server_url');
         const token = await getSecureItem('nas_jwt_token');
+        const targetDrive = await AsyncStorage.getItem('autosync_drive');
         const syncFolder = await AsyncStorage.getItem('autosync_folder');
-        const mediaType = await AsyncStorage.getItem('autosync_type') || 'all';
+        const mediaType = await AsyncStorage.getItem('autosync_type') || 'both';
         
         if (!serverUrl || !token || !syncFolder) {
-          return 1; // NoData
+          return 1; // BackgroundFetch.Result.NoData
         }
+
+        const fullTargetPath = targetDrive 
+          ? `${targetDrive.replace(/[\/\\]+$/, '')}\\${syncFolder.replace(/^[\/\\]+/, '')}`
+          : syncFolder;
         
-        const result = await runFullSync(serverUrl, token, syncFolder, mediaType, null, null);
-        return result.synced > 0 ? 2 : 1; // NewData : NoData
+        const result = await runFullSync(serverUrl, token, fullTargetPath, mediaType, null, null);
+        return result.synced > 0 ? 2 : 1; // BackgroundFetch.Result.NewData : NoData
       } catch (err) {
-        return 0; // Failed
+        console.warn('Background sync task error:', err);
+        return 0; // BackgroundFetch.Result.Failed
       }
     });
   } catch (e) {}

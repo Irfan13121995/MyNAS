@@ -50,6 +50,7 @@ const tunnelService = require('./tunnelService');
 const { startTunnel, stopTunnel, getTunnelStatus, getNamedTunnelConfig, saveNamedTunnelConfig } = tunnelService;
 const driveConfig = require('./driveConfigService');
 const usersService = require('./usersService');
+const dbService = require('./dbService');
 const thumbnailService = require('./thumbnailService');
 const trashService = require('./trashService');
 const archiver = require('archiver');
@@ -778,7 +779,49 @@ app.post('/api/files/batch-zip', authenticateToken, async (req, res) => {
   archive.finalize();
 });
 
-// ─── 10.9. SYNC MANIFEST & CHUNKED UPLOAD ───────────────────────────────────
+// Create new directory on server
+app.post('/api/files/mkdir', authenticateToken, async (req, res) => {
+  const { path: targetPath } = req.body || {};
+  if (!targetPath) return res.status(400).json({ error: 'Path is required' });
+
+  try {
+    const validatedDir = await validatePath(targetPath);
+    const fsSync = require('fs');
+    if (fsSync.existsSync(validatedDir)) {
+      return res.json({ success: true, exists: true, path: validatedDir });
+    }
+    await fs.promises.mkdir(validatedDir, { recursive: true });
+    logActivity('files', `Created folder: ${validatedDir}`);
+    res.json({ success: true, created: true, path: validatedDir });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ─── 10.9. SYNC SETTINGS & TARGET VALIDATION ────────────────────────────────
+
+// Get persistent user sync settings from SQLite
+app.get('/api/sync/settings', authenticateToken, (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?.username || 'default_user';
+    const settings = dbService.getSyncSettings(userId);
+    res.json({ success: true, settings });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Save persistent user sync settings to SQLite
+app.post('/api/sync/settings', authenticateToken, (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?.username || 'default_user';
+    const saved = dbService.saveSyncSettings(userId, req.body || {});
+    logActivity('sync', `Updated auto-sync settings for ${userId}`);
+    res.json({ success: true, settings: saved });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // Validate target directory availability, write permissions, and available disk space
 app.post('/api/sync/validate-target', authenticateToken, async (req, res) => {

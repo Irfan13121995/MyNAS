@@ -7,20 +7,23 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Device from 'expo-device';
 import { requestMediaPermissions, getNewMediaToSync, runFullSync, validateTargetNASFolder } from '../services/syncService';
 import { useTheme } from '../contexts/ThemeContext';
+import FileExplorerModal from './FileExplorerModal';
 
-export default function AutoSyncModal({ visible, serverUrl, token, drives, onClose }) {
+export default function AutoSyncModal({ visible, serverUrl, token, drives = [], onClose }) {
   const { colors } = useTheme();
   const styles = useMemo(() => getStyles(colors), [colors]);
   const [enabled, setEnabled] = useState(false);
-  const [wifiOnly, setWifiOnly] = useState(false);
+  const [wifiOnly, setWifiOnly] = useState(true);
   const [chargingOnly, setChargingOnly] = useState(false);
   const [lowBatteryPause, setLowBatteryPause] = useState(true);
   const [selectedDrive, setSelectedDrive] = useState('');
+  const [syncFolder, setSyncFolder] = useState('');
   const [mediaType, setMediaType] = useState('both'); // 'photos' | 'videos' | 'both'
+  const [folderStructure, setFolderStructure] = useState('flat'); // 'flat' | 'album' | 'date'
+  
   const [syncStatus, setSyncStatus] = useState('Idle');
   const [syncedCount, setSyncedCount] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [syncFolder, setSyncFolder] = useState('');
   
   const [stats, setStats] = useState({
     totalOnDevice: 0,
@@ -29,15 +32,38 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
     lastSyncTime: 'Never'
   });
 
-  const [folderStructure, setFolderStructure] = useState('flat'); // 'flat' | 'album' | 'date'
   const [targetValidation, setTargetValidation] = useState(null);
+  const [validatingTarget, setValidatingTarget] = useState(false);
+  const [folderExplorerVisible, setFolderExplorerVisible] = useState(false);
 
   useEffect(() => {
-    loadSettings();
-  }, []);
+    if (visible) {
+      loadSettings();
+    }
+  }, [visible]);
+
+  useEffect(() => {
+    if (visible && (selectedDrive || syncFolder)) {
+      validateTarget();
+    }
+  }, [visible, selectedDrive, syncFolder]);
 
   const loadSettings = async () => {
     try {
+      // 1. Try loading remote settings from server SQLite first
+      let remoteSettings = null;
+      if (serverUrl && token) {
+        try {
+          const res = await fetch(`${serverUrl}/api/sync/settings`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          if (res.ok) {
+            const data = await res.json();
+            remoteSettings = data.settings;
+          }
+        } catch (e) {}
+      }
+
       const savedDrive = await AsyncStorage.getItem('autosync_drive');
       const savedFolder = await AsyncStorage.getItem('autosync_folder');
       const savedEnabled = await AsyncStorage.getItem('autosync_enabled');
@@ -53,12 +79,15 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
       const deviceName = Device.modelName || Device.deviceName || 'Android Phone';
       const defaultFolder = `Mobile Backups\\${deviceName}\\Photos`;
 
-      if (savedDrive) setSelectedDrive(savedDrive);
-      if (savedFolder) setSyncFolder(savedFolder);
-      else setSyncFolder(defaultFolder);
+      const activeDrive = remoteSettings?.targetDrive ?? savedDrive ?? (drives[0]?.letter || '');
+      const activeFolder = remoteSettings?.targetFolderPath ?? savedFolder ?? defaultFolder;
+
+      setSelectedDrive(activeDrive);
+      setSyncFolder(activeFolder);
+      
       if (savedEnabled !== null) setEnabled(savedEnabled === 'true');
-      if (savedType) setMediaType(savedType);
-      if (savedStruct) setFolderStructure(savedStruct);
+      if (savedType || remoteSettings?.mediaType) setMediaType(remoteSettings?.mediaType || savedType);
+      if (savedStruct || remoteSettings?.folderStructure) setFolderStructure(remoteSettings?.folderStructure || savedStruct);
       if (savedCount) setSyncedCount(parseInt(savedCount, 10));
 
       if (savedWifi !== null) setWifiOnly(savedWifi === 'true');
@@ -73,16 +102,50 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
     }
   };
 
+  const validateTarget = async () => {
+    if (!serverUrl || !token) return;
+    setValidatingTarget(true);
+    const targetPath = selectedDrive ? `${selectedDrive.replace(/[\/\\]+$/, '')}\\${syncFolder.replace(/^[\/\\]+/, '')}` : syncFolder;
+    try {
+      const res = await validateTargetNASFolder(serverUrl, token, targetPath);
+      setTargetValidation(res);
+    } catch (e) {
+      setTargetValidation({ valid: false, error: e.message });
+    } finally {
+      setValidatingTarget(false);
+    }
+  };
+
   const saveSettings = async (drive, folder, isEnabled, type, wOnly = wifiOnly, cOnly = chargingOnly, lbPause = lowBatteryPause, struct = folderStructure) => {
     try {
-      await AsyncStorage.setItem('autosync_drive', drive);
-      await AsyncStorage.setItem('autosync_folder', folder);
+      await AsyncStorage.setItem('autosync_drive', drive || '');
+      await AsyncStorage.setItem('autosync_folder', folder || '');
       await AsyncStorage.setItem('autosync_enabled', String(isEnabled));
       await AsyncStorage.setItem('autosync_type', type);
       await AsyncStorage.setItem('autosync_folder_structure', struct);
       await AsyncStorage.setItem('autosync_wifi_only', String(wOnly));
       await AsyncStorage.setItem('autosync_charging_only', String(cOnly));
       await AsyncStorage.setItem('autosync_low_battery_pause', String(lbPause));
+
+      // Push settings to server SQLite database
+      if (serverUrl && token) {
+        fetch(`${serverUrl}/api/sync/settings`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            targetDrive: drive || '',
+            targetFolderPath: folder || '',
+            folderStructure: struct,
+            mediaType: type,
+            wifiOnly: wOnly,
+            chargingOnly: cOnly,
+            lowBatteryPause: lbPause
+          })
+        }).catch(() => {});
+      }
     } catch (e) {
       console.warn('Failed to save autosync settings:', e);
     }
@@ -101,6 +164,16 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
   const handleFolderChange = (text) => {
     setSyncFolder(text);
     saveSettings(selectedDrive, text, enabled, mediaType);
+  };
+
+  const handleFolderPicked = (selectedPath) => {
+    // Strip drive letter if included in path
+    let relPath = selectedPath;
+    if (selectedDrive && selectedPath.toUpperCase().startsWith(selectedDrive.toUpperCase())) {
+      relPath = selectedPath.substring(selectedDrive.length).replace(/^[\/\\]+/, '');
+    }
+    setSyncFolder(relPath);
+    saveSettings(selectedDrive, relPath, enabled, mediaType);
   };
 
   const handleMediaTypeSelect = (type) => {
@@ -123,10 +196,10 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
     setSyncStatus('Validating NAS storage target...');
 
     try {
-      const targetPath = selectedDrive ? `${selectedDrive}\\${syncFolder}` : syncFolder;
+      const fullTargetPath = selectedDrive ? `${selectedDrive.replace(/[\/\\]+$/, '')}\\${syncFolder.replace(/^[\/\\]+/, '')}` : syncFolder;
 
       // 1. Validate NAS target path & free disk space
-      const validation = await validateTargetNASFolder(serverUrl, token, targetPath);
+      const validation = await validateTargetNASFolder(serverUrl, token, fullTargetPath);
       if (!validation.valid || !validation.writable) {
         setIsSyncing(false);
         setSyncStatus('Target invalid');
@@ -136,7 +209,7 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
 
       setSyncStatus('Preparing gallery sync...');
 
-      const result = await runFullSync(serverUrl, token, targetPath, mediaType, (progress) => {
+      const result = await runFullSync(serverUrl, token, fullTargetPath, mediaType, (progress) => {
         setSyncStatus(`Uploading ${progress.currentIndex} of ${progress.totalFiles}... (${Math.round(progress.currentFileProgress * 100)}%)`);
       });
 
@@ -166,6 +239,15 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
       setIsSyncing(false);
     }
   };
+
+  const formatBytesGB = (bytes) => {
+    if (!bytes) return 'N/A';
+    return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
+  };
+
+  const initialExplorerPath = selectedDrive 
+    ? `${selectedDrive.replace(/[\/\\]+$/, '')}\\${syncFolder.replace(/^[\/\\]+/, '')}` 
+    : (drives[0]?.letter ? `${drives[0].letter}\\` : 'C:\\');
 
   return (
     <Modal visible={visible} animationType="slide" transparent={true} onRequestClose={onClose}>
@@ -200,7 +282,7 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
             <Text style={styles.sectionTitle}>Select Storage Drive</Text>
             <View style={styles.driveList}>
               {drives.map((d) => {
-                const isSelected = selectedDrive === d.letter || (!selectedDrive && d === drives[0]);
+                const isSelected = selectedDrive === d.letter || (!selectedDrive && d.letter === drives[0]?.letter);
                 return (
                   <TouchableOpacity
                     key={d.letter}
@@ -210,6 +292,7 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
                     <Text style={styles.driveIcon}>💾</Text>
                     <View style={styles.driveMeta}>
                       <Text style={styles.driveName}>{d.name || d.letter} ({d.letter})</Text>
+                      <Text style={styles.driveSub}>{formatBytesGB(d.free)} free of {formatBytesGB(d.total)}</Text>
                     </View>
                     {isSelected && <Text style={styles.checkIcon}>✓</Text>}
                   </TouchableOpacity>
@@ -217,18 +300,42 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
               })}
             </View>
             
+            {/* Target Folder Selector with FileExplorerModal Picker */}
             <Text style={styles.sectionTitle}>Target Folder Path</Text>
-            <View style={{ marginBottom: 20 }}>
-               <View style={styles.driveItem}>
-                 <Text style={{color: colors.textSecondary, marginRight:8}}>{selectedDrive ? selectedDrive + '\\' : ''}</Text>
+            <View style={{ marginBottom: 16 }}>
+               <View style={styles.folderInputRow}>
+                 <Text style={styles.drivePrefixText}>{selectedDrive ? selectedDrive.replace(/[\/\\]+$/, '') + '\\' : ''}</Text>
                  <TextInput
-                    style={{ flex: 1, color: colors.textPrimary, fontSize: 14 }}
-                    placeholder="e.g. Gallery_Backup"
+                    style={styles.folderTextInput}
+                    placeholder="e.g. Mobile Backups\Photos"
                     placeholderTextColor={colors.textMuted}
                     value={syncFolder}
                     onChangeText={handleFolderChange}
                  />
+                 <TouchableOpacity style={styles.browseBtn} onPress={() => setFolderExplorerVisible(true)}>
+                   <Text style={styles.browseBtnText}>📁 Browse</Text>
+                 </TouchableOpacity>
                </View>
+            </View>
+
+            {/* Real-time Target Validation Status */}
+            <View style={[
+              styles.validationCard,
+              targetValidation?.valid && targetValidation?.writable ? styles.valCardSuccess : styles.valCardWarning
+            ]}>
+              <View style={styles.valHeader}>
+                <Text style={styles.valTitle}>
+                  {validatingTarget ? '⏳ Validating NAS Target...' : (targetValidation?.valid && targetValidation?.writable ? '✅ Target Ready' : '⚠️ Storage Warning')}
+                </Text>
+                {validatingTarget && <ActivityIndicator size="small" color={colors.accent} />}
+              </View>
+              {targetValidation && (
+                <View style={styles.valBody}>
+                  <Text style={styles.valText}>• Path: {targetValidation.path || 'Invalid'}</Text>
+                  <Text style={styles.valText}>• Status: {targetValidation.writable ? 'Writable' : 'Access Denied / Read Only'}</Text>
+                  <Text style={styles.valText}>• Available Space: {formatBytesGB(targetValidation.freeBytes)}</Text>
+                </View>
+              )}
             </View>
 
             {/* Folder Structure Selector */}
@@ -342,40 +449,39 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
                 <Text style={styles.statusVal}>{syncedCount} items</Text>
               </View>
               <View style={styles.statusRow}>
-                <Text style={styles.statusLabel}>Target Folder:</Text>
-                <Text style={styles.statusVal}>{selectedDrive ? `${selectedDrive}\\${syncFolder}` : syncFolder}</Text>
+                <Text style={styles.statusLabel}>Target Path:</Text>
+                <Text style={styles.statusVal} numberOfLines={1}>{selectedDrive ? `${selectedDrive}\\${syncFolder}` : syncFolder}</Text>
               </View>
-              <View style={styles.statusRow}>
-                <Text style={styles.statusLabel}>Device Photos:</Text>
-                <Text style={styles.statusVal}>{stats.totalOnDevice}</Text>
-              </View>
-              <View style={styles.statusRow}>
-                <Text style={styles.statusLabel}>Already Backed Up:</Text>
-                <Text style={styles.statusVal}>{stats.alreadySynced}</Text>
-              </View>
-              <View style={styles.statusRow}>
-                <Text style={styles.statusLabel}>New Items:</Text>
-                <Text style={styles.statusVal}>{stats.newItems}</Text>
-              </View>
-              <View style={styles.statusRow}>
-                <Text style={styles.statusLabel}>Last Sync:</Text>
-                <Text style={styles.statusVal}>{stats.lastSyncTime}</Text>
-              </View>
-
-              {isSyncing ? (
-                <View style={styles.syncingBox}>
-                  <ActivityIndicator size="small" color={colors.accent} />
-                  <Text style={styles.syncingText}>Syncing in progress...</Text>
-                </View>
-              ) : (
-                <TouchableOpacity style={styles.syncNowBtn} onPress={handleSyncNow} activeOpacity={0.85}>
-                  <Text style={styles.syncNowText}>⚡ Sync Gallery Now</Text>
-                </TouchableOpacity>
-              )}
             </View>
           </ScrollView>
+
+          {/* Bottom Action Footer */}
+          <View style={styles.footer}>
+            <TouchableOpacity
+              style={[styles.syncNowBtn, isSyncing && styles.syncNowBtnDisabled]}
+              onPress={handleSyncNow}
+              disabled={isSyncing}
+            >
+              {isSyncing ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={styles.syncNowText}>⚡ Start Manual Sync Now</Text>
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
+
+      {/* Target Folder Picker Modal */}
+      <FileExplorerModal
+        visible={folderExplorerVisible}
+        initialPath={initialExplorerPath}
+        serverUrl={serverUrl}
+        token={token}
+        mode="selectFolder"
+        onSelectFolder={handleFolderPicked}
+        onClose={() => setFolderExplorerVisible(false)}
+      />
     </Modal>
   );
 }
@@ -387,46 +493,47 @@ const getStyles = (colors) => StyleSheet.create({
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: colors.background,
+    height: '92%',
+    backgroundColor: colors.card,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    maxHeight: '85%',
-    paddingBottom: 28,
+    paddingTop: 16,
     borderWidth: 1,
     borderColor: colors.borderLight,
   },
   header: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
+    alignItems: 'center',
     paddingHorizontal: 20,
-    paddingVertical: 18,
+    paddingBottom: 16,
     borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    borderBottomColor: colors.borderLight,
   },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
     color: colors.textPrimary,
+    fontSize: 18,
+    fontWeight: 'bold',
   },
   closeBtn: {
     padding: 6,
   },
   closeBtnText: {
-    fontSize: 18,
     color: colors.textSecondary,
+    fontSize: 18,
+    fontWeight: 'bold',
   },
   body: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
+    flex: 1,
+    padding: 20,
   },
   settingCard: {
     backgroundColor: colors.surface,
     borderRadius: 16,
     padding: 16,
+    marginBottom: 20,
     borderWidth: 1,
     borderColor: colors.borderLight,
-    marginBottom: 20,
   },
   row: {
     flexDirection: 'row',
@@ -435,24 +542,24 @@ const getStyles = (colors) => StyleSheet.create({
   },
   rowInfo: {
     flex: 1,
-    marginRight: 12,
+    paddingRight: 16,
   },
   rowTitle: {
-    fontSize: 15,
-    fontWeight: '700',
     color: colors.textPrimary,
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
   },
   rowSub: {
-    fontSize: 12,
     color: colors.textSecondary,
-    marginTop: 2,
+    fontSize: 12,
   },
   sectionTitle: {
-    fontSize: 12,
+    color: colors.textPrimary,
+    fontSize: 14,
     fontWeight: '700',
-    color: colors.textSecondary,
     textTransform: 'uppercase',
-    letterSpacing: 0.8,
+    letterSpacing: 0.5,
     marginBottom: 10,
   },
   driveList: {
@@ -461,52 +568,119 @@ const getStyles = (colors) => StyleSheet.create({
   driveItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.surfaceSolid,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 14,
+    backgroundColor: colors.surface,
+    borderRadius: 12,
     padding: 14,
-    marginBottom: 8,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
   },
   driveItemSelected: {
     borderColor: colors.accent,
     backgroundColor: colors.accentBg,
   },
   driveIcon: {
-    fontSize: 24,
+    fontSize: 22,
     marginRight: 12,
   },
   driveMeta: {
     flex: 1,
   },
   driveName: {
-    fontSize: 14,
-    fontWeight: '700',
     color: colors.textPrimary,
+    fontSize: 15,
+    fontWeight: '600',
   },
   driveSub: {
+    color: colors.textMuted,
     fontSize: 12,
-    color: colors.textSecondary,
-    marginTop: 2,
+    marginTop: 2
   },
   checkIcon: {
+    color: colors.accent,
     fontSize: 18,
-    fontWeight: '800',
-    color: colors.accentLight,
+    fontWeight: 'bold',
+  },
+  folderInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    height: 48
+  },
+  drivePrefixText: {
+    color: colors.textSecondary,
+    fontSize: 14,
+    fontWeight: '600',
+    marginRight: 4
+  },
+  folderTextInput: {
+    flex: 1,
+    color: colors.textPrimary,
+    fontSize: 14,
+    height: '100%'
+  },
+  browseBtn: {
+    backgroundColor: colors.accentBg,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8
+  },
+  browseBtnText: {
+    color: colors.accent,
+    fontWeight: 'bold',
+    fontSize: 12
+  },
+  validationCard: {
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 20,
+    borderWidth: 1
+  },
+  valCardSuccess: {
+    backgroundColor: 'rgba(76, 175, 80, 0.1)',
+    borderColor: '#4CAF50'
+  },
+  valCardWarning: {
+    backgroundColor: 'rgba(255, 152, 0, 0.1)',
+    borderColor: '#FF9800'
+  },
+  valHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6
+  },
+  valTitle: {
+    color: colors.textPrimary,
+    fontWeight: 'bold',
+    fontSize: 13
+  },
+  valBody: {
+    marginTop: 2
+  },
+  valText: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    marginTop: 2
   },
   typeRow: {
     flexDirection: 'row',
-    gap: 8,
+    justifyContent: 'space-between',
     marginBottom: 20,
   },
   typeBtn: {
     flex: 1,
-    alignItems: 'center',
-    backgroundColor: colors.surfaceSolid,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 14,
+    backgroundColor: colors.surface,
+    borderRadius: 12,
     paddingVertical: 12,
+    alignItems: 'center',
+    marginHorizontal: 4,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
   },
   typeBtnSelected: {
     borderColor: colors.accent,
@@ -517,19 +691,43 @@ const getStyles = (colors) => StyleSheet.create({
     marginBottom: 4,
   },
   typeLabel: {
-    fontSize: 11,
-    fontWeight: '600',
     color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '500',
   },
   typeLabelSelected: {
-    color: colors.accentLight,
-    fontWeight: '700',
+    color: colors.accent,
+    fontWeight: 'bold',
   },
-  statusCard: {
-    backgroundColor: colors.card,
+  constraintBox: {
+    backgroundColor: colors.surface,
     borderRadius: 16,
     padding: 16,
     marginBottom: 20,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+  },
+  toggleLabel: {
+    color: colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  toggleSub: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  statusCard: {
+    backgroundColor: colors.surface,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 30,
     borderWidth: 1,
     borderColor: colors.borderLight,
   },
@@ -539,60 +737,32 @@ const getStyles = (colors) => StyleSheet.create({
     marginBottom: 8,
   },
   statusLabel: {
-    fontSize: 13,
     color: colors.textSecondary,
+    fontSize: 13,
   },
   statusVal: {
-    fontSize: 13,
-    fontWeight: '700',
     color: colors.textPrimary,
-  },
-  syncingBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 12,
-    gap: 8,
-  },
-  syncingText: {
     fontSize: 13,
-    color: colors.accent,
     fontWeight: '600',
+  },
+  footer: {
+    padding: 20,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderLight,
+    backgroundColor: colors.card,
   },
   syncNowBtn: {
     backgroundColor: colors.accent,
-    borderRadius: 12,
-    paddingVertical: 13,
+    borderRadius: 14,
+    paddingVertical: 14,
     alignItems: 'center',
-    marginTop: 10,
+  },
+  syncNowBtnDisabled: {
+    opacity: 0.6,
   },
   syncNowText: {
-    color: colors.background,
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  constraintBox: {
-    backgroundColor: colors.surface,
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  toggleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 8,
-  },
-  toggleLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.textPrimary,
-  },
-  toggleSub: {
-    fontSize: 11,
-    color: colors.textMuted,
-    marginTop: 2,
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 });

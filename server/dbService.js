@@ -27,6 +27,18 @@ db.exec(`
     username TEXT NOT NULL,
     expires_at INTEGER NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS sync_settings (
+    user_id TEXT PRIMARY KEY,
+    target_drive TEXT,
+    target_folder_path TEXT,
+    folder_structure TEXT DEFAULT 'flat',
+    media_type TEXT DEFAULT 'both',
+    wifi_only INTEGER DEFAULT 1,
+    charging_only INTEGER DEFAULT 0,
+    low_battery_pause INTEGER DEFAULT 1,
+    updated_at TEXT NOT NULL
+  );
 `);
 
 // Auto-migrate legacy users.json if exists
@@ -211,6 +223,63 @@ function getAllUsers() {
   }));
 }
 
+function getSyncSettings(userId) {
+  const row = db.prepare('SELECT * FROM sync_settings WHERE user_id = ?').get(userId || 'default_user');
+  if (!row) {
+    return {
+      userId: userId || 'default_user',
+      targetDrive: '',
+      targetFolderPath: 'Mobile Backups\\Photos',
+      folderStructure: 'flat',
+      mediaType: 'both',
+      wifiOnly: true,
+      chargingOnly: false,
+      lowBatteryPause: true,
+      updatedAt: new Date().toISOString()
+    };
+  }
+  return {
+    userId: row.user_id,
+    targetDrive: row.target_drive || '',
+    targetFolderPath: row.target_folder_path || 'Mobile Backups\\Photos',
+    folderStructure: row.folder_structure || 'flat',
+    mediaType: row.media_type || 'both',
+    wifiOnly: Boolean(row.wifi_only),
+    chargingOnly: Boolean(row.charging_only),
+    lowBatteryPause: Boolean(row.low_battery_pause),
+    updatedAt: row.updated_at
+  };
+}
+
+function saveSyncSettings(userId, settings) {
+  const uId = userId || 'default_user';
+  const updatedAt = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO sync_settings (user_id, target_drive, target_folder_path, folder_structure, media_type, wifi_only, charging_only, low_battery_pause, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET
+      target_drive = excluded.target_drive,
+      target_folder_path = excluded.target_folder_path,
+      folder_structure = excluded.folder_structure,
+      media_type = excluded.media_type,
+      wifi_only = excluded.wifi_only,
+      charging_only = excluded.charging_only,
+      low_battery_pause = excluded.low_battery_pause,
+      updated_at = excluded.updated_at
+  `).run(
+    uId,
+    settings.targetDrive || '',
+    settings.targetFolderPath || 'Mobile Backups\\Photos',
+    settings.folderStructure || 'flat',
+    settings.mediaType || 'both',
+    settings.wifiOnly !== false ? 1 : 0,
+    settings.chargingOnly ? 1 : 0,
+    settings.lowBatteryPause !== false ? 1 : 0,
+    updatedAt
+  );
+  return getSyncSettings(uId);
+}
+
 module.exports = {
   hasAnyUsers,
   getUserByUsername,
@@ -218,5 +287,7 @@ module.exports = {
   createUser,
   verifyPassword,
   verifyEmail,
-  getAllUsers
+  getAllUsers,
+  getSyncSettings,
+  saveSyncSettings
 };
