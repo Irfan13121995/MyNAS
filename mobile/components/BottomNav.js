@@ -1,8 +1,11 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { StyleSheet, View, Text, TouchableOpacity, Platform } from 'react-native';
 import * as Haptics from 'expo-haptics';
+import { useTheme } from '../contexts/ThemeContext';
 
 export default function BottomNav({ activeTab, onTabChange }) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => getStyles(colors), [colors]);
   const tabs = [
     { key: 'home', label: 'Home', icon: '🏠' },
     { key: 'storage', label: 'Storage', icon: '💾' },
@@ -43,7 +46,7 @@ export default function BottomNav({ activeTab, onTabChange }) {
   );
 }
 
-const styles = StyleSheet.create({
+const getStyles = (colors) => StyleSheet.create({
   floatingWrapper: {
     position: 'absolute',
     bottom: Platform.OS === 'ios' ? 26 : 18,
@@ -57,15 +60,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     width: '88%',
     height: 68,
-    backgroundColor: 'rgba(15, 23, 42, 0.88)',
+    backgroundColor: colors.topbar,
     borderRadius: 34,
     paddingHorizontal: 6,
     alignItems: 'center',
     justifyContent: 'space-around',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: colors.borderLight,
     elevation: 20,
-    shadowColor: '#000000',
+    shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.35,
     shadowRadius: 20,
@@ -80,7 +83,7 @@ const styles = StyleSheet.create({
     marginHorizontal: 3,
   },
   tabItemActive: {
-    backgroundColor: 'rgba(0, 188, 212, 0.15)',
+    backgroundColor: colors.accentBg,
   },
   activeGlow: {
     position: 'absolute',
@@ -89,9 +92,9 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     borderRadius: 26,
-    backgroundColor: 'rgba(0, 188, 212, 0.08)',
+    backgroundColor: colors.accentBg,
     borderWidth: 1,
-    borderColor: 'rgba(0, 188, 212, 0.2)',
+    borderColor: colors.accentBorder,
   },
   tabIcon: {
     fontSize: 20,
@@ -104,12 +107,12 @@ const styles = StyleSheet.create({
   },
   tabLabel: {
     fontSize: 10,
-    color: 'rgba(148, 163, 184, 0.7)',
+    color: colors.textMuted,
     fontWeight: '600',
     letterSpacing: 0.2,
   },
   tabLabelActive: {
-    color: '#00BCD4',
+    color: colors.accent,
     fontWeight: '800',
   },
   activeDot: {
@@ -118,9 +121,9 @@ const styles = StyleSheet.create({
     width: 5,
     height: 5,
     borderRadius: 2.5,
-    backgroundColor: '#00BCD4',
+    backgroundColor: colors.accent,
     elevation: 2,
-    shadowColor: '#00BCD4',
+    shadowColor: colors.accent,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.6,
     shadowRadius: 3,

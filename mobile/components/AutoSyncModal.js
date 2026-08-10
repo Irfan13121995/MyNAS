@@ -1,13 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   StyleSheet, View, Text, Modal, TouchableOpacity,
   Switch, ActivityIndicator, Alert, ScrollView, TextInput
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Device from 'expo-device';
-import { requestMediaPermissions, getNewMediaToSync, runFullSync } from '../services/syncService';
+import { requestMediaPermissions, getNewMediaToSync, runFullSync, validateTargetNASFolder } from '../services/syncService';
+import { useTheme } from '../contexts/ThemeContext';
 
 export default function AutoSyncModal({ visible, serverUrl, token, drives, onClose }) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => getStyles(colors), [colors]);
   const [enabled, setEnabled] = useState(false);
   const [wifiOnly, setWifiOnly] = useState(false);
   const [chargingOnly, setChargingOnly] = useState(false);
@@ -187,8 +190,8 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
                 <Switch
                   value={enabled}
                   onValueChange={handleToggle}
-                  trackColor={{ false: '#334155', true: 'rgba(0, 188, 212, 0.4)' }}
-                  thumbColor={enabled ? '#00BCD4' : '#94A3B8'}
+                  trackColor={{ false: colors.borderLight, true: colors.accentBg }}
+                  thumbColor={enabled ? colors.accent : colors.textMuted}
                 />
               </View>
             </View>
@@ -217,11 +220,11 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
             <Text style={styles.sectionTitle}>Target Folder Path</Text>
             <View style={{ marginBottom: 20 }}>
                <View style={styles.driveItem}>
-                 <Text style={{color:'#94A3B8', marginRight:8}}>{selectedDrive ? selectedDrive + '\\' : ''}</Text>
+                 <Text style={{color: colors.textSecondary, marginRight:8}}>{selectedDrive ? selectedDrive + '\\' : ''}</Text>
                  <TextInput
-                    style={{ flex: 1, color: '#F8FAFC', fontSize: 14 }}
+                    style={{ flex: 1, color: colors.textPrimary, fontSize: 14 }}
                     placeholder="e.g. Gallery_Backup"
-                    placeholderTextColor="#475569"
+                    placeholderTextColor={colors.textMuted}
                     value={syncFolder}
                     onChangeText={handleFolderChange}
                  />
@@ -290,7 +293,7 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
                     setWifiOnly(val);
                     saveSettings(selectedDrive, syncFolder, enabled, mediaType, val, chargingOnly, lowBatteryPause);
                   }}
-                  trackColor={{ false: '#334155', true: '#00BCD4' }}
+                  trackColor={{ false: colors.borderLight, true: colors.accent }}
                   thumbColor="#FFFFFF"
                 />
               </View>
@@ -306,7 +309,7 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
                     setChargingOnly(val);
                     saveSettings(selectedDrive, syncFolder, enabled, mediaType, wifiOnly, val, lowBatteryPause);
                   }}
-                  trackColor={{ false: '#334155', true: '#00BCD4' }}
+                  trackColor={{ false: colors.borderLight, true: colors.accent }}
                   thumbColor="#FFFFFF"
                 />
               </View>
@@ -322,7 +325,7 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
                     setLowBatteryPause(val);
                     saveSettings(selectedDrive, syncFolder, enabled, mediaType, wifiOnly, chargingOnly, val);
                   }}
-                  trackColor={{ false: '#334155', true: '#00BCD4' }}
+                  trackColor={{ false: colors.borderLight, true: colors.accent }}
                   thumbColor="#FFFFFF"
                 />
               </View>
@@ -361,7 +364,7 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
 
               {isSyncing ? (
                 <View style={styles.syncingBox}>
-                  <ActivityIndicator size="small" color="#00BCD4" />
+                  <ActivityIndicator size="small" color={colors.accent} />
                   <Text style={styles.syncingText}>Syncing in progress...</Text>
                 </View>
               ) : (
@@ -377,20 +380,20 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives, onClo
   );
 }
 
-const styles = StyleSheet.create({
+const getStyles = (colors) => StyleSheet.create({
   modalBg: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.8)',
+    backgroundColor: colors.overlay,
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: '#0F172A',
+    backgroundColor: colors.background,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     maxHeight: '85%',
     paddingBottom: 28,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
+    borderColor: colors.borderLight,
   },
   header: {
     flexDirection: 'row',
@@ -399,30 +402,30 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 18,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
+    borderBottomColor: colors.border,
   },
   headerTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#F8FAFC',
+    color: colors.textPrimary,
   },
   closeBtn: {
     padding: 6,
   },
   closeBtnText: {
     fontSize: 18,
-    color: '#94A3B8',
+    color: colors.textSecondary,
   },
   body: {
     paddingHorizontal: 20,
     paddingTop: 16,
   },
   settingCard: {
-    backgroundColor: 'rgba(30, 41, 59, 0.75)',
+    backgroundColor: colors.surface,
     borderRadius: 16,
     padding: 16,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: colors.borderLight,
     marginBottom: 20,
   },
   row: {
@@ -437,17 +440,17 @@ const styles = StyleSheet.create({
   rowTitle: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#F8FAFC',
+    color: colors.textPrimary,
   },
   rowSub: {
     fontSize: 12,
-    color: '#94A3B8',
+    color: colors.textSecondary,
     marginTop: 2,
   },
   sectionTitle: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#94A3B8',
+    color: colors.textSecondary,
     textTransform: 'uppercase',
     letterSpacing: 0.8,
     marginBottom: 10,
@@ -458,16 +461,16 @@ const styles = StyleSheet.create({
   driveItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(30, 41, 59, 0.65)',
+    backgroundColor: colors.surfaceSolid,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: colors.border,
     borderRadius: 14,
     padding: 14,
     marginBottom: 8,
   },
   driveItemSelected: {
-    borderColor: '#00BCD4',
-    backgroundColor: 'rgba(0, 188, 212, 0.18)',
+    borderColor: colors.accent,
+    backgroundColor: colors.accentBg,
   },
   driveIcon: {
     fontSize: 24,
@@ -479,17 +482,17 @@ const styles = StyleSheet.create({
   driveName: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#F8FAFC',
+    color: colors.textPrimary,
   },
   driveSub: {
     fontSize: 12,
-    color: '#94A3B8',
+    color: colors.textSecondary,
     marginTop: 2,
   },
   checkIcon: {
     fontSize: 18,
     fontWeight: '800',
-    color: '#22D3EE',
+    color: colors.accentLight,
   },
   typeRow: {
     flexDirection: 'row',
@@ -499,15 +502,15 @@ const styles = StyleSheet.create({
   typeBtn: {
     flex: 1,
     alignItems: 'center',
-    backgroundColor: 'rgba(30, 41, 59, 0.65)',
+    backgroundColor: colors.surfaceSolid,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: colors.border,
     borderRadius: 14,
     paddingVertical: 12,
   },
   typeBtnSelected: {
-    borderColor: '#00BCD4',
-    backgroundColor: 'rgba(0, 188, 212, 0.18)',
+    borderColor: colors.accent,
+    backgroundColor: colors.accentBg,
   },
   typeIcon: {
     fontSize: 20,
@@ -516,19 +519,19 @@ const styles = StyleSheet.create({
   typeLabel: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#94A3B8',
+    color: colors.textSecondary,
   },
   typeLabelSelected: {
-    color: '#22D3EE',
+    color: colors.accentLight,
     fontWeight: '700',
   },
   statusCard: {
-    backgroundColor: 'rgba(15, 23, 42, 0.8)',
+    backgroundColor: colors.card,
     borderRadius: 16,
     padding: 16,
     marginBottom: 20,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
+    borderColor: colors.borderLight,
   },
   statusRow: {
     flexDirection: 'row',
@@ -537,12 +540,12 @@ const styles = StyleSheet.create({
   },
   statusLabel: {
     fontSize: 13,
-    color: '#94A3B8',
+    color: colors.textSecondary,
   },
   statusVal: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#F8FAFC',
+    color: colors.textPrimary,
   },
   syncingBox: {
     flexDirection: 'row',
@@ -553,28 +556,28 @@ const styles = StyleSheet.create({
   },
   syncingText: {
     fontSize: 13,
-    color: '#00BCD4',
+    color: colors.accent,
     fontWeight: '600',
   },
   syncNowBtn: {
-    backgroundColor: '#00BCD4',
+    backgroundColor: colors.accent,
     borderRadius: 12,
     paddingVertical: 13,
     alignItems: 'center',
     marginTop: 10,
   },
   syncNowText: {
-    color: '#0F172A',
+    color: colors.background,
     fontSize: 14,
     fontWeight: '800',
   },
   constraintBox: {
-    backgroundColor: 'rgba(30, 41, 59, 0.5)',
+    backgroundColor: colors.surface,
     borderRadius: 14,
     padding: 14,
     marginBottom: 20,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: colors.border,
   },
   toggleRow: {
     flexDirection: 'row',
@@ -585,11 +588,11 @@ const styles = StyleSheet.create({
   toggleLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#F8FAFC',
+    color: colors.textPrimary,
   },
   toggleSub: {
     fontSize: 11,
-    color: '#64748B',
+    color: colors.textMuted,
     marginTop: 2,
   },
 });

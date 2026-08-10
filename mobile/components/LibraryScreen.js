@@ -9,6 +9,7 @@ import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { requestMediaPermissions } from '../services/syncService';
 import { cacheService } from '../services/cacheService';
+import { useTheme } from '../contexts/ThemeContext';
 
 const { width } = Dimensions.get('window');
 const GAP = 3;
@@ -33,10 +34,12 @@ function isVideoFile(item) {
 }
 
 const ImageItem = React.memo(({ thumbUri }) => {
+  const { colors } = useTheme();
+  const styles = useMemo(() => getStyles(colors), [colors]);
   const [error, setError] = useState(false);
   if (error) {
     return (
-      <View style={[styles.thumbnail, { alignItems: 'center', justifyContent: 'center', backgroundColor: '#1E293B' }]}>
+      <View style={[styles.thumbnail, { alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surfaceSolid }]}>
         <Text style={{fontSize: 24}}>🖼️</Text>
       </View>
     );
@@ -56,6 +59,8 @@ const ImageItem = React.memo(({ thumbUri }) => {
 });
 
 export default function LibraryScreen({ serverUrl, token, initialFilter = 'all', onSelectMedia }) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => getStyles(colors), [colors]);
   const [activeSource, setActiveSource] = useState('nas'); // 'nas' | 'device'
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -69,6 +74,9 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [selectedItems, setSelectedItems] = useState(new Set());
 
   useEffect(() => {
     if (initialFilter) {
@@ -241,14 +249,37 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
     const isVid = isVideoFile(item);
     const ext = normalizeExt(item);
     const isGif = ext === '.gif';
+    const itemKey = item.path || item.uri;
+    const isSelected = selectedItems.has(itemKey);
 
     return (
       <TouchableOpacity
         style={styles.gridCard}
         activeOpacity={0.8}
+        onLongPress={() => {
+          try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy); } catch (e) {}
+          if (!isSelectionMode) {
+            setIsSelectionMode(true);
+            const newSet = new Set(selectedItems);
+            newSet.add(itemKey);
+            setSelectedItems(newSet);
+          }
+        }}
         onPress={() => {
-          try { Haptics.selectionAsync(); } catch (e) {}
-          if (onSelectMedia) onSelectMedia(item, filteredMedia);
+          if (isSelectionMode) {
+            try { Haptics.selectionAsync(); } catch (e) {}
+            const newSet = new Set(selectedItems);
+            if (newSet.has(itemKey)) {
+              newSet.delete(itemKey);
+              if (newSet.size === 0) setIsSelectionMode(false);
+            } else {
+              newSet.add(itemKey);
+            }
+            setSelectedItems(newSet);
+          } else {
+            try { Haptics.selectionAsync(); } catch (e) {}
+            if (onSelectMedia) onSelectMedia(item, filteredMedia);
+          }
         }}
       >
         {isVid ? (
@@ -274,15 +305,64 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
             <Text style={styles.gifText}>GIF</Text>
           </View>
         )}
+        
+        {isSelectionMode && (
+          <View style={[styles.selectionOverlay, isSelected && styles.selectionOverlaySelected]}>
+            {isSelected && (
+              <View style={styles.checkCircle}>
+                <Text style={styles.checkCircleText}>✓</Text>
+              </View>
+            )}
+          </View>
+        )}
       </TouchableOpacity>
     );
-  }, [serverUrl, token, filteredMedia, onSelectMedia]);
+  }, [serverUrl, token, filteredMedia, onSelectMedia, isSelectionMode, selectedItems]);
 
   const statusBarPadding = Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 8 : 16;
 
   return (
     <View style={styles.container}>
       {/* ── DARK GLASS TOPBAR (SAFE FROM STATUS BAR) ─────────────────── */}
+      {isSelectionMode ? (
+        <View style={[styles.topbar, styles.selectionTopbar, { paddingTop: statusBarPadding }]}>
+          <View style={styles.selectionTopbarInner}>
+            <TouchableOpacity style={styles.cancelBtn} onPress={() => { setIsSelectionMode(false); setSelectedItems(new Set()); }}>
+              <Text style={styles.selectionCancelText}>✕</Text>
+            </TouchableOpacity>
+            
+            <Text style={styles.selectionCountText}>
+              {selectedItems.size} selected
+            </Text>
+            
+            <TouchableOpacity 
+              onPress={() => {
+                if (selectedItems.size === filteredMedia.length) {
+                  setSelectedItems(new Set());
+                  setIsSelectionMode(false);
+                } else {
+                  const allKeys = filteredMedia.map(i => i.path || i.uri);
+                  setSelectedItems(new Set(allKeys));
+                }
+              }}
+              style={styles.selectAllBtn}
+            >
+              <Text style={styles.selectAllBtnText}>
+                {selectedItems.size === filteredMedia.length ? 'Deselect All' : 'Select All'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+          
+          <View style={styles.selectionActionsRow}>
+            <TouchableOpacity style={styles.actionBtn}>
+              <Text style={styles.actionBtnText}>⬇️ Download</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.actionBtn, styles.actionBtnDanger]}>
+              <Text style={styles.actionBtnDangerText}>🗑️ Delete</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : (
       <View style={[styles.topbar, { paddingTop: statusBarPadding }]}>
         <View style={styles.topbarInner}>
           <Text style={styles.topbarTitle}>Media Gallery</Text>
@@ -350,6 +430,7 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
           </View>
         </View>
       </View>
+      )}
 
       {/* Permission Card (If Permission Not Granted for Phone Media) */}
       {hasPermission === false && (
@@ -368,7 +449,7 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
       {/* ── MEDIA GRID ───────────────────────────────────────────── */}
       {loading && !refreshing ? (
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#00BCD4" />
+          <ActivityIndicator size="large" color={colors.accent} />
           <Text style={styles.loadingText}>Loading {activeSource === 'nas' ? 'NAS' : 'Phone'} media...</Text>
         </View>
       ) : filteredMedia.length === 0 ? (
@@ -391,6 +472,7 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
       ) : (
         <FlashList
           data={filteredMedia}
+          extraData={{ isSelectionMode, selectedItems }}
           keyExtractor={(item, index) => item.path || item.uri || index.toString()}
           numColumns={3}
           estimatedItemSize={COLUMN_WIDTH + GAP}
@@ -399,7 +481,7 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
           onEndReached={loadMoreMedia}
           onEndReachedThreshold={0.5}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#00BCD4" />
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
           }
         />
       )}
@@ -455,10 +537,10 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
   );
 }
 
-const styles = StyleSheet.create({
+const getStyles = (colors) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0B0F17',
+    backgroundColor: colors.background,
   },
 
   // DUAL DROPDOWN ROW
@@ -473,7 +555,7 @@ const styles = StyleSheet.create({
   dropdownLabel: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#00BCD4',
+    color: colors.accent,
     letterSpacing: 0.5,
     marginBottom: 4,
   },
@@ -481,9 +563,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: 'rgba(30, 41, 59, 0.85)',
+    backgroundColor: colors.inputBg,
     borderWidth: 1,
-    borderColor: 'rgba(0, 188, 212, 0.3)',
+    borderColor: colors.accentBorder,
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 9,
@@ -491,19 +573,19 @@ const styles = StyleSheet.create({
   dropdownSelectBtnText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#F8FAFC',
+    color: colors.textPrimary,
     flex: 1,
   },
   dropdownChevron: {
     fontSize: 10,
-    color: '#00BCD4',
+    color: colors.accent,
     marginLeft: 6,
   },
 
   // PICKER MODAL
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(7, 10, 15, 0.75)',
+    backgroundColor: colors.overlay,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
@@ -511,17 +593,17 @@ const styles = StyleSheet.create({
   pickerModalCard: {
     width: '100%',
     maxWidth: 340,
-    backgroundColor: '#0F172A',
+    backgroundColor: colors.background,
     borderRadius: 20,
     padding: 20,
     borderWidth: 1,
-    borderColor: 'rgba(0, 188, 212, 0.4)',
+    borderColor: colors.accentBorder,
     elevation: 10,
   },
   pickerModalTitle: {
     fontSize: 17,
     fontWeight: '800',
-    color: '#F8FAFC',
+    color: colors.textPrimary,
     marginBottom: 16,
     letterSpacing: -0.3,
   },
@@ -533,31 +615,31 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderRadius: 10,
     marginBottom: 6,
-    backgroundColor: 'rgba(30, 41, 59, 0.5)',
+    backgroundColor: colors.surface,
   },
   pickerItemActive: {
-    backgroundColor: 'rgba(0, 188, 212, 0.18)',
+    backgroundColor: colors.accentBg,
     borderWidth: 1,
-    borderColor: '#00BCD4',
+    borderColor: colors.accent,
   },
   pickerItemText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#F8FAFC',
+    color: colors.textPrimary,
   },
   checkIcon: {
     fontSize: 16,
     fontWeight: '900',
-    color: '#00BCD4',
+    color: colors.accent,
   },
 
   // TOPBAR
   topbar: {
-    backgroundColor: 'rgba(15, 23, 42, 0.92)',
+    backgroundColor: colors.topbar,
     paddingHorizontal: 16,
     paddingBottom: 12,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
+    borderBottomColor: colors.border,
   },
   topbarInner: {
     flexDirection: 'row',
@@ -568,19 +650,19 @@ const styles = StyleSheet.create({
   topbarTitle: {
     fontSize: 24,
     fontWeight: '800',
-    color: '#F8FAFC',
+    color: colors.textPrimary,
     letterSpacing: -0.5,
   },
   itemCount: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#00BCD4',
+    color: colors.accent,
   },
 
   // SOURCE TABS
   sourceTabRow: {
     flexDirection: 'row',
-    backgroundColor: 'rgba(30, 41, 59, 0.7)',
+    backgroundColor: colors.tabBg,
     borderRadius: 12,
     padding: 3,
     marginBottom: 10,
@@ -592,15 +674,15 @@ const styles = StyleSheet.create({
     borderRadius: 9,
   },
   sourceTabActive: {
-    backgroundColor: '#00BCD4',
+    backgroundColor: colors.accent,
   },
   sourceTabText: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#94A3B8',
+    color: colors.textSecondary,
   },
   sourceTabTextActive: {
-    color: '#0B0F17',
+    color: colors.background,
   },
 
   // FILTER PILLS
@@ -612,21 +694,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 6,
     borderRadius: 20,
-    backgroundColor: 'rgba(30, 41, 59, 0.7)',
+    backgroundColor: colors.tabBg,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: colors.border,
   },
   filterPillActive: {
-    backgroundColor: 'rgba(0, 188, 212, 0.2)',
-    borderColor: '#00BCD4',
+    backgroundColor: colors.accentBg,
+    borderColor: colors.accent,
   },
   filterPillText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#94A3B8',
+    color: colors.textSecondary,
   },
   filterPillTextActive: {
-    color: '#22D3EE',
+    color: colors.accentLight,
     fontWeight: '700',
   },
 
@@ -634,10 +716,10 @@ const styles = StyleSheet.create({
   permissionCard: {
     margin: 16,
     padding: 20,
-    backgroundColor: 'rgba(30, 41, 59, 0.85)',
+    backgroundColor: colors.card,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: 'rgba(0, 188, 212, 0.4)',
+    borderColor: colors.accentBorder,
     alignItems: 'center',
   },
   permIcon: {
@@ -647,25 +729,25 @@ const styles = StyleSheet.create({
   permTitle: {
     fontSize: 17,
     fontWeight: '700',
-    color: '#F8FAFC',
+    color: colors.textPrimary,
     marginBottom: 6,
     textAlign: 'center',
   },
   permText: {
     fontSize: 13,
-    color: '#94A3B8',
+    color: colors.textSecondary,
     textAlign: 'center',
     lineHeight: 18,
     marginBottom: 14,
   },
   grantBtn: {
-    backgroundColor: '#00BCD4',
+    backgroundColor: colors.accent,
     paddingHorizontal: 20,
     paddingVertical: 10,
     borderRadius: 12,
   },
   grantBtnText: {
-    color: '#0B0F17',
+    color: colors.background,
     fontWeight: '800',
     fontSize: 14,
   },
@@ -678,7 +760,7 @@ const styles = StyleSheet.create({
     width: COLUMN_WIDTH,
     height: COLUMN_WIDTH,
     margin: GAP / 2,
-    backgroundColor: '#1E293B',
+    backgroundColor: colors.surfaceSolid,
     borderRadius: 8,
     overflow: 'hidden',
     position: 'relative',
@@ -692,7 +774,7 @@ const styles = StyleSheet.create({
   videoPlaceholder: {
     width: '100%',
     height: '100%',
-    backgroundColor: '#0F172A',
+    backgroundColor: colors.background,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -705,12 +787,12 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: 'rgba(0, 188, 212, 0.85)',
+    backgroundColor: colors.accentBg,
     justifyContent: 'center',
     alignItems: 'center',
   },
   playArrow: {
-    color: '#0F172A',
+    color: colors.background,
     fontSize: 12,
     fontWeight: 'bold',
     marginLeft: 2,
@@ -725,7 +807,7 @@ const styles = StyleSheet.create({
     borderRadius: 3,
   },
   videoBadgeText: {
-    color: '#22D3EE',
+    color: colors.accentLight,
     fontSize: 9,
     fontWeight: '800',
   },
@@ -735,15 +817,108 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 4,
     left: 4,
-    backgroundColor: '#00BCD4',
+    backgroundColor: colors.accent,
     paddingHorizontal: 4,
     paddingVertical: 1,
     borderRadius: 3,
   },
   gifText: {
-    color: '#0F172A',
+    color: colors.background,
     fontSize: 9,
     fontWeight: '900',
+  },
+
+  // MULTISELECT
+  selectionOverlay: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.2)',
+    borderWidth: 2,
+    borderColor: 'transparent',
+    borderRadius: 8,
+  },
+  selectionOverlaySelected: {
+    backgroundColor: colors.accentBg,
+    borderColor: colors.accent,
+  },
+  checkCircle: {
+    position: 'absolute',
+    bottom: 6,
+    right: 6,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: colors.accent,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  checkCircleText: {
+    color: colors.background,
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  selectionTopbar: {
+    backgroundColor: colors.surfaceSolid,
+    paddingBottom: 16,
+  },
+  selectionTopbarInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  cancelBtn: {
+    padding: 8,
+    marginLeft: -8,
+  },
+  selectionCancelText: {
+    fontSize: 20,
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  selectionCountText: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  selectAllBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    backgroundColor: colors.accentBg,
+    borderRadius: 8,
+  },
+  selectAllBtnText: {
+    color: colors.accent,
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  selectionActionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    gap: 12,
+  },
+  actionBtn: {
+    flex: 1,
+    backgroundColor: colors.inputBg,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+  },
+  actionBtnDanger: {
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    borderColor: 'rgba(239, 68, 68, 0.3)',
+  },
+  actionBtnText: {
+    color: colors.textPrimary,
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  actionBtnDangerText: {
+    color: colors.danger,
+    fontWeight: '600',
+    fontSize: 14,
   },
 
   // STATES
@@ -754,7 +929,7 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     marginTop: 12,
-    color: '#94A3B8',
+    color: colors.textSecondary,
     fontSize: 14,
   },
   emptyContainer: {
@@ -770,12 +945,12 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#F8FAFC',
+    color: colors.textPrimary,
     marginBottom: 6,
   },
   emptyText: {
     fontSize: 13,
-    color: '#64748B',
+    color: colors.textMuted,
     textAlign: 'center',
     lineHeight: 18,
   },

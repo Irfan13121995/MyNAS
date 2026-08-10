@@ -15,6 +15,7 @@ import { authenticateBiometric } from './services/biometricService';
 import { getSecureItem, setSecureItem, deleteSecureItem } from './services/secureStoreService';
 import * as TaskManager from 'expo-task-manager';
 import { runFullSync } from './services/syncService';
+import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 
 const isExpoGo = Constants.appOwnership === 'expo' || Constants.executionEnvironment === 'storeClient';
 const BACKGROUND_SYNC_TASK = 'background-nas-sync';
@@ -68,7 +69,8 @@ class ErrorBoundary extends React.Component {
   }
 }
 
-export default function App() {
+function AppContent() {
+  const { colors } = useTheme();
   const [loading, setLoading] = useState(true);
   const [serverUrl, setServerUrl] = useState(null);
   const [token, setToken] = useState(null);
@@ -248,19 +250,19 @@ export default function App() {
 
   if (pinFallbackVisible) {
     return (
-      <View style={styles.loadingContainer}>
-        <StatusBar barStyle="light-content" backgroundColor="#0B0F17" translucent={false} />
+      <View style={[styles.loadingContainer, { backgroundColor: colors.background }]}>
+        <StatusBar barStyle={colors.statusBar} backgroundColor={colors.background} translucent={false} />
         <Modal visible={true} transparent={true} animationType="slide">
-          <View style={{ flex: 1, backgroundColor: 'rgba(11,15,23,0.95)', justifyContent: 'center', alignItems: 'center', padding: 24 }}>
-            <View style={{ width: '100%', maxWidth: 340, backgroundColor: '#0F172A', borderRadius: 20, padding: 24, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }}>
+          <View style={{ flex: 1, backgroundColor: colors.overlay, justifyContent: 'center', alignItems: 'center', padding: 24 }}>
+            <View style={{ width: '100%', maxWidth: 340, backgroundColor: colors.surfaceSolid, borderRadius: 20, padding: 24, borderWidth: 1, borderColor: colors.borderLight }}>
               <Text style={{ fontSize: 24, textAlign: 'center', marginBottom: 8 }}>🔒</Text>
-              <Text style={{ fontSize: 18, fontWeight: '700', color: '#F8FAFC', textAlign: 'center', marginBottom: 6 }}>Enter Passcode PIN</Text>
-              <Text style={{ fontSize: 13, color: '#94A3B8', textAlign: 'center', marginBottom: 20 }}>Biometric verification failed. Enter your NAS Passcode PIN to unlock.</Text>
+              <Text style={{ fontSize: 18, fontWeight: '700', color: colors.textPrimary, textAlign: 'center', marginBottom: 6 }}>Enter Passcode PIN</Text>
+              <Text style={{ fontSize: 13, color: colors.textSecondary, textAlign: 'center', marginBottom: 20 }}>Biometric verification failed. Enter your NAS Passcode PIN to unlock.</Text>
               
               <TextInput
-                style={{ backgroundColor: 'rgba(30,41,59,0.8)', color: '#F8FAFC', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12, fontSize: 18, textAlign: 'center', letterSpacing: 4, borderWidth: 1, borderColor: '#00BCD4', marginBottom: 20 }}
+                style={{ backgroundColor: colors.inputBg, color: colors.textPrimary, borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12, fontSize: 18, textAlign: 'center', letterSpacing: 4, borderWidth: 1, borderColor: colors.accent, marginBottom: 20 }}
                 placeholder="••••••"
-                placeholderTextColor="#475569"
+                placeholderTextColor={colors.textMuted}
                 keyboardType="numeric"
                 secureTextEntry
                 value={fallbackPin}
@@ -269,7 +271,7 @@ export default function App() {
               />
 
               <TouchableOpacity
-                style={{ backgroundColor: '#00BCD4', borderRadius: 12, paddingVertical: 13, alignItems: 'center', marginBottom: 12 }}
+                style={{ backgroundColor: colors.accent, borderRadius: 12, paddingVertical: 13, alignItems: 'center', marginBottom: 12 }}
                 onPress={handlePinSubmit}
               >
                 <Text style={{ color: '#0F172A', fontSize: 15, fontWeight: '700' }}>Unlock NAS</Text>
@@ -279,7 +281,7 @@ export default function App() {
                 style={{ paddingVertical: 10, alignItems: 'center' }}
                 onPress={handleLogout}
               >
-                <Text style={{ color: '#EF4444', fontSize: 13, fontWeight: '600' }}>Log Out & Switch Server</Text>
+                <Text style={{ color: colors.danger, fontSize: 13, fontWeight: '600' }}>Log Out & Switch Server</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -290,18 +292,18 @@ export default function App() {
 
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
-        <StatusBar barStyle="light-content" backgroundColor="#0B0F17" translucent={false} />
-        <ActivityIndicator size="large" color="#00BCD4" />
-        <Text style={styles.loadingText}>Connecting to Personal NAS...</Text>
+      <View style={[styles.loadingContainer, { backgroundColor: colors.background }]}>
+        <StatusBar barStyle={colors.statusBar} backgroundColor={colors.background} translucent={false} />
+        <ActivityIndicator size="large" color={colors.accent} />
+        <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Connecting to Personal NAS...</Text>
       </View>
     );
   }
 
   if (!serverUrl || !token) {
     return (
-      <View style={styles.container}>
-        <StatusBar barStyle="light-content" backgroundColor="#0B0F17" translucent={false} />
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
+        <StatusBar barStyle={colors.statusBar} backgroundColor={colors.background} translucent={false} />
         <ConnectionScreen onConnect={handleConnect} />
       </View>
     );
@@ -309,12 +311,12 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-      <View style={styles.rootWrapper}>
-      <StatusBar barStyle="light-content" backgroundColor="#0B0F17" translucent={false} />
-      <SafeAreaView style={styles.container}>
+      <View style={[styles.rootWrapper, { backgroundColor: colors.background }]}>
+      <StatusBar barStyle={colors.statusBar} backgroundColor={colors.background} translucent={false} />
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
 
         {/* Main Screen Body */}
-        <View style={styles.mainContent}>
+        <View style={[styles.mainContent, { backgroundColor: colors.background }]}>
           {activeTab === 'home' && (
             <HomeScreen
               serverUrl={serverUrl}
@@ -403,27 +405,30 @@ export default function App() {
   );
 }
 
+export default function App() {
+  return (
+    <ThemeProvider>
+      <AppContent />
+    </ThemeProvider>
+  );
+}
+
 const styles = StyleSheet.create({
   rootWrapper: {
     flex: 1,
-    backgroundColor: '#0B0F17',
   },
   container: {
     flex: 1,
-    backgroundColor: '#0B0F17',
   },
   mainContent: {
     flex: 1,
-    backgroundColor: '#0B0F17',
   },
   loadingContainer: {
     flex: 1,
-    backgroundColor: '#0B0F17',
     justifyContent: 'center',
     alignItems: 'center',
   },
   loadingText: {
-    color: '#94A3B8',
     fontSize: 14,
     marginTop: 12,
   },

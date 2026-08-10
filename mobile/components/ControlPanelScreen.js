@@ -4,24 +4,21 @@ import {
   TextInput, Modal, ActivityIndicator, Alert, Platform, StatusBar
 } from 'react-native';
 
-import { getSavedTheme, saveThemePreference, THEME_MODES } from '../services/themeService';
+import { useTheme } from '../contexts/ThemeContext';
+import { THEME_MODES } from '../services/themeService';
 
 export default function ControlPanelScreen({ serverUrl, token, onNavigateModule, onOpenAutoSync, onLogout, onThemeChange }) {
+  const { themeMode, setThemeMode, colors } = useTheme();
+  const styles = React.useMemo(() => getStyles(colors), [colors]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeModal, setActiveModal] = useState(null); // 'theme' | 'hardware' | 'network' | 'security' | 'tunnel' | 'users' | 'about'
+  const [activeModal, setActiveModal] = useState(null);
   const [modalLoading, setModalLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [systemData, setSystemData] = useState(null);
   const [tunnelData, setTunnelData] = useState(null);
-  const [currentTheme, setCurrentTheme] = useState(THEME_MODES.SYSTEM);
-
-  React.useEffect(() => {
-    getSavedTheme().then(setCurrentTheme);
-  }, []);
 
   const handleSelectTheme = async (mode) => {
-    setCurrentTheme(mode);
-    await saveThemePreference(mode);
+    setThemeMode(mode);
     if (onThemeChange) onThemeChange(mode);
     Alert.alert('Theme Updated', `App theme set to ${mode.toUpperCase()}`);
   };
@@ -256,7 +253,7 @@ export default function ControlPanelScreen({ serverUrl, token, onNavigateModule,
 
               <View style={styles.modalBody}>
                 {modalLoading ? (
-                  <ActivityIndicator size="large" color="#00BCD4" style={{ marginVertical: 30 }} />
+                  <ActivityIndicator size="large" color={colors.accent} style={{ marginVertical: 30 }} />
                 ) : (
                   <>
                     {activeModal === 'trash' && (
@@ -300,11 +297,11 @@ export default function ControlPanelScreen({ serverUrl, token, onNavigateModule,
                           { key: THEME_MODES.LIGHT, label: 'Light Mode', icon: '☀️', desc: 'Clean bright layout' },
                           { key: THEME_MODES.DARK, label: 'Dark Mode', icon: '🌙', desc: 'Deep liquid glass dark layout' }
                         ].map((t) => {
-                          const isSelected = currentTheme === t.key;
+                          const isSelected = themeMode === t.key;
                           return (
                             <TouchableOpacity
                               key={t.key}
-                              style={[styles.userCard, isSelected && { borderColor: '#00BCD4', backgroundColor: 'rgba(0, 188, 212, 0.15)' }]}
+                              style={[styles.userCard, isSelected && { borderColor: colors.accent, backgroundColor: colors.accentBg }]}
                               onPress={() => handleSelectTheme(t.key)}
                             >
                               <Text style={{ fontSize: 22, marginRight: 10 }}>{t.icon}</Text>
@@ -312,7 +309,7 @@ export default function ControlPanelScreen({ serverUrl, token, onNavigateModule,
                                 <Text style={styles.userName}>{t.label}</Text>
                                 <Text style={styles.userRole}>{t.desc}</Text>
                               </View>
-                              {isSelected && <Text style={{ color: '#22D3EE', fontWeight: '800', fontSize: 18 }}>✓</Text>}
+                              {isSelected && <Text style={{ color: colors.accentLight, fontWeight: '800', fontSize: 18 }}>✓</Text>}
                             </TouchableOpacity>
                           );
                         })}
@@ -392,10 +389,10 @@ export default function ControlPanelScreen({ serverUrl, token, onNavigateModule,
   );
 }
 
-const styles = StyleSheet.create({
+const getStyles = (colors) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0B0F17',
+    backgroundColor: colors.background,
   },
   topbar: {
     flexDirection: 'row',
@@ -403,11 +400,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 20,
     paddingBottom: 12,
-    backgroundColor: 'rgba(15, 23, 42, 0.95)',
+    backgroundColor: colors.topbar,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
+    borderBottomColor: colors.border,
     elevation: 4,
-    shadowColor: '#000',
+    shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
@@ -415,7 +412,7 @@ const styles = StyleSheet.create({
   topbarTitle: {
     fontSize: 28,
     fontWeight: '800',
-    color: '#F8FAFC',
+    color: colors.textPrimary,
     letterSpacing: -0.5,
   },
   topbarActions: {
@@ -426,29 +423,29 @@ const styles = StyleSheet.create({
   iconBtn: {
     padding: 10,
     borderRadius: 22,
-    backgroundColor: 'rgba(30, 41, 59, 0.75)',
+    backgroundColor: colors.card,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: colors.borderLight,
   },
   iconText: {
     fontSize: 16,
   },
   searchWrap: {
-    backgroundColor: 'rgba(15, 23, 42, 0.88)',
+    backgroundColor: colors.topbar,
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+    borderBottomColor: colors.borderLight,
   },
   searchBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(30, 41, 59, 0.75)',
+    backgroundColor: colors.card,
     borderRadius: 20,
     paddingHorizontal: 14,
     height: 42,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: colors.borderLight,
   },
   searchIcon: {
     fontSize: 14,
@@ -458,12 +455,12 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     fontSize: 14,
-    color: '#F8FAFC',
+    color: colors.textPrimary,
     fontWeight: '500',
   },
   clearIcon: {
     fontSize: 14,
-    color: '#94A3B8',
+    color: colors.textSecondary,
     padding: 4,
   },
   scrollBody: {
@@ -479,19 +476,19 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#94A3B8',
+    color: colors.textSecondary,
     marginBottom: 10,
     marginLeft: 4,
     letterSpacing: 0.5,
   },
   sectionCard: {
-    backgroundColor: 'rgba(30, 41, 59, 0.65)',
+    backgroundColor: colors.surface,
     borderRadius: 20,
     padding: 16,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: colors.border,
     elevation: 3,
-    shadowColor: '#000',
+    shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.25,
     shadowRadius: 8,
@@ -514,18 +511,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: 8,
     elevation: 3,
-    shadowColor: '#000',
+    shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: colors.borderLight,
   },
   moduleIcon: {
     fontSize: 24,
   },
   moduleLabel: {
     fontSize: 11,
-    color: '#CBD5E1',
+    color: colors.textPrimary,
     fontWeight: '600',
     textAlign: 'center',
     lineHeight: 14,
@@ -534,7 +531,7 @@ const styles = StyleSheet.create({
   /* MODAL STYLES */
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    backgroundColor: colors.overlay,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
@@ -542,11 +539,11 @@ const styles = StyleSheet.create({
   modalContent: {
     width: '100%',
     maxWidth: 400,
-    backgroundColor: '#0F172A',
+    backgroundColor: colors.background,
     borderRadius: 24,
     padding: 20,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
+    borderColor: colors.borderLight,
     elevation: 10,
   },
   modalHeader: {
@@ -555,19 +552,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
+    borderBottomColor: colors.border,
     paddingBottom: 12,
   },
   modalTitle: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#F8FAFC',
+    color: colors.textPrimary,
   },
   modalCloseBtn: {
     padding: 4,
   },
   modalCloseIcon: {
-    color: '#94A3B8',
+    color: colors.textSecondary,
     fontSize: 18,
   },
   modalBody: {
@@ -578,21 +575,21 @@ const styles = StyleSheet.create({
   },
   modalText: {
     fontSize: 14,
-    color: '#F8FAFC',
+    color: colors.textPrimary,
     fontWeight: '600',
   },
   modalSubText: {
     fontSize: 13,
-    color: '#94A3B8',
+    color: colors.textSecondary,
   },
   modalSubTitle: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#22D3EE',
+    color: colors.accentLight,
   },
   modalCode: {
     fontSize: 13,
-    color: '#00BCD4',
+    color: colors.accent,
     fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
   },
   actionBtnRow: {
@@ -601,7 +598,7 @@ const styles = StyleSheet.create({
   },
   actionBtnWarning: {
     backgroundColor: 'rgba(245, 158, 11, 0.2)',
-    borderColor: '#F59E0B',
+    borderColor: colors.warning,
     borderWidth: 1,
     paddingVertical: 10,
     borderRadius: 12,
@@ -609,26 +606,45 @@ const styles = StyleSheet.create({
   },
   actionBtnDanger: {
     backgroundColor: 'rgba(239, 68, 68, 0.2)',
-    borderColor: '#EF4444',
+    borderColor: colors.danger,
     borderWidth: 1,
     paddingVertical: 10,
     borderRadius: 12,
     alignItems: 'center',
   },
   actionBtnText: {
-    color: '#F8FAFC',
+    color: colors.textPrimary,
     fontWeight: '700',
     fontSize: 13,
   },
   modalDoneBtn: {
-    backgroundColor: '#00BCD4',
+    backgroundColor: colors.accent,
     paddingVertical: 12,
     borderRadius: 14,
     alignItems: 'center',
   },
   modalDoneText: {
-    color: '#0F172A',
+    color: colors.background,
     fontWeight: '800',
     fontSize: 14,
+  },
+  userCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    borderRadius: 12,
+    marginBottom: 8,
+  },
+  userName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  userRole: {
+    fontSize: 13,
+    color: colors.textSecondary,
   },
 });

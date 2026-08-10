@@ -5,8 +5,12 @@ import {
 } from 'react-native';
 import CircularGauge from './CircularGauge';
 import FileExplorerModal from './FileExplorerModal';
+import { useTheme } from '../contexts/ThemeContext';
+import { useMemo } from 'react';
 
 export default function StorageScreen({ serverUrl, token, onOpenAddStorage }) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => getStyles(colors), [colors]);
   const [activeTab, setActiveTab] = useState('storage'); // 'storage' | 'external'
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -94,11 +98,10 @@ export default function StorageScreen({ serverUrl, token, onOpenAddStorage }) {
       <ScrollView
         style={styles.scrollBody}
         contentContainerStyle={{ paddingBottom: 110 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#00BCD4" />}
       >
         {loading ? (
           <View style={styles.centerContainer}>
-            <ActivityIndicator size="large" color="#00BCD4" />
+            <ActivityIndicator size="large" color={colors.accent} />
             <Text style={styles.loadingText}>Scanning storage pools...</Text>
           </View>
         ) : displayDrives.length === 0 ? (
@@ -196,10 +199,10 @@ export default function StorageScreen({ serverUrl, token, onOpenAddStorage }) {
   );
 }
 
-const styles = StyleSheet.create({
+const getStyles = (colors) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0B0F17',
+    backgroundColor: colors.background,
   },
   topbar: {
     flexDirection: 'row',
@@ -207,11 +210,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 20,
     paddingBottom: 14,
-    backgroundColor: 'rgba(15, 23, 42, 0.95)',
+    backgroundColor: colors.topbar,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
+    borderBottomColor: colors.border,
     elevation: 4,
-    shadowColor: '#000',
+    shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
@@ -219,7 +222,7 @@ const styles = StyleSheet.create({
   topbarTitle: {
     fontSize: 28,
     fontWeight: '800',
-    color: '#F8FAFC',
+    color: colors.textPrimary,
     letterSpacing: -0.5,
   },
   topbarActions: {
@@ -229,42 +232,42 @@ const styles = StyleSheet.create({
   iconBtn: {
     padding: 10,
     borderRadius: 22,
-    backgroundColor: 'rgba(30, 41, 59, 0.75)',
+    backgroundColor: colors.card,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: colors.borderLight,
   },
   iconText: {
     fontSize: 16,
   },
   tabContainer: {
     flexDirection: 'row',
-    backgroundColor: 'rgba(15, 23, 42, 0.88)',
+    backgroundColor: colors.topbar,
     paddingHorizontal: 16,
     paddingVertical: 10,
     gap: 10,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+    borderBottomColor: colors.borderLight,
   },
   tabBtn: {
     flex: 1,
     paddingVertical: 10,
     alignItems: 'center',
     borderRadius: 16,
-    backgroundColor: 'rgba(30, 41, 59, 0.5)',
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: colors.border,
   },
   tabBtnActive: {
-    backgroundColor: 'rgba(0, 188, 212, 0.18)',
-    borderColor: '#00BCD4',
+    backgroundColor: colors.accentBg,
+    borderColor: colors.accent,
   },
   tabText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#94A3B8',
+    color: colors.textSecondary,
   },
   tabTextActive: {
-    color: '#22D3EE',
+    color: colors.accentLight,
     fontWeight: '800',
   },
   scrollBody: {
@@ -279,18 +282,18 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     marginTop: 12,
-    color: '#94A3B8',
+    color: colors.textSecondary,
     fontSize: 14,
   },
   driveCard: {
-    backgroundColor: 'rgba(30, 41, 59, 0.65)',
+    backgroundColor: colors.surface,
     borderRadius: 20,
     padding: 16,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: colors.border,
     elevation: 3,
-    shadowColor: '#000',
+    shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.25,
     shadowRadius: 8,
@@ -304,12 +307,12 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 14,
-    backgroundColor: 'rgba(15, 23, 42, 0.8)',
+    backgroundColor: colors.card,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 14,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: colors.borderLight,
   },
   poolIcon: {
     fontSize: 24,
@@ -326,12 +329,12 @@ const styles = StyleSheet.create({
   poolTitle: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#F8FAFC',
+    color: colors.textPrimary,
     letterSpacing: -0.2,
   },
   poolDesc: {
     fontSize: 13,
-    color: '#64748B',
+    color: colors.textMuted,
   },
   tagRow: {
     flexDirection: 'row',
@@ -339,7 +342,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   statusBadge: {
-    backgroundColor: 'rgba(0, 188, 212, 0.18)',
+    backgroundColor: colors.accentBg,
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 6,
@@ -347,22 +350,22 @@ const styles = StyleSheet.create({
   statusBadgeText: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#22D3EE',
+    color: colors.accentLight,
   },
   specTag: {
     fontSize: 12,
-    color: '#94A3B8',
+    color: colors.textSecondary,
   },
   specTagDivider: {
     fontSize: 12,
-    color: '#64748B',
+    color: colors.textMuted,
   },
   volumeCard: {
-    backgroundColor: 'rgba(15, 23, 42, 0.6)',
+    backgroundColor: colors.surfaceSolid,
     borderRadius: 14,
     padding: 14,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
+    borderColor: colors.borderLight,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -384,25 +387,25 @@ const styles = StyleSheet.create({
   volumeTitle: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#F8FAFC',
+    color: colors.textPrimary,
   },
   pctText: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#22D3EE',
+    color: colors.accentLight,
   },
   exploreBtn: {
     marginTop: 10,
-    backgroundColor: 'rgba(0, 188, 212, 0.15)',
+    backgroundColor: colors.accentBg,
     paddingVertical: 6,
     paddingHorizontal: 12,
     borderRadius: 8,
     alignSelf: 'flex-start',
     borderWidth: 1,
-    borderColor: 'rgba(0, 188, 212, 0.3)',
+    borderColor: colors.accentBorder,
   },
   exploreBtnText: {
-    color: '#22D3EE',
+    color: colors.accentLight,
     fontSize: 12,
     fontWeight: 'bold',
   },
@@ -414,16 +417,16 @@ const styles = StyleSheet.create({
   capacityText: {
     fontSize: 12,
     fontWeight: '500',
-    color: '#94A3B8',
+    color: colors.textSecondary,
   },
   emptyCard: {
-    backgroundColor: 'rgba(30, 41, 59, 0.65)',
+    backgroundColor: colors.surface,
     borderRadius: 20,
     padding: 36,
     alignItems: 'center',
     marginTop: 20,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: colors.border,
     elevation: 3,
   },
   emptyIcon: {
@@ -433,13 +436,13 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 17,
     fontWeight: '800',
-    color: '#F8FAFC',
+    color: colors.textPrimary,
     marginBottom: 6,
     letterSpacing: -0.3,
   },
   emptySub: {
     fontSize: 13,
-    color: '#94A3B8',
+    color: colors.textSecondary,
     textAlign: 'center',
     lineHeight: 20,
   },
@@ -450,21 +453,21 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: '#00BCD4',
+    backgroundColor: colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
     elevation: 10,
-    shadowColor: '#00BCD4',
+    shadowColor: colors.accent,
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.4,
     shadowRadius: 12,
     zIndex: 10,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
+    borderColor: colors.borderLight,
   },
   fabIcon: {
     fontSize: 30,
-    color: '#0F172A',
+    color: colors.background,
     fontWeight: '700',
     marginTop: -2,
   },

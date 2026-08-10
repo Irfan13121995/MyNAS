@@ -302,6 +302,7 @@ app.get('/api/system', authenticateToken, (req, res) => {
     hostname: os.hostname(),
     ipAddresses: ips,
     port: PORT,
+    passcode: PASSCODE,
   });
 });
 

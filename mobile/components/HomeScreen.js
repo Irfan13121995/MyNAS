@@ -6,10 +6,11 @@ import {
 import CircularGauge from './CircularGauge';
 import FileExplorerModal from './FileExplorerModal';
 import { cacheService } from '../services/cacheService';
-import { getSavedTheme, saveThemePreference, THEME_MODES } from '../services/themeService';
+import { useTheme } from '../contexts/ThemeContext';
 
 export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileBrowser, onOpenLibrary }) {
-  const [currentTheme, setCurrentTheme] = useState(THEME_MODES.SYSTEM);
+  const { themeMode, setThemeMode, colors } = useTheme();
+  const styles = useMemo(() => getStyles(colors), [colors]);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState(null);
   const [isSearching, setIsSearching] = useState(false);
@@ -23,24 +24,18 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
   const [explorePath, setExplorePath] = useState('');
 
   useEffect(() => {
-    getSavedTheme().then(setCurrentTheme);
+    // Theme is now loaded in ThemeContext
   }, []);
 
   const cycleTheme = async () => {
-    const nextTheme = currentTheme === THEME_MODES.DARK
-      ? THEME_MODES.LIGHT
-      : currentTheme === THEME_MODES.LIGHT
-        ? THEME_MODES.SYSTEM
-        : THEME_MODES.DARK;
-
-    setCurrentTheme(nextTheme);
-    await saveThemePreference(nextTheme);
+    const nextTheme = themeMode === 'dark' ? 'light' : themeMode === 'light' ? 'system' : 'dark';
+    setThemeMode(nextTheme);
     Alert.alert('App Theme Mode', `Theme preference set to ${nextTheme.toUpperCase()}`);
   };
 
   const getThemeIcon = () => {
-    if (currentTheme === THEME_MODES.LIGHT) return '☀️';
-    if (currentTheme === THEME_MODES.DARK) return '🌙';
+    if (themeMode === 'light') return '☀️';
+    if (themeMode === 'dark') return '🌙';
     return '🌓';
   };
 
@@ -183,18 +178,18 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
   const getFileBadge = (item) => {
     const ext = (item.ext || item.name || '').toLowerCase();
     if (ext.match(/\.(doc|docx|pdf|txt|pptx|xlsx)$/i) || item.type === 'doc') {
-      return { icon: '📄', bg: 'rgba(59, 130, 246, 0.18)', color: '#60A5FA' };
+      return { icon: '📄', bg: colors.accentBg, color: colors.accent };
     }
     if (ext.match(/\.(mp3|wav|flac|m4a)$/i) || item.type === 'audio') {
-      return { icon: '🎵', bg: 'rgba(6, 182, 212, 0.18)', color: '#22D3EE' };
+      return { icon: '🎵', bg: colors.accentBg, color: colors.accentLight };
     }
     if (ext.match(/\.(mp4|mkv|mov|avi|webm)$/i) || item.type === 'video') {
-      return { icon: '▶', bg: 'rgba(139, 92, 246, 0.18)', color: '#A78BFA' };
+      return { icon: '▶', bg: colors.accentBg, color: colors.accent };
     }
     if (item.isDirectory) {
-      return { icon: '📁', bg: 'rgba(245, 158, 11, 0.18)', color: '#FBBF24' };
+      return { icon: '📁', bg: colors.accentBg, color: colors.warning };
     }
-    return { icon: '📄', bg: 'rgba(148, 163, 184, 0.18)', color: '#94A3B8' };
+    return { icon: '📄', bg: colors.accentBg, color: colors.textSecondary };
   };
 
   const handleCategoryPress = (categoryKey) => {
@@ -209,10 +204,10 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
   };
 
   const categories = [
-    { key: 'photos', label: 'Photos', icon: '🖼️', activeGlow: 'rgba(59, 130, 246, 0.25)', activeBorder: '#3B82F6' },
-    { key: 'docs', label: 'Documents', icon: '📄', activeGlow: 'rgba(245, 158, 11, 0.25)', activeBorder: '#F59E0B' },
-    { key: 'audio', label: 'Audio', icon: '🎵', activeGlow: 'rgba(6, 182, 212, 0.25)', activeBorder: '#00BCD4' },
-    { key: 'video', label: 'Videos', icon: '🎬', activeGlow: 'rgba(139, 92, 246, 0.25)', activeBorder: '#8B5CF6' },
+    { key: 'photos', label: 'Photos', icon: '🖼️', activeGlow: colors.accentBorder, activeBorder: colors.accent },
+    { key: 'docs', label: 'Documents', icon: '📄', activeGlow: colors.accentBorder, activeBorder: colors.warning },
+    { key: 'audio', label: 'Audio', icon: '🎵', activeGlow: colors.accentBorder, activeBorder: colors.accent },
+    { key: 'video', label: 'Videos', icon: '🎬', activeGlow: colors.accentBorder, activeBorder: colors.accent },
   ];
 
   const subTabs = ['recent', 'starred', 'labeled', 'offline'];
@@ -259,7 +254,7 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
           <TextInput
             style={styles.searchInput}
             placeholder="Search your NAS…"
-            placeholderTextColor="#64748B"
+            placeholderTextColor={colors.textMuted}
             value={searchQuery}
             onChangeText={setSearchQuery}
             returnKeyType="search"
@@ -292,11 +287,11 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
               }
             }}
           >
-            {isSearching ? (
-              <ActivityIndicator size="small" color="#0F172A" />
-            ) : (
-              <Text style={styles.searchSubmitBtnText}>Search</Text>
-            )}
+              {isSearching ? (
+                <ActivityIndicator size="small" color={colors.background} />
+              ) : (
+                <Text style={styles.searchSubmitBtnText}>Search</Text>
+              )}
           </TouchableOpacity>
         </View>
         <TouchableOpacity style={styles.headerBtn} onPress={() => Alert.alert('Activity Log', 'NAS File synchronization active.')}>
@@ -367,7 +362,7 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
         contentContainerStyle={{ paddingBottom: 110 }}
         data={filteredFiles}
         keyExtractor={(item, index) => item.path || index.toString()}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#00BCD4" />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
         ListHeaderComponent={
           <View>
             <TouchableOpacity 
@@ -401,7 +396,7 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
         ListEmptyComponent={
           loading ? (
             <View style={styles.loadingBox}>
-              <ActivityIndicator size="large" color="#00BCD4" />
+              <ActivityIndicator size="large" color={colors.accent} />
             </View>
           ) : (
             <View style={styles.emptyBox}>
@@ -437,10 +432,10 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
   );
 }
 
-const styles = StyleSheet.create({
+const getStyles = (colors) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0B0F17',
+    backgroundColor: colors.background,
   },
 
   /* ── Dark Glass Header ─── */
@@ -450,11 +445,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 14,
     gap: 10,
-    backgroundColor: 'rgba(15, 23, 42, 0.95)',
+    backgroundColor: colors.topbar,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
+    borderBottomColor: colors.border,
     elevation: 4,
-    shadowColor: '#000',
+    shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
@@ -463,12 +458,12 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(30, 41, 59, 0.75)',
+    backgroundColor: colors.card,
     borderRadius: 24,
     paddingHorizontal: 16,
     height: 46,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: colors.borderLight,
   },
   searchIcon: {
     fontSize: 16,
@@ -478,11 +473,11 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     fontSize: 15,
-    color: '#F8FAFC',
+    color: colors.textPrimary,
     fontWeight: '500',
   },
   searchSubmitBtn: {
-    backgroundColor: '#00BCD4',
+    backgroundColor: colors.accent,
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 16,
@@ -491,14 +486,14 @@ const styles = StyleSheet.create({
   searchSubmitBtnText: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#0F172A',
+    color: colors.background,
   },
   headerBtn: {
     padding: 10,
     borderRadius: 22,
-    backgroundColor: 'rgba(30, 41, 59, 0.75)',
+    backgroundColor: colors.card,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: colors.borderLight,
   },
   headerBtnIcon: {
     fontSize: 17,
@@ -510,9 +505,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-around',
     paddingHorizontal: 16,
     paddingVertical: 18,
-    backgroundColor: 'rgba(15, 23, 42, 0.88)',
+    backgroundColor: colors.topbar,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+    borderBottomColor: colors.borderLight,
   },
   categoryItem: {
     alignItems: 'center',
@@ -522,13 +517,13 @@ const styles = StyleSheet.create({
     height: 64,
     borderRadius: 32,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
+    borderColor: colors.borderLight,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(30, 41, 59, 0.65)',
+    backgroundColor: colors.surface,
     marginBottom: 7,
     elevation: 3,
-    shadowColor: '#000',
+    shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.2,
     shadowRadius: 6,
@@ -539,11 +534,11 @@ const styles = StyleSheet.create({
   categoryLabel: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#94A3B8',
+    color: colors.textSecondary,
     letterSpacing: 0.2,
   },
   categoryLabelActive: {
-    color: '#F8FAFC',
+    color: colors.textPrimary,
     fontWeight: '800',
   },
 
@@ -551,9 +546,9 @@ const styles = StyleSheet.create({
   subTabRow: {
     flexDirection: 'row',
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+    borderBottomColor: colors.borderLight,
     paddingHorizontal: 16,
-    backgroundColor: 'rgba(15, 23, 42, 0.88)',
+    backgroundColor: colors.topbar,
   },
   subTabBtn: {
     paddingVertical: 13,
@@ -563,10 +558,10 @@ const styles = StyleSheet.create({
   subTabText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#64748B',
+    color: colors.textMuted,
   },
   subTabTextActive: {
-    color: '#F8FAFC',
+    color: colors.textPrimary,
     fontWeight: '800',
   },
   subTabIndicator: {
@@ -575,9 +570,9 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: 3,
-    backgroundColor: '#00BCD4',
+    backgroundColor: colors.accent,
     borderRadius: 2,
-    shadowColor: '#00BCD4',
+    shadowColor: colors.accent,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.8,
     shadowRadius: 4,
@@ -586,7 +581,7 @@ const styles = StyleSheet.create({
 
   /* ── File List & Storage Card ─── */
   storageCard: {
-    backgroundColor: 'rgba(30, 41, 59, 0.65)',
+    backgroundColor: colors.surface,
     borderRadius: 16,
     padding: 16,
     marginTop: 16,
@@ -594,7 +589,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: colors.border,
   },
   storageCardInfo: {
     flex: 1,
@@ -602,17 +597,17 @@ const styles = StyleSheet.create({
   storageCardTitle: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#F8FAFC',
+    color: colors.textPrimary,
     marginBottom: 4,
   },
   storageCardDesc: {
     fontSize: 13,
-    color: '#94A3B8',
+    color: colors.textSecondary,
     marginBottom: 6,
   },
   storageCardTap: {
     fontSize: 12,
-    color: '#00BCD4',
+    color: colors.accent,
     fontWeight: '600',
   },
   fileList: {
@@ -629,13 +624,13 @@ const styles = StyleSheet.create({
   dateHeader: {
     fontSize: 14,
     fontWeight: '800',
-    color: '#F8FAFC',
+    color: colors.textPrimary,
     letterSpacing: -0.2,
   },
   clearFilterText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#00BCD4',
+    color: colors.accent,
   },
   loadingBox: {
     alignItems: 'center',
@@ -648,10 +643,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginTop: 40,
     padding: 36,
-    backgroundColor: 'rgba(30, 41, 59, 0.5)',
+    backgroundColor: colors.surface,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: colors.border,
     elevation: 2,
   },
   emptyIcon: {
@@ -660,7 +655,7 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 14,
-    color: '#94A3B8',
+    color: colors.textSecondary,
     fontWeight: '600',
   },
 
@@ -671,12 +666,12 @@ const styles = StyleSheet.create({
     paddingVertical: 13,
     paddingHorizontal: 14,
     marginBottom: 8,
-    backgroundColor: 'rgba(30, 41, 59, 0.65)',
+    backgroundColor: colors.surface,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: colors.border,
     elevation: 3,
-    shadowColor: '#000',
+    shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 6,
@@ -699,13 +694,13 @@ const styles = StyleSheet.create({
   fileName: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#F8FAFC',
+    color: colors.textPrimary,
     marginBottom: 3,
     letterSpacing: -0.2,
   },
   fileDate: {
     fontSize: 12,
-    color: '#64748B',
+    color: colors.textMuted,
     fontWeight: '500',
   },
   moreBtn: {
@@ -713,7 +708,7 @@ const styles = StyleSheet.create({
   },
   moreIcon: {
     fontSize: 20,
-    color: '#64748B',
+    color: colors.textMuted,
     fontWeight: '700',
   },
 
@@ -725,21 +720,21 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: '#00BCD4',
+    backgroundColor: colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
     elevation: 10,
-    shadowColor: '#00BCD4',
+    shadowColor: colors.accent,
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.4,
     shadowRadius: 12,
     zIndex: 10,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
+    borderColor: colors.borderLight,
   },
   fabIcon: {
     fontSize: 30,
-    color: '#0F172A',
+    color: colors.background,
     fontWeight: '700',
     marginTop: -2,
   },

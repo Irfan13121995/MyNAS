@@ -3,8 +3,11 @@ import {
   Modal, View, Text, StyleSheet, FlatList, TouchableOpacity,
   ActivityIndicator, RefreshControl, Platform, StatusBar
 } from 'react-native';
+import { useTheme } from '../contexts/ThemeContext';
 
 export default function FileExplorerModal({ visible, initialPath, serverUrl, token, onClose, onFilePress }) {
+  const { colors } = useTheme();
+  const styles = React.useMemo(() => getStyles(colors), [colors]);
   const [currentPath, setCurrentPath] = useState('');
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -114,14 +117,14 @@ export default function FileExplorerModal({ visible, initialPath, serverUrl, tok
 
           {loading && !refreshing ? (
             <View style={styles.center}>
-              <ActivityIndicator size="large" color="#00BCD4" />
+              <ActivityIndicator size="large" color={colors.accent} />
             </View>
           ) : (
             <FlatList
               data={items}
               keyExtractor={(item, index) => item.path || index.toString()}
               renderItem={renderItem}
-              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#00BCD4" />}
+              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
               ListEmptyComponent={
                 <View style={styles.empty}>
                   <Text style={styles.emptyText}>Folder is empty</Text>
@@ -135,36 +138,36 @@ export default function FileExplorerModal({ visible, initialPath, serverUrl, tok
   );
 }
 
-const styles = StyleSheet.create({
+const getStyles = (colors) => StyleSheet.create({
   modalBg: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    backgroundColor: colors.overlay,
     justifyContent: 'flex-end',
   },
   container: {
     flex: 0.9,
-    backgroundColor: '#0B0F17',
+    backgroundColor: colors.background,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
+    borderColor: colors.borderLight,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: 16,
-    backgroundColor: 'rgba(15, 23, 42, 0.95)',
+    backgroundColor: colors.topbar,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.08)',
+    borderBottomColor: colors.border,
   },
   backBtn: {
     padding: 8,
-    backgroundColor: 'rgba(30, 41, 59, 0.75)',
+    backgroundColor: colors.surface,
     borderRadius: 8,
   },
   backText: {
-    color: '#00BCD4',
+    color: colors.accent,
     fontWeight: 'bold',
   },
   pathContainer: {
@@ -172,14 +175,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   pathText: {
-    color: '#F8FAFC',
+    color: colors.textPrimary,
     fontSize: 14,
   },
   closeBtn: {
     padding: 8,
   },
   closeText: {
-    color: '#94A3B8',
+    color: colors.textSecondary,
     fontSize: 18,
     fontWeight: 'bold',
   },
@@ -188,7 +191,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.04)',
+    borderBottomColor: colors.borderLight,
   },
   itemIcon: {
     fontSize: 24,
@@ -198,13 +201,13 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   itemName: {
-    color: '#F8FAFC',
+    color: colors.textPrimary,
     fontSize: 15,
     fontWeight: '600',
     marginBottom: 4,
   },
   itemMeta: {
-    color: '#64748B',
+    color: colors.textMuted,
     fontSize: 12,
   },
   center: {
@@ -213,8 +216,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 32,
   },
+  empty: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 32,
+  },
   emptyText: {
-    color: '#64748B',
+    color: colors.textMuted,
     fontSize: 16,
   },
 });

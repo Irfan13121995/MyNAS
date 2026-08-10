@@ -13,6 +13,8 @@ web-build/
 *.db-shm
 nas_data.db
 temp_uploads/
+Mobile Backups/
+*.bak
 cloudflared/
 users.json
 .nas_cache/

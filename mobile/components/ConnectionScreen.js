@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   StyleSheet, View, Text, TextInput, TouchableOpacity,
   ActivityIndicator, Alert, KeyboardAvoidingView,
@@ -6,8 +6,11 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import { useTheme } from '../contexts/ThemeContext';
 
 export default function ConnectionScreen({ onConnect }) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => getStyles(colors), [colors]);
   const [authMode, setAuthMode] = useState('passcode'); // 'passcode' | 'login' | 'register'
 
   // Server location
@@ -104,8 +107,16 @@ export default function ConnectionScreen({ onConnect }) {
     setScannedUrl(targetUrl);
     setIpAddress(targetUrl);
     setQrModalVisible(false);
-    
-    handleConnect(targetUrl, targetPasscode);
+
+    if (targetPasscode) {
+      handleConnect(targetUrl, targetPasscode);
+    } else {
+      Alert.alert(
+        'QR Code Scanned 📷',
+        `Server URL updated to:\n${targetUrl}\n\nPlease enter your 6-digit NAS Passcode to connect.`,
+        [{ text: 'OK' }]
+      );
+    }
   };
 
   const handleConnect = async (customUrl = null, customPasscode = null) => {
@@ -238,9 +249,18 @@ export default function ConnectionScreen({ onConnect }) {
       Alert.alert('QR Scanner', 'Please paste or scan a valid Tunnel URL');
       return;
     }
-    setIpAddress(scannedUrl.trim());
+    const clean = scannedUrl.trim();
+    setIpAddress(clean);
     setQrModalVisible(false);
-    handleConnect(scannedUrl.trim());
+    if (passcode) {
+      handleConnect(clean, passcode);
+    } else {
+      Alert.alert(
+        'Server URL Set 🌐',
+        `Target address set to:\n${clean}\n\nPlease enter your 6-digit NAS Passcode below to connect.`,
+        [{ text: 'OK' }]
+      );
+    }
   };
 
   const statusBarPadding = Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 8 : 16;
@@ -268,15 +288,15 @@ export default function ConnectionScreen({ onConnect }) {
                 <Text style={styles.qrScanBtnText}>📷 QR Scan</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.qrScanBtn, { flex: 1, marginBottom: 0, backgroundColor: 'rgba(0, 188, 212, 0.15)', borderColor: '#00BCD4' }]}
+                style={[styles.qrScanBtn, { flex: 1, marginBottom: 0, backgroundColor: colors.accentBg, borderColor: colors.accent }]}
                 onPress={handleScanNetwork}
                 disabled={isScanningNetwork}
                 activeOpacity={0.85}
               >
                 {isScanningNetwork ? (
-                  <ActivityIndicator size="small" color="#00BCD4" />
+                  <ActivityIndicator size="small" color={colors.accent} />
                 ) : (
-                  <Text style={[styles.qrScanBtnText, { color: '#22D3EE' }]}>🔍 Scan Wi-Fi</Text>
+                  <Text style={[styles.qrScanBtnText, { color: colors.accentLight }]}>🔍 Scan Wi-Fi</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -341,7 +361,7 @@ export default function ConnectionScreen({ onConnect }) {
                 />
 
                 <TouchableOpacity style={styles.connectBtn} onPress={() => handleConnect()} disabled={loading} activeOpacity={0.85}>
-                  {loading ? <ActivityIndicator color="#0F172A" /> : <Text style={styles.connectBtnText}>Connect via Passcode</Text>}
+                  {loading ? <ActivityIndicator color={colors.background} /> : <Text style={styles.connectBtnText}>Connect via Passcode</Text>}
                 </TouchableOpacity>
               </>
             )}
@@ -370,7 +390,7 @@ export default function ConnectionScreen({ onConnect }) {
                 />
 
                 <TouchableOpacity style={styles.connectBtn} onPress={handleUserLogin} disabled={loading} activeOpacity={0.85}>
-                  {loading ? <ActivityIndicator color="#0F172A" /> : <Text style={styles.connectBtnText}>Sign In</Text>}
+                  {loading ? <ActivityIndicator color={colors.background} /> : <Text style={styles.connectBtnText}>Sign In</Text>}
                 </TouchableOpacity>
               </>
             )}
@@ -410,7 +430,7 @@ export default function ConnectionScreen({ onConnect }) {
                 />
 
                 <TouchableOpacity style={styles.connectBtn} onPress={handleRegister} disabled={loading} activeOpacity={0.85}>
-                  {loading ? <ActivityIndicator color="#0F172A" /> : <Text style={styles.connectBtnText}>Create Account</Text>}
+                  {loading ? <ActivityIndicator color={colors.background} /> : <Text style={styles.connectBtnText}>Create Account</Text>}
                 </TouchableOpacity>
               </>
             )}
@@ -482,10 +502,10 @@ export default function ConnectionScreen({ onConnect }) {
   );
 }
 
-const styles = StyleSheet.create({
+const getStyles = (colors) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0B0F17',
+    backgroundColor: colors.background,
   },
   inner: {
     flex: 1,
@@ -507,44 +527,44 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '800',
-    color: '#F8FAFC',
+    color: colors.textPrimary,
     letterSpacing: -0.5,
   },
   subtitle: {
     fontSize: 13,
-    color: '#94A3B8',
+    color: colors.textSecondary,
     marginTop: 4,
     textAlign: 'center',
   },
   card: {
-    backgroundColor: 'rgba(30, 41, 59, 0.75)',
+    backgroundColor: colors.surface,
     borderRadius: 24,
     padding: 22,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: colors.borderLight,
     elevation: 6,
-    shadowColor: '#000',
+    shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.35,
     shadowRadius: 12,
   },
   qrScanBtn: {
-    backgroundColor: 'rgba(0, 188, 212, 0.18)',
+    backgroundColor: colors.accentBg,
     borderWidth: 1.5,
-    borderColor: '#00BCD4',
+    borderColor: colors.accent,
     borderRadius: 16,
     paddingVertical: 14,
     alignItems: 'center',
     marginBottom: 18,
   },
   qrScanBtnText: {
-    color: '#22D3EE',
+    color: colors.accentLight,
     fontSize: 14,
     fontWeight: '800',
   },
   tabContainer: {
     flexDirection: 'row',
-    backgroundColor: 'rgba(15, 23, 42, 0.8)',
+    backgroundColor: colors.tabBg,
     borderRadius: 14,
     padding: 4,
     marginBottom: 18,
@@ -556,39 +576,39 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   tabBtnActive: {
-    backgroundColor: '#00BCD4',
+    backgroundColor: colors.accent,
     elevation: 2,
   },
   tabText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#94A3B8',
+    color: colors.textSecondary,
   },
   tabTextActive: {
-    color: '#0F172A',
+    color: colors.background,
     fontWeight: '800',
   },
   label: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#94A3B8',
+    color: colors.textSecondary,
     textTransform: 'uppercase',
     letterSpacing: 0.8,
     marginBottom: 6,
     marginTop: 10,
   },
   input: {
-    backgroundColor: 'rgba(15, 23, 42, 0.8)',
+    backgroundColor: colors.inputBg,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: colors.borderLight,
     borderRadius: 14,
     paddingHorizontal: 16,
     paddingVertical: 12,
     fontSize: 14,
-    color: '#F8FAFC',
+    color: colors.textPrimary,
   },
   connectBtn: {
-    backgroundColor: '#00BCD4',
+    backgroundColor: colors.accent,
     borderRadius: 16,
     paddingVertical: 14,
     alignItems: 'center',
@@ -596,7 +616,7 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   connectBtnText: {
-    color: '#0F172A',
+    color: colors.background,
     fontSize: 15,
     fontWeight: '800',
   },
@@ -604,16 +624,16 @@ const styles = StyleSheet.create({
   // Modal
   modalBg: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.8)',
+    backgroundColor: colors.overlay,
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: '#0F172A',
+    backgroundColor: colors.background,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     paddingBottom: 28,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
+    borderColor: colors.borderLight,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -622,30 +642,30 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
+    borderBottomColor: colors.border,
   },
   modalTitle: {
     fontSize: 17,
     fontWeight: '700',
-    color: '#F8FAFC',
+    color: colors.textPrimary,
   },
   modalCloseText: {
     fontSize: 18,
-    color: '#94A3B8',
+    color: colors.textSecondary,
   },
   modalBody: {
     paddingHorizontal: 20,
     paddingTop: 16,
   },
   qrPairBtn: {
-    backgroundColor: '#00BCD4',
+    backgroundColor: colors.accent,
     borderRadius: 14,
     paddingVertical: 14,
     alignItems: 'center',
     marginTop: 16,
   },
   qrPairBtnText: {
-    color: '#0F172A',
+    color: colors.background,
     fontSize: 15,
     fontWeight: '800',
   },
@@ -671,7 +691,7 @@ const styles = StyleSheet.create({
     width: 160,
     height: 160,
     borderWidth: 2,
-    borderColor: '#00BCD4',
+    borderColor: colors.accent,
     borderRadius: 16,
     backgroundColor: 'transparent',
   },
@@ -686,7 +706,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   permissionBox: {
-    backgroundColor: 'rgba(30, 41, 59, 0.8)',
+    backgroundColor: colors.surface,
     borderRadius: 16,
     padding: 20,
     alignItems: 'center',
@@ -695,24 +715,24 @@ const styles = StyleSheet.create({
   permissionTitle: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#F8FAFC',
+    color: colors.textPrimary,
     marginBottom: 6,
   },
   permissionSub: {
     fontSize: 12,
-    color: '#94A3B8',
+    color: colors.textSecondary,
     textAlign: 'center',
     marginBottom: 14,
     lineHeight: 18,
   },
   permissionBtn: {
-    backgroundColor: '#00BCD4',
+    backgroundColor: colors.accent,
     paddingHorizontal: 20,
     paddingVertical: 10,
     borderRadius: 10,
   },
   permissionBtnText: {
-    color: '#0F172A',
+    color: colors.background,
     fontSize: 14,
     fontWeight: '800',
   },
