@@ -937,7 +937,9 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server is running at http://0.0.0.0:${PORT}`);
 
   try {
-    const bonjour = new Bonjour();
+    const bonjour = new Bonjour({}, (err) => {
+      console.warn('mDNS network warning:', err?.message || err);
+    });
     const service = bonjour.publish({
       name: 'Personal NAS Server',
       type: 'personal-nas',
@@ -945,10 +947,17 @@ const server = app.listen(PORT, '0.0.0.0', () => {
       txt: { version: '1.0.0' }
     });
     service.on('up', () => console.log('mDNS published: _personal-nas._tcp.local'));
-    service.on('error', err => console.log('mDNS status:', err.message));
+    service.on('error', err => console.warn('mDNS status:', err?.message || err));
   } catch (err) {
-    console.error('Failed to initialize mDNS:', err);
+    console.warn('Failed to initialize mDNS:', err.message);
   }
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[Uncaught Exception]', err.stack || err.message || err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[Unhandled Rejection]', reason?.stack || reason?.message || reason);
 });
 
 process.on('SIGINT', () => { console.log('\nShutting down...'); stopTunnel(); process.exit(0); });
