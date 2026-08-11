@@ -1,15 +1,17 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   StyleSheet, View, Text, TouchableOpacity,
-  ActivityIndicator, RefreshControl, Dimensions, Alert, Platform, StatusBar, ScrollView, Modal
+  ActivityIndicator, RefreshControl, Dimensions, Alert, Platform, StatusBar, ScrollView, Modal, TextInput
 } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
-import { requestMediaPermissions } from '../services/syncService';
+import * as MediaLibrary from 'expo-media-library';
+import { requestMediaPermissions, uploadFile } from '../services/syncService';
 import { cacheService } from '../services/cacheService';
 import { useTheme } from '../contexts/ThemeContext';
+import FileExplorerModal from './FileExplorerModal';
 
 const { width } = Dimensions.get('window');
 const GAP = 3;
@@ -81,18 +83,38 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
   useEffect(() => {
     if (drives && drives.length > 0) {
       setAvailableDrives(drives);
+      const defaultDriveLetter = drives[0]?.letter || 'C';
+      setTargetDrive(defaultDriveLetter);
+      setTargetFolder(`${defaultDriveLetter}:\\MobileUploads`);
     } else if (serverUrl && token) {
       fetch(`${serverUrl}/api/drives`, {
         headers: { Authorization: `Bearer ${token}` }
       })
         .then(res => res.json())
         .then(data => {
-          if (Array.isArray(data)) setAvailableDrives(data);
-          else if (data.drives) setAvailableDrives(data.drives);
+          const driveList = Array.isArray(data) ? data : data.drives || [];
+          setAvailableDrives(driveList);
+          if (driveList.length > 0) {
+            const letter = driveList[0]?.letter || 'C';
+            setTargetDrive(letter);
+            setTargetFolder(`${letter}:\\MobileUploads`);
+          }
         })
         .catch(() => {});
     }
   }, [drives, serverUrl, token]);
+
+  // Mobile Gallery & Target Upload States
+  const [deviceEndCursor, setDeviceEndCursor] = useState(null);
+  const [deviceHasNextPage, setDeviceHasNextPage] = useState(true);
+
+  const [uploadModalVisible, setUploadModalVisible] = useState(false);
+  const [targetDrive, setTargetDrive] = useState('C');
+  const [targetFolder, setTargetFolder] = useState('C:\\MobileUploads');
+  const [folderExplorerVisible, setFolderExplorerVisible] = useState(false);
+
+  const [isBatchUploading, setIsBatchUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0, fileName: '', percent: 0 });
 
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedItems, setSelectedItems] = useState(new Set());
@@ -181,17 +203,61 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
     }
   };
 
-  const loadDeviceMedia = async () => {
-    setLoading(true);
+  const loadDeviceMedia = async (isLoadMore = false) => {
+    if (isLoadMore && (!deviceHasNextPage || loadingMore)) return;
+    if (!isLoadMore) setLoading(true);
+    else setLoadingMore(true);
+
     try {
-      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      setHasPermission(perm.granted);
-      if (!perm.granted) {
+      const perm = await MediaLibrary.requestPermissionsAsync();
+      const granted = perm.granted || perm.status === 'granted' || perm.accessPrivileges === 'all' || perm.accessPrivileges === 'limited';
+      setHasPermission(granted);
+      if (!granted) {
         setLoading(false);
+        setRefreshing(false);
+        setLoadingMore(false);
         return;
       }
 
-      // Launch media picker or get user selected assets
+      const media = await MediaLibrary.getAssetsAsync({
+        mediaType: filterMode === 'videos' ? ['video'] : filterMode === 'photos' ? ['photo'] : ['photo', 'video'],
+        sortBy: ['creationTime'],
+        first: 100,
+        after: isLoadMore ? deviceEndCursor : undefined,
+      });
+
+      const mapped = media.assets.map(a => ({
+        id: a.id,
+        name: a.filename || `device_${a.id}.${a.mediaType === 'video' ? 'mp4' : 'jpg'}`,
+        path: a.uri,
+        uri: a.uri,
+        isDevice: true,
+        isVideo: a.mediaType === 'video',
+        mediaType: a.mediaType,
+        size: a.width && a.height ? Math.round(a.width * a.height * 0.4) : 0,
+        modifiedAt: new Date(a.creationTime || Date.now()).toISOString(),
+        duration: a.duration
+      }));
+
+      if (isLoadMore) {
+        setDeviceMediaItems(prev => [...prev, ...mapped]);
+      } else {
+        setDeviceMediaItems(mapped);
+      }
+
+      setDeviceEndCursor(media.endCursor);
+      setDeviceHasNextPage(media.hasNextPage);
+    } catch (err) {
+      console.warn('Failed to load device media assets:', err);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+      setLoadingMore(false);
+    }
+  };
+
+  const pickCustomDeviceMedia = async () => {
+    try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images', 'videos'],
         allowsMultipleSelection: true,
@@ -210,14 +276,71 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
           size: a.fileSize || 0,
           modifiedAt: new Date().toISOString()
         }));
-        setDeviceMediaItems(mapped);
+        setDeviceMediaItems(prev => [...mapped, ...prev]);
       }
     } catch (err) {
-      console.warn('Failed to load device media:', err);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+      console.warn('Failed to pick custom device media:', err);
     }
+  };
+
+  const startBatchUpload = async (itemsToUpload, destinationPath) => {
+    setUploadModalVisible(false);
+    setIsBatchUploading(true);
+    setUploadProgress({ current: 0, total: itemsToUpload.length, fileName: '', percent: 0 });
+
+    let successCount = 0;
+    let failedCount = 0;
+
+    for (let i = 0; i < itemsToUpload.length; i++) {
+      const item = itemsToUpload[i];
+      let uploadUri = item.uri || item.path;
+      let filename = item.name || item.filename || `mobile_${Date.now()}_${i}.${item.isVideo ? 'mp4' : 'jpg'}`;
+
+      if (item.id) {
+        try {
+          const info = await MediaLibrary.getAssetInfoAsync(item.id);
+          if (info && (info.localUri || info.uri)) {
+            uploadUri = info.localUri || info.uri;
+          }
+        } catch (e) {}
+      }
+
+      setUploadProgress({
+        current: i + 1,
+        total: itemsToUpload.length,
+        fileName: filename,
+        percent: 0
+      });
+
+      try {
+        const fileObj = {
+          uri: uploadUri,
+          filename: filename,
+          name: filename,
+          size: item.size || 0,
+          fileSize: item.size || 0,
+          mimeType: item.isVideo ? 'video/mp4' : 'image/jpeg',
+          mediaType: item.isVideo ? 'video' : 'image'
+        };
+
+        await uploadFile(serverUrl, token, fileObj, destinationPath, (pct) => {
+          setUploadProgress(prev => ({ ...prev, percent: Math.round(pct * 100) }));
+        });
+        successCount++;
+      } catch (err) {
+        console.warn(`Failed to upload ${filename}:`, err);
+        failedCount++;
+      }
+    }
+
+    setIsBatchUploading(false);
+    setSelectedItems(new Set());
+    setIsSelectionMode(false);
+
+    Alert.alert(
+      'Upload Complete 🎉',
+      `Successfully uploaded ${successCount} photos/videos to NAS folder:\n${destinationPath}${failedCount > 0 ? `\n\n(${failedCount} items failed to upload)` : ''}`
+    );
   };
 
   const handleGrantPermission = async () => {
@@ -391,12 +514,25 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
           </View>
           
           <View style={styles.selectionActionsRow}>
-            <TouchableOpacity style={styles.actionBtn}>
-              <Text style={styles.actionBtnText}>⬇️ Download</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.actionBtn, styles.actionBtnDanger]}>
-              <Text style={styles.actionBtnDangerText}>🗑️ Delete</Text>
-            </TouchableOpacity>
+            {activeSource === 'device' ? (
+              <TouchableOpacity
+                style={[styles.actionBtn, { backgroundColor: colors.accent, borderColor: colors.accent }]}
+                onPress={() => setUploadModalVisible(true)}
+              >
+                <Text style={[styles.actionBtnText, { color: '#0F172A', fontWeight: '800' }]}>
+                  📤 Upload to NAS ({selectedItems.size})
+                </Text>
+              </TouchableOpacity>
+            ) : (
+              <>
+                <TouchableOpacity style={styles.actionBtn}>
+                  <Text style={styles.actionBtnText}>⬇️ Download</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.actionBtn, styles.actionBtnDanger]}>
+                  <Text style={styles.actionBtnDangerText}>🗑️ Delete</Text>
+                </TouchableOpacity>
+              </>
+            )}
           </View>
         </View>
       ) : (
@@ -514,12 +650,12 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
           </Text>
           <Text style={styles.emptyText}>
             {activeSource === 'device'
-              ? 'Tap "📱 Phone Gallery" or refresh to select device photos and videos.'
+              ? 'No photos or videos found on your phone or media permission is limited.'
               : 'No media detected on your configured NAS drives.'}
           </Text>
           {activeSource === 'device' && (
-            <TouchableOpacity style={[styles.grantBtn, { marginTop: 16 }]} activeOpacity={0.8} onPress={loadDeviceMedia}>
-              <Text style={styles.grantBtnText}>📸 Choose Photos / Videos</Text>
+            <TouchableOpacity style={[styles.grantBtn, { marginTop: 16 }]} activeOpacity={0.8} onPress={pickCustomDeviceMedia}>
+              <Text style={styles.grantBtnText}>📸 Pick Photos / Videos</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -527,12 +663,12 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
         <FlashList
           data={filteredMedia}
           extraData={{ isSelectionMode, selectedItems }}
-          keyExtractor={(item, index) => item.path || item.uri || index.toString()}
+          keyExtractor={(item, index) => item.id || item.path || item.uri || index.toString()}
           numColumns={3}
           estimatedItemSize={COLUMN_WIDTH + GAP}
           renderItem={renderMediaItem}
           contentContainerStyle={styles.gridContainer}
-          onEndReached={loadMoreMedia}
+          onEndReached={activeSource === 'nas' ? loadMoreMedia : () => loadDeviceMedia(true)}
           onEndReachedThreshold={0.5}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
@@ -626,6 +762,128 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
             })}
           </View>
         </TouchableOpacity>
+      </Modal>
+
+      {/* TARGET UPLOAD LOCATION SELECTOR MODAL */}
+      <Modal visible={uploadModalVisible} animationType="slide" transparent={true} onRequestClose={() => setUploadModalVisible(false)}>
+        <View style={styles.modalBg}>
+          <View style={[styles.targetModalCard, { backgroundColor: colors.surfaceSolid, borderColor: colors.borderLight }]}>
+            <View style={styles.targetModalHeader}>
+              <Text style={[styles.targetModalTitle, { color: colors.textPrimary }]}>
+                📤 Upload {selectedItems.size} Selected Items to NAS
+              </Text>
+              <TouchableOpacity onPress={() => setUploadModalVisible(false)}>
+                <Text style={{ color: colors.textMuted, fontSize: 18, fontWeight: '700' }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ maxHeight: 380 }} showsVerticalScrollIndicator={false}>
+              {/* Target Storage Disk Selector */}
+              <Text style={[styles.fieldLabel, { color: colors.accent, marginTop: 8 }]}>SELECT TARGET STORAGE DISK</Text>
+              <View style={styles.drivePillRow}>
+                {availableDrives.map(d => {
+                  const letter = d.letter || d;
+                  const isSelected = targetDrive === letter;
+                  return (
+                    <TouchableOpacity
+                      key={letter}
+                      style={[styles.drivePill, isSelected && styles.drivePillActive]}
+                      onPress={() => {
+                        setTargetDrive(letter);
+                        setTargetFolder(`${letter}:\\MobileUploads`);
+                      }}
+                    >
+                      <Text style={[styles.drivePillText, isSelected && styles.drivePillTextActive]}>
+                        💾 {d.name ? `${d.name} (${letter})` : `Drive ${letter}`}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* Target Folder Path */}
+              <Text style={[styles.fieldLabel, { color: colors.accent, marginTop: 16 }]}>TARGET FOLDER PATH</Text>
+              <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                <TextInput
+                  style={[styles.folderInput, { backgroundColor: colors.inputBg, color: colors.textPrimary, borderColor: colors.accentBorder }]}
+                  value={targetFolder}
+                  onChangeText={setTargetFolder}
+                  placeholder="e.g. D:\Backups\MobileUploads"
+                  placeholderTextColor={colors.textMuted}
+                />
+                <TouchableOpacity
+                  style={[styles.browseBtn, { backgroundColor: colors.accentBg, borderColor: colors.accent }]}
+                  onPress={() => setFolderExplorerVisible(true)}
+                >
+                  <Text style={{ color: colors.accent, fontWeight: '700', fontSize: 13 }}>📁 Browse</Text>
+                </TouchableOpacity>
+              </View>
+
+              <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 6, fontStyle: 'italic' }}>
+                Files will be saved to your selected NAS storage drive and folder.
+              </Text>
+            </ScrollView>
+
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 20 }}>
+              <TouchableOpacity
+                style={[styles.modalCancelBtn, { borderColor: colors.borderLight }]}
+                onPress={() => setUploadModalVisible(false)}
+              >
+                <Text style={{ color: colors.textSecondary, fontWeight: '600' }}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.modalConfirmBtn, { backgroundColor: colors.accent }]}
+                onPress={() => {
+                  const itemsToUpload = filteredMedia.filter(i => selectedItems.has(i.path || i.uri));
+                  startBatchUpload(itemsToUpload.length > 0 ? itemsToUpload : Array.from(selectedItems).map(u => ({ uri: u, path: u })), targetFolder);
+                }}
+              >
+                <Text style={{ color: '#0F172A', fontWeight: '800', fontSize: 14 }}>
+                  🚀 Start Upload ({selectedItems.size})
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* FILE EXPLORER MODAL FOR FOLDER BROWSER */}
+      <FileExplorerModal
+        visible={folderExplorerVisible}
+        initialPath={targetFolder || (targetDrive ? `${targetDrive}:\\` : 'C:\\')}
+        serverUrl={serverUrl}
+        token={token}
+        mode="selectFolder"
+        onClose={() => setFolderExplorerVisible(false)}
+        onSelectFolder={(selectedPath) => {
+          setTargetFolder(selectedPath);
+        }}
+      />
+
+      {/* BATCH UPLOAD PROGRESS MODAL */}
+      <Modal visible={isBatchUploading} animationType="fade" transparent={true} onRequestClose={() => {}}>
+        <View style={styles.modalBg}>
+          <View style={[styles.progressCard, { backgroundColor: colors.surfaceSolid, borderColor: colors.accent }]}>
+            <ActivityIndicator size="large" color={colors.accent} style={{ marginBottom: 12 }} />
+            <Text style={[styles.progressTitle, { color: colors.textPrimary }]}>Uploading to NAS Server...</Text>
+            <Text style={[styles.progressSubtitle, { color: colors.accent, fontWeight: '700' }]}>
+              Item {uploadProgress.current} of {uploadProgress.total}
+            </Text>
+            <Text style={[styles.progressFileName, { color: colors.textSecondary }]} numberOfLines={1}>
+              {uploadProgress.fileName}
+            </Text>
+
+            {/* Progress Bar */}
+            <View style={[styles.progressBarTrack, { backgroundColor: colors.inputBg }]}>
+              <View style={[styles.progressBarFill, { width: `${uploadProgress.percent}%`, backgroundColor: colors.accent }]} />
+            </View>
+
+            <Text style={{ fontSize: 12, color: colors.textMuted, textAlign: 'center', marginTop: 6 }}>
+              {uploadProgress.percent}% Complete
+            </Text>
+          </View>
+        </View>
       </Modal>
     </View>
   );
@@ -1071,5 +1329,101 @@ const getStyles = (colors) => StyleSheet.create({
     color: colors.textMuted,
     textAlign: 'center',
     lineHeight: 18,
+  },
+
+  // TARGET UPLOAD MODAL & PROGRESS
+  targetModalCard: {
+    width: '100%',
+    maxWidth: 420,
+    borderRadius: 20,
+    padding: 20,
+    borderWidth: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.5,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  targetModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderLight,
+  },
+  targetModalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  fieldLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  folderInput: {
+    flex: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 13,
+    borderWidth: 1,
+  },
+  browseBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  modalCancelBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  modalConfirmBtn: {
+    flex: 2,
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderRadius: 12,
+  },
+  progressCard: {
+    width: 320,
+    borderRadius: 20,
+    padding: 24,
+    alignItems: 'center',
+    borderWidth: 1.5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.5,
+    shadowRadius: 20,
+    elevation: 12,
+  },
+  progressTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  progressSubtitle: {
+    fontSize: 14,
+    marginBottom: 4,
+  },
+  progressFileName: {
+    fontSize: 12,
+    marginBottom: 16,
+    maxWidth: 260,
+  },
+  progressBarTrack: {
+    width: '100%',
+    height: 8,
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  progressBarFill: {
+    height: '100%',
+    borderRadius: 4,
   },
 });
