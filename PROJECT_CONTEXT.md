@@ -46,6 +46,7 @@ The system relies on Cloudflare Tunnels to provide secure remote access without 
 - **Permanent Named Tunnels:** Configured via Cloudflare Zero Trust to custom domains (`https://mynas-hi.online` / `https://mynas-hi.eu.org`) for persistent, secure remote access.
 
 ## 7. Development & Build Instructions
+- **Code Graph & AI Blueprint:** See [`CODE_GRAPH.md`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/CODE_GRAPH.md) for full module graphs, sequence diagrams, ERD, and data flows.
 - **Running Server:** Navigate to `server/` and run `node index.js`.
 - **Mobile App:** Navigate to `mobile/` and run `npx expo start`.
 - **Building Android APK:** Run `npx eas-cli build --platform android --profile preview` in `mobile/`.
