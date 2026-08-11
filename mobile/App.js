@@ -357,6 +357,7 @@ function AppContent() {
             <LibraryScreen
               serverUrl={serverUrl}
               token={token}
+              drives={drives}
               initialFilter={libraryFilter}
               onSelectMedia={(m, list) => {
                 setSelectedFile(m);

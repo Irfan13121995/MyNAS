@@ -58,7 +58,7 @@ const ImageItem = React.memo(({ thumbUri }) => {
   );
 });
 
-export default function LibraryScreen({ serverUrl, token, initialFilter = 'all', onSelectMedia }) {
+export default function LibraryScreen({ serverUrl, token, drives = [], initialFilter = 'all', onSelectMedia }) {
   const { colors } = useTheme();
   const styles = useMemo(() => getStyles(colors), [colors]);
   const [activeSource, setActiveSource] = useState('nas'); // 'nas' | 'device'
@@ -69,11 +69,29 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
   const [hasPermission, setHasPermission] = useState(null);
   const [filterMode, setFilterMode] = useState(initialFilter);
   const [extFilter, setExtFilter] = useState('ALL');
+  const [driveFilter, setDriveFilter] = useState('ALL');
+  const [availableDrives, setAvailableDrives] = useState(drives);
   const [showCatModal, setShowCatModal] = useState(false);
   const [showExtModal, setShowExtModal] = useState(false);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+
+  useEffect(() => {
+    if (drives && drives.length > 0) {
+      setAvailableDrives(drives);
+    } else if (serverUrl && token) {
+      fetch(`${serverUrl}/api/drives`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+        .then(res => res.json())
+        .then(data => {
+          if (Array.isArray(data)) setAvailableDrives(data);
+          else if (data.drives) setAvailableDrives(data.drives);
+        })
+        .catch(() => {});
+    }
+  }, [drives, serverUrl, token]);
 
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedItems, setSelectedItems] = useState(new Set());
@@ -102,16 +120,25 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
     index,
   }), []);
 
-  const fetchGallery = async () => {
-    // Stale-While-Revalidate: Load from local cache instantly first
-    const cached = await cacheService.get('gallery_media_items');
-    if (cached && cached.length > 0) {
-      setMediaItems(cached);
-      setLoading(false);
+  const handleDriveFilterChange = (drive) => {
+    setDriveFilter(drive);
+    setPage(1);
+    setLoading(true);
+    fetchGallery(drive);
+  };
+
+  const fetchGallery = async (drive = driveFilter) => {
+    if (drive === 'ALL') {
+      const cached = await cacheService.get('gallery_media_items');
+      if (cached && cached.length > 0) {
+        setMediaItems(cached);
+        setLoading(false);
+      }
     }
 
     try {
-      const res = await fetch(`${serverUrl}/api/gallery?page=1&limit=100`, {
+      const driveParam = drive && drive !== 'ALL' ? `&drive=${encodeURIComponent(drive)}` : '';
+      const res = await fetch(`${serverUrl}/api/gallery?page=1&limit=100${driveParam}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -119,7 +146,9 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
         setMediaItems(data.items || []);
         setPage(data.page || 1);
         setHasMore(data.hasMore ?? false);
-        await cacheService.set('gallery_media_items', data.items || []);
+        if (drive === 'ALL') {
+          await cacheService.set('gallery_media_items', data.items || []);
+        }
       }
     } catch (err) {
       console.warn('Failed to fetch gallery media:', err);
@@ -134,7 +163,8 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
     setLoadingMore(true);
     try {
       const nextPage = page + 1;
-      const res = await fetch(`${serverUrl}/api/gallery?page=${nextPage}&limit=100`, {
+      const driveParam = driveFilter && driveFilter !== 'ALL' ? `&drive=${encodeURIComponent(driveFilter)}` : '';
+      const res = await fetch(`${serverUrl}/api/gallery?page=${nextPage}&limit=100${driveParam}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -228,6 +258,12 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
 
   const filteredMedia = useMemo(() => {
     return activeMediaList.filter(item => {
+      if (activeSource === 'nas' && driveFilter !== 'ALL') {
+        const itemDrive = (item.drive || item.path || '').toUpperCase();
+        const normTarget = driveFilter.toUpperCase().replace(/[/\\]+$/, '');
+        if (!itemDrive.startsWith(normTarget)) return false;
+      }
+
       const isVid = isVideoFile(item);
       if (filterMode === 'videos' && !isVid) return false;
       if (filterMode === 'photos' && isVid) return false;
@@ -240,7 +276,7 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
       }
       return true;
     });
-  }, [activeMediaList, filterMode, extFilter]);
+  }, [activeMediaList, activeSource, driveFilter, filterMode, extFilter]);
 
   const renderMediaItem = useCallback(({ item }) => {
     const thumbUri = item.isDevice
@@ -396,6 +432,44 @@ export default function LibraryScreen({ serverUrl, token, initialFilter = 'all',
             </Text>
           </TouchableOpacity>
         </View>
+
+        {/* DISK DRIVE FILTER PILL ROW */}
+        {activeSource === 'nas' && (
+          <View style={{ marginTop: 10 }}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ paddingHorizontal: 16, alignItems: 'center' }}
+            >
+              <TouchableOpacity
+                style={[
+                  styles.drivePill,
+                  driveFilter === 'ALL' && styles.drivePillActive
+                ]}
+                onPress={() => handleDriveFilterChange('ALL')}
+              >
+                <Text style={[styles.drivePillText, driveFilter === 'ALL' && styles.drivePillTextActive]}>
+                  💽 All Drives
+                </Text>
+              </TouchableOpacity>
+              {availableDrives.map(d => {
+                const letter = d.letter || d;
+                const isSelected = driveFilter === letter;
+                return (
+                  <TouchableOpacity
+                    key={letter}
+                    style={[styles.drivePill, isSelected && styles.drivePillActive]}
+                    onPress={() => handleDriveFilterChange(letter)}
+                  >
+                    <Text style={[styles.drivePillText, isSelected && styles.drivePillTextActive]}>
+                      💾 {d.name ? `${d.name} (${letter})` : `Drive ${letter}`}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        )}
 
         {/* DUAL DROPDOWN SELECT PICKERS */}
         <View style={styles.dropdownRow}>
@@ -919,6 +993,30 @@ const getStyles = (colors) => StyleSheet.create({
     color: colors.danger,
     fontWeight: '600',
     fontSize: 14,
+  },
+
+  // DISK PILLS
+  drivePill: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    marginRight: 8,
+  },
+  drivePillActive: {
+    backgroundColor: colors.accentBg,
+    borderColor: colors.accent,
+  },
+  drivePillText: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  drivePillTextActive: {
+    color: colors.accent,
+    fontWeight: 'bold',
   },
 
   // STATES
