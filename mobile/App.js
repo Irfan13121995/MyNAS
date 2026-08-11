@@ -14,6 +14,7 @@ import FileViewerModal from './components/FileViewerModal';
 import { authenticateBiometric } from './services/biometricService';
 import { getSecureItem, setSecureItem, deleteSecureItem } from './services/secureStoreService';
 import * as TaskManager from 'expo-task-manager';
+import * as BackgroundFetch from 'expo-background-fetch';
 import { runFullSync } from './services/syncService';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 
@@ -128,14 +129,18 @@ function AppContent() {
   }, [selectedFile, autoSyncVisible, activeTab]);
 
   const registerBackgroundSync = async () => {
+    if (isExpoGo || !BackgroundFetch || !BackgroundFetch.registerTaskAsync) return;
     try {
       const isEnabled = await AsyncStorage.getItem('autosync_enabled');
       if (isEnabled === 'true') {
-        await BackgroundFetch.registerTaskAsync(BACKGROUND_SYNC_TASK, {
-          minimumInterval: 60 * 15, // 15 minutes
-          stopOnTerminate: false,
-          startOnBoot: true,
-        });
+        const isRegistered = await TaskManager.isTaskRegisteredAsync(BACKGROUND_SYNC_TASK);
+        if (!isRegistered) {
+          await BackgroundFetch.registerTaskAsync(BACKGROUND_SYNC_TASK, {
+            minimumInterval: 60 * 15, // 15 minutes
+            stopOnTerminate: false,
+            startOnBoot: true,
+          });
+        }
       }
     } catch (e) {
       console.warn('Failed to register background sync task', e);
