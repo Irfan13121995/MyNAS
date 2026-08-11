@@ -13,7 +13,7 @@
     },
     "android": {
       "package": "com.irfan.personalnas",
-      "versionCode": 5,
+      "versionCode": 6,
       "adaptiveIcon": {
         "backgroundColor": "#0B0F17",
         "foregroundImage": "./assets/android-icon-foreground.png",
