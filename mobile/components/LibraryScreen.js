@@ -73,6 +73,7 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
   const [availableDrives, setAvailableDrives] = useState(drives);
   const [showCatModal, setShowCatModal] = useState(false);
   const [showExtModal, setShowExtModal] = useState(false);
+  const [showDriveModal, setShowDriveModal] = useState(false);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -433,46 +434,25 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
           </TouchableOpacity>
         </View>
 
-        {/* DISK DRIVE FILTER PILL ROW */}
-        {activeSource === 'nas' && (
-          <View style={{ marginTop: 10 }}>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ paddingHorizontal: 16, alignItems: 'center' }}
-            >
-              <TouchableOpacity
-                style={[
-                  styles.drivePill,
-                  driveFilter === 'ALL' && styles.drivePillActive
-                ]}
-                onPress={() => handleDriveFilterChange('ALL')}
-              >
-                <Text style={[styles.drivePillText, driveFilter === 'ALL' && styles.drivePillTextActive]}>
-                  💽 All Drives
-                </Text>
-              </TouchableOpacity>
-              {availableDrives.map(d => {
-                const letter = d.letter || d;
-                const isSelected = driveFilter === letter;
-                return (
-                  <TouchableOpacity
-                    key={letter}
-                    style={[styles.drivePill, isSelected && styles.drivePillActive]}
-                    onPress={() => handleDriveFilterChange(letter)}
-                  >
-                    <Text style={[styles.drivePillText, isSelected && styles.drivePillTextActive]}>
-                      💾 {d.name ? `${d.name} (${letter})` : `Drive ${letter}`}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </View>
-        )}
-
-        {/* DUAL DROPDOWN SELECT PICKERS */}
+        {/* TRIPLE DROPDOWN SELECT PICKERS */}
         <View style={styles.dropdownRow}>
+          {/* Storage Disk Dropdown (when NAS active) */}
+          {activeSource === 'nas' && (
+            <View style={styles.dropdownPickerWrap}>
+              <Text style={styles.dropdownLabel}>STORAGE DISK</Text>
+              <TouchableOpacity
+                style={styles.dropdownSelectBtn}
+                activeOpacity={0.8}
+                onPress={() => setShowDriveModal(true)}
+              >
+                <Text style={styles.dropdownSelectBtnText} numberOfLines={1}>
+                  {driveFilter === 'ALL' ? '💽 All Drives' : `💾 Drive ${driveFilter}`}
+                </Text>
+                <Text style={styles.dropdownChevron}>▼</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
           {/* Media Type Dropdown */}
           <View style={styles.dropdownPickerWrap}>
             <Text style={styles.dropdownLabel}>MEDIA TYPE</Text>
@@ -497,7 +477,7 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
               onPress={() => setShowExtModal(true)}
             >
               <Text style={styles.dropdownSelectBtnText} numberOfLines={1}>
-                {extFilter === 'ALL' ? 'All Types (.ALL)' : extFilter}
+                {extFilter === 'ALL' ? 'All (.ALL)' : extFilter}
               </Text>
               <Text style={styles.dropdownChevron}>▼</Text>
             </TouchableOpacity>
@@ -604,6 +584,46 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
                 {extFilter === ext && <Text style={styles.checkIcon}>✓</Text>}
               </TouchableOpacity>
             ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* DRIVE PICKER MODAL */}
+      <Modal visible={showDriveModal} animationType="fade" transparent={true} onRequestClose={() => setShowDriveModal(false)}>
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowDriveModal(false)}>
+          <View style={styles.pickerModalCard}>
+            <Text style={styles.pickerModalTitle}>Select Storage Disk</Text>
+            
+            <TouchableOpacity
+              style={[styles.pickerItem, driveFilter === 'ALL' && styles.pickerItemActive]}
+              onPress={() => {
+                handleDriveFilterChange('ALL');
+                setShowDriveModal(false);
+              }}
+            >
+              <Text style={styles.pickerItemText}>💽 All NAS Drives</Text>
+              {driveFilter === 'ALL' && <Text style={styles.checkIcon}>✓</Text>}
+            </TouchableOpacity>
+
+            {availableDrives.map(d => {
+              const letter = d.letter || d;
+              const isSelected = driveFilter === letter;
+              return (
+                <TouchableOpacity
+                  key={letter}
+                  style={[styles.pickerItem, isSelected && styles.pickerItemActive]}
+                  onPress={() => {
+                    handleDriveFilterChange(letter);
+                    setShowDriveModal(false);
+                  }}
+                >
+                  <Text style={styles.pickerItemText}>
+                    💾 {d.name ? `${d.name} (${letter})` : `Drive ${letter}`}
+                  </Text>
+                  {isSelected && <Text style={styles.checkIcon}>✓</Text>}
+                </TouchableOpacity>
+              );
+            })}
           </View>
         </TouchableOpacity>
       </Modal>
