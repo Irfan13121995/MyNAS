@@ -24,7 +24,7 @@ export async function apiFetch(url, options = {}, token = null) {
       signal: controller.signal,
     });
 
-    if (response.status === 401 || response.status === 403) {
+    if (response.status === 401) {
       throw new AuthError(`Authentication failed with status ${response.status}`);
     }
 

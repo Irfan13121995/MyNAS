@@ -40,9 +40,11 @@ export default function BackupPanel({ serverUrl, token, drives, onClose }) {
         setDeviceName(sanitizedName);
 
         // Select default backup drive (prefer external drive or first drive)
+        // Select default backup drive (prefer USB or first drive)
         if (drives && drives.length > 0) {
           const usbDrive = drives.find(d => d.isUsb);
-          setSelectedDrive((usbDrive || drives[0]).path);
+          const defDrive = usbDrive || drives[0];
+          setSelectedDrive(defDrive.letter || defDrive.path || 'C:');
         }
 
         // Check Media permissions
@@ -61,7 +63,7 @@ export default function BackupPanel({ serverUrl, token, drives, onClose }) {
     };
 
     initialize();
-  }, []);
+  }, [drives]);
 
   // 2. Load Gallery Assets and match against cache
   const loadBackupStats = async (sanitizedDeviceName) => {
@@ -71,14 +73,23 @@ export default function BackupPanel({ serverUrl, token, drives, onClose }) {
       const syncedIds = savedIdsJson ? JSON.parse(savedIdsJson) : [];
       setBackedUpIds(syncedIds);
 
-      // Fetch assets from media library
-      const assetsResult = await MediaLibrary.getAssetsAsync({
-        mediaType: ['photo', 'video'],
-        first: 500, // Sync up to the last 500 media files in history
-        sortBy: ['creationTime']
-      });
+      // Fetch ALL assets from media library with pagination
+      let allAssets = [];
+      let hasNextPage = true;
+      let endCursor = undefined;
 
-      const allAssets = assetsResult.assets;
+      while (hasNextPage && allAssets.length < 10000) {
+        const assetsResult = await MediaLibrary.getAssetsAsync({
+          mediaType: ['photo', 'video'],
+          first: 100,
+          after: endCursor,
+          sortBy: ['creationTime']
+        });
+        allAssets = allAssets.concat(assetsResult.assets || []);
+        hasNextPage = assetsResult.hasNextPage;
+        endCursor = assetsResult.endCursor;
+      }
+
       setGalleryCount(allAssets.length);
 
       // Compare which ones are not backed up
@@ -106,9 +117,9 @@ export default function BackupPanel({ serverUrl, token, drives, onClose }) {
     setCurrentProgress(0);
     setSyncLog('Starting connection handshake...');
 
-    // The server validates Windows drive roots, so use its canonical drive path
-    // (for example, "D:\\") rather than the volume's display name.
-    const targetPath = `${selectedDrive.replace(/[\\/]+$/, '')}\\NAS_Backup\\${deviceName}`;
+    // Format destination path according to Web App specification: <Drive>\NAS_Backup\<DeviceName>\
+    const cleanDrive = (selectedDrive || 'C:').replace(/[\/\\]+$/, '');
+    const targetPath = `${cleanDrive}\\NAS_Backup\\${deviceName}`;
     const newSyncedIds = [...backedUpIds];
     let successCount = 0;
 
@@ -129,9 +140,10 @@ export default function BackupPanel({ serverUrl, token, drives, onClose }) {
 
         // Prepare multipart form upload
         const formData = new FormData();
+        const ext = asset.filename ? asset.filename.split('.').pop() : (asset.mediaType === 'video' ? 'mp4' : 'jpg');
         formData.append('file', {
           uri: fileUri,
-          name: asset.filename || `upload_${Date.now()}.${asset.filename?.split('.').pop() || 'jpg'}`,
+          name: asset.filename || `upload_${Date.now()}.${ext}`,
           type: asset.mediaType === 'video' ? 'video/mp4' : 'image/jpeg'
         });
 
@@ -161,7 +173,7 @@ export default function BackupPanel({ serverUrl, token, drives, onClose }) {
       setSyncLog(`Backup Sync Complete! Successfully uploaded ${successCount} files.`);
       // Reload stats
       await loadBackupStats(deviceName);
-      Alert.alert('Backup Finished', `Successfully backed up ${successCount} files to your NAS!`);
+      Alert.alert('Backup Finished', `Successfully backed up ${successCount} files to your NAS at:\n${targetPath}`);
     } catch (err) {
       Alert.alert('Backup Interrupted', 'An error occurred during sync: ' + err.message);
     } finally {
@@ -203,27 +215,30 @@ export default function BackupPanel({ serverUrl, token, drives, onClose }) {
             <View style={styles.infoCard}>
               <Text style={styles.cardHeader}>💾 Destination Drive</Text>
               <View style={styles.driveRow}>
-                {drives.map(drive => (
-                  <TouchableOpacity
-                    key={drive.path}
-                    style={[
-                      styles.driveBadge,
-                      selectedDrive === drive.path && styles.driveBadgeActive
-                    ]}
-                    onPress={() => setSelectedDrive(drive.path)}
-                    disabled={syncing}
-                  >
-                    <Text style={[
-                      styles.driveBadgeText,
-                      selectedDrive === drive.path && styles.driveBadgeTextActive
-                    ]}>
-                      {drive.name} ({drive.isUsb ? 'USB' : 'Internal'})
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+                {drives.map(drive => {
+                  const driveKey = drive.letter || drive.path || 'C:';
+                  return (
+                    <TouchableOpacity
+                      key={driveKey}
+                      style={[
+                        styles.driveBadge,
+                        selectedDrive === driveKey && styles.driveBadgeActive
+                      ]}
+                      onPress={() => setSelectedDrive(driveKey)}
+                      disabled={syncing}
+                    >
+                      <Text style={[
+                        styles.driveBadgeText,
+                        selectedDrive === driveKey && styles.driveBadgeTextActive
+                      ]}>
+                        {drive.name || driveKey} ({drive.isUsb ? 'USB' : 'Internal'})
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
               <Text style={styles.pathMeta}>
-                Backup drive: {selectedDrive || 'Select a drive'}
+                Target path: {selectedDrive ? `${selectedDrive.replace(/[\/\\]+$/, '')}\\NAS_Backup\\${deviceName}` : 'Select a drive'}
               </Text>
             </View>
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, ActivityIndicator, StatusBar, Text, Platform, BackHandler, Modal, TextInput, TouchableOpacity, Alert } from 'react-native';
+import { StyleSheet, View, ActivityIndicator, StatusBar, Text, Platform, BackHandler, Modal, TextInput, TouchableOpacity, Alert, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
@@ -81,6 +81,7 @@ function AppContent() {
   const [loading, setLoading] = useState(true);
   const [serverUrl, setServerUrl] = useState(null);
   const [token, setToken] = useState(null);
+  const [username, setUsername] = useState('Passcode Admin');
   const [activeTab, setActiveTab] = useState('home'); // 'home' | 'storage' | 'library' | 'control'
   const [libraryFilter, setLibraryFilter] = useState('all'); // 'all' | 'photos' | 'videos'
   const [drives, setDrives] = useState([]);
@@ -151,6 +152,8 @@ function AppContent() {
     try {
       const storedUrl = await getSecureItem('nas_server_url');
       const storedToken = await getSecureItem('nas_jwt_token');
+      const storedUser = await AsyncStorage.getItem('nas_username');
+      if (storedUser) setUsername(storedUser);
 
       if (storedUrl && storedToken) {
         const ok = await verifyToken(storedUrl, storedToken, signal);
@@ -186,7 +189,15 @@ function AppContent() {
         headers: { Authorization: `Bearer ${jwtToken}` },
         signal: signal || AbortSignal.timeout(8000)
       });
-      return res.ok;
+      if (res.ok) {
+        const data = await res.json();
+        if (data.username) {
+          setUsername(data.username);
+          await AsyncStorage.setItem('nas_username', data.username);
+        }
+        return true;
+      }
+      return false;
     } catch (e) {
       return false;
     }
@@ -209,12 +220,29 @@ function AppContent() {
     }
   };
 
-  const handleConnect = async (url, jwtToken) => {
+  const handleConnect = async (url, jwtToken, userDisplayName) => {
     try {
       await setSecureItem('nas_server_url', url);
       await setSecureItem('nas_jwt_token', jwtToken);
+
+      let nameToSet = userDisplayName;
+      if (!nameToSet) {
+        try {
+          const res = await fetch(`${url}/api/auth/verify`, {
+            headers: { Authorization: `Bearer ${jwtToken}` }
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.username) nameToSet = data.username;
+          }
+        } catch (e) {}
+      }
+
+      nameToSet = nameToSet || 'Passcode Admin';
+      await AsyncStorage.setItem('nas_username', nameToSet);
       setServerUrl(url);
       setToken(jwtToken);
+      setUsername(nameToSet);
       fetchDrives(url, jwtToken);
     } catch (e) {
       console.error('Failed to save auth credentials', e);
@@ -225,8 +253,10 @@ function AppContent() {
     try {
       await deleteSecureItem('nas_server_url');
       await deleteSecureItem('nas_jwt_token');
+      await AsyncStorage.removeItem('nas_username');
       setServerUrl(null);
       setToken(null);
+      setUsername('Passcode Admin');
       setDrives([]);
     } catch (e) {
       console.error('Failed to clear credentials', e);
@@ -325,6 +355,22 @@ function AppContent() {
       <View style={[styles.rootWrapper, { backgroundColor: colors.background }]}>
       <StatusBar barStyle={colors.statusBar} backgroundColor={colors.background} translucent={false} />
       <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+
+        {/* ── TOP BAR HEADER (Logo on Left, Username on Right) ──────────── */}
+        <View style={[styles.topBar, { backgroundColor: colors.surface, borderBottomColor: colors.borderLight }]}>
+          <View style={styles.topBarLeft}>
+            <Image source={require('./assets/icon.png')} style={styles.topBarLogo} />
+            <Text style={[styles.topBarTitle, { color: colors.textPrimary }]}>myNAS</Text>
+          </View>
+          <View style={styles.topBarRight}>
+            <View style={[styles.userBadge, { backgroundColor: colors.accentBg, borderColor: colors.borderLight }]}>
+              <Text style={styles.userBadgeIcon}>👤</Text>
+              <Text style={[styles.userBadgeText, { color: colors.accent }]} numberOfLines={1}>
+                {username || 'Passcode Admin'}
+              </Text>
+            </View>
+          </View>
+        </View>
 
         {/* Main Screen Body */}
         <View style={[styles.mainContent, { backgroundColor: colors.background }]}>
@@ -431,6 +477,50 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
+  },
+  topBar: {
+    height: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+  },
+  topBarLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  topBarLogo: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+  },
+  topBarTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    letterSpacing: -0.3,
+  },
+  topBarRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  userBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 5,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    maxWidth: 170,
+  },
+  userBadgeIcon: {
+    fontSize: 12,
+  },
+  userBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
   },
   mainContent: {
     flex: 1,

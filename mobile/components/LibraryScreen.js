@@ -35,6 +35,45 @@ function isVideoFile(item) {
   return VIDEO_EXTS.has(normalizeExt(item));
 }
 
+function formatDuration(seconds) {
+  if (!seconds || seconds <= 0) return '';
+  const s = Math.round(seconds);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+  return `${m}:${String(sec).padStart(2, '0')}`;
+}
+
+function formatDateLabel(dateStr) {
+  const today = new Date();
+  const d = new Date(dateStr);
+  const todayStr = today.toISOString().slice(0, 10);
+  const yest = new Date(today);
+  yest.setDate(yest.getDate() - 1);
+  const yestStr = yest.toISOString().slice(0, 10);
+  const itemStr = d.toISOString().slice(0, 10);
+  if (itemStr === todayStr) return 'Today';
+  if (itemStr === yestStr) return 'Yesterday';
+  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+}
+
+function groupMediaByDate(items) {
+  const groups = {};
+  items.forEach(item => {
+    const dateKey = (item.modifiedAt || item.creationTime || new Date().toISOString()).slice(0, 10);
+    if (!groups[dateKey]) groups[dateKey] = [];
+    groups[dateKey].push(item);
+  });
+  const sortedKeys = Object.keys(groups).sort((a, b) => b.localeCompare(a));
+  const result = [];
+  sortedKeys.forEach(key => {
+    result.push({ isSectionHeader: true, dateKey: key, label: formatDateLabel(key), count: groups[key].length });
+    groups[key].forEach(item => result.push(item));
+  });
+  return result;
+}
+
 const ImageItem = React.memo(({ thumbUri }) => {
   const { colors } = useTheme();
   const styles = useMemo(() => getStyles(colors), [colors]);
@@ -118,6 +157,10 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
 
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedItems, setSelectedItems] = useState(new Set());
+  const [deviceTotalCount, setDeviceTotalCount] = useState(0);
+  const [deviceViewMode, setDeviceViewMode] = useState('all'); // 'all' | 'albums'
+  const [albums, setAlbums] = useState([]);
+  const [selectedAlbum, setSelectedAlbum] = useState(null);
 
   useEffect(() => {
     if (initialFilter) {
@@ -212,47 +255,99 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
       const perm = await MediaLibrary.requestPermissionsAsync();
       const granted = perm.granted || perm.status === 'granted' || perm.accessPrivileges === 'all' || perm.accessPrivileges === 'limited';
       setHasPermission(granted);
+
       if (!granted) {
-        setLoading(false);
-        setRefreshing(false);
-        setLoadingMore(false);
-        return;
+        // Try fallback to requestMediaPermissions helper
+        const helperGranted = await requestMediaPermissions();
+        setHasPermission(helperGranted);
+        if (!helperGranted) {
+          setLoading(false);
+          setRefreshing(false);
+          setLoadingMore(false);
+          return;
+        }
       }
 
-      const media = await MediaLibrary.getAssetsAsync({
-        mediaType: filterMode === 'videos' ? ['video'] : filterMode === 'photos' ? ['photo'] : ['photo', 'video'],
-        sortBy: ['creationTime'],
-        first: 100,
-        after: isLoadMore ? deviceEndCursor : undefined,
-      });
-
-      const mapped = media.assets.map(a => ({
-        id: a.id,
-        name: a.filename || `device_${a.id}.${a.mediaType === 'video' ? 'mp4' : 'jpg'}`,
-        path: a.uri,
-        uri: a.uri,
-        isDevice: true,
-        isVideo: a.mediaType === 'video',
-        mediaType: a.mediaType,
-        size: a.width && a.height ? Math.round(a.width * a.height * 0.4) : 0,
-        modifiedAt: new Date(a.creationTime || Date.now()).toISOString(),
-        duration: a.duration
-      }));
-
-      if (isLoadMore) {
-        setDeviceMediaItems(prev => [...prev, ...mapped]);
-      } else {
-        setDeviceMediaItems(mapped);
+      // Get total count on first load (first must be >= 1)
+      if (!isLoadMore) {
+        try {
+          const countResult = await MediaLibrary.getAssetsAsync({ first: 1, mediaType: ['photo', 'video'] });
+          setDeviceTotalCount(countResult.totalCount || 0);
+        } catch (e) {}
       }
 
-      setDeviceEndCursor(media.endCursor);
-      setDeviceHasNextPage(media.hasNextPage);
+      const mediaTypes = filterMode === 'videos' ? ['video'] : filterMode === 'photos' ? ['photo'] : ['photo', 'video'];
+      let media;
+
+      try {
+        media = await MediaLibrary.getAssetsAsync({
+          mediaType: mediaTypes,
+          sortBy: ['creationTime'],
+          first: 100,
+          after: isLoadMore ? deviceEndCursor : undefined,
+          ...(selectedAlbum ? { album: selectedAlbum.id } : {}),
+        });
+      } catch (err1) {
+        // Fallback without sortBy if native module rejects sortBy array format
+        media = await MediaLibrary.getAssetsAsync({
+          mediaType: mediaTypes,
+          first: 100,
+          after: isLoadMore ? deviceEndCursor : undefined,
+          ...(selectedAlbum ? { album: selectedAlbum.id } : {}),
+        });
+      }
+
+      if (media && media.assets) {
+        const mapped = media.assets.map(a => ({
+          id: a.id,
+          name: a.filename || `device_${a.id}.${a.mediaType === 'video' ? 'mp4' : 'jpg'}`,
+          path: a.uri,
+          uri: a.uri,
+          isDevice: true,
+          isVideo: a.mediaType === 'video',
+          mediaType: a.mediaType,
+          size: a.width && a.height ? Math.round(a.width * a.height * 0.4) : 0,
+          modifiedAt: new Date(a.creationTime || Date.now()).toISOString(),
+          duration: a.duration
+        }));
+
+        if (isLoadMore) {
+          setDeviceMediaItems(prev => [...prev, ...mapped]);
+        } else {
+          setDeviceMediaItems(mapped);
+        }
+
+        setDeviceEndCursor(media.endCursor);
+        setDeviceHasNextPage(media.hasNextPage);
+      }
     } catch (err) {
       console.warn('Failed to load device media assets:', err);
     } finally {
       setLoading(false);
       setRefreshing(false);
       setLoadingMore(false);
+    }
+  };
+
+  const loadAlbums = async () => {
+    try {
+      const perm = await MediaLibrary.requestPermissionsAsync();
+      if (!perm.granted && perm.status !== 'granted' && perm.accessPrivileges !== 'all') return;
+      const albumList = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true });
+      // Get cover asset for each album
+      const albumsWithCovers = await Promise.all(
+        albumList.filter(a => a.assetCount > 0).map(async (album) => {
+          let coverUri = null;
+          try {
+            const assets = await MediaLibrary.getAssetsAsync({ album: album.id, first: 1, sortBy: ['creationTime'] });
+            if (assets.assets.length > 0) coverUri = assets.assets[0].uri;
+          } catch (e) {}
+          return { ...album, coverUri };
+        })
+      );
+      setAlbums(albumsWithCovers.sort((a, b) => b.assetCount - a.assetCount));
+    } catch (err) {
+      console.warn('Failed to load albums:', err);
     }
   };
 
@@ -279,7 +374,7 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
         setDeviceMediaItems(prev => [...mapped, ...prev]);
       }
     } catch (err) {
-      console.warn('Failed to pick custom device media:', err);
+      console.warn('Failed to pick device media:', err);
     }
   };
 
@@ -367,7 +462,7 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
         setLoading(false);
       }
     }
-  }, [activeSource]);
+  }, [activeSource, selectedAlbum]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -381,10 +476,10 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
   const activeMediaList = activeSource === 'nas' ? mediaItems : deviceMediaItems;
 
   const filteredMedia = useMemo(() => {
-    return activeMediaList.filter(item => {
+    const filtered = activeMediaList.filter(item => {
       if (activeSource === 'nas' && driveFilter !== 'ALL') {
         const itemDrive = (item.drive || item.path || '').toUpperCase();
-        const normTarget = driveFilter.toUpperCase().replace(/[/\\]+$/, '');
+        const normTarget = driveFilter.toUpperCase().replace(/[\/\\]+$/, '');
         if (!itemDrive.startsWith(normTarget)) return false;
       }
 
@@ -400,9 +495,25 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
       }
       return true;
     });
-  }, [activeMediaList, activeSource, driveFilter, filterMode, extFilter]);
+
+    // Group by date for device media
+    if (activeSource === 'device' && deviceViewMode === 'all') {
+      return groupMediaByDate(filtered);
+    }
+    return filtered;
+  }, [activeMediaList, activeSource, driveFilter, filterMode, extFilter, deviceViewMode]);
 
   const renderMediaItem = useCallback(({ item }) => {
+    // Date Section Header
+    if (item.isSectionHeader) {
+      return (
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionHeaderText}>{item.label}</Text>
+          <Text style={styles.sectionHeaderCount}>{item.count} items</Text>
+        </View>
+      );
+    }
+
     const thumbUri = item.isDevice
       ? item.uri
       : `${serverUrl}/api/thumbnail?path=${encodeURIComponent(item.path)}&token=${token}`;
@@ -453,7 +564,7 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
               <Text style={styles.playArrow}>▶</Text>
             </View>
             <View style={styles.videoBadge}>
-              <Text style={styles.videoBadgeText}>VIDEO</Text>
+              <Text style={styles.videoBadgeText}>{item.duration ? formatDuration(item.duration) : 'VIDEO'}</Text>
             </View>
           </View>
         ) : (
@@ -540,7 +651,9 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
         <View style={styles.topbarInner}>
           <Text style={styles.topbarTitle}>Media Gallery</Text>
           <Text style={styles.itemCount}>
-            {loading ? 'Scanning media…' : `${filteredMedia.length.toLocaleString()} items`}
+            {loading ? 'Scanning media…' : activeSource === 'device' && deviceTotalCount > 0
+              ? `${deviceTotalCount.toLocaleString()} items on device`
+              : `${filteredMedia.length.toLocaleString()} items`}
           </Text>
         </View>
 
@@ -569,6 +682,24 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
             </Text>
           </TouchableOpacity>
         </View>
+
+        {/* Device View Mode Toggle (All Photos / Albums) */}
+        {activeSource === 'device' && (
+          <View style={styles.deviceViewToggleRow}>
+            <TouchableOpacity
+              style={[styles.deviceViewPill, deviceViewMode === 'all' && styles.deviceViewPillActive]}
+              onPress={() => { setDeviceViewMode('all'); setSelectedAlbum(null); }}
+            >
+              <Text style={[styles.deviceViewPillText, deviceViewMode === 'all' && styles.deviceViewPillTextActive]}>📷 All Photos</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.deviceViewPill, deviceViewMode === 'albums' && styles.deviceViewPillActive]}
+              onPress={() => { setDeviceViewMode('albums'); loadAlbums(); }}
+            >
+              <Text style={[styles.deviceViewPillText, deviceViewMode === 'albums' && styles.deviceViewPillTextActive]}>📁 Albums</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* TRIPLE DROPDOWN SELECT PICKERS */}
         <View style={styles.dropdownRow}>
@@ -636,6 +767,40 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
         </View>
       )}
 
+      {/* ALBUM GRID VIEW */}
+      {activeSource === 'device' && deviceViewMode === 'albums' && !selectedAlbum && (
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 12 }}>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+            {albums.map(album => (
+              <TouchableOpacity
+                key={album.id}
+                style={styles.albumCard}
+                activeOpacity={0.8}
+                onPress={() => {
+                  setSelectedAlbum(album);
+                  setDeviceViewMode('all');
+                  setDeviceEndCursor(null);
+                  setDeviceHasNextPage(true);
+                  setDeviceMediaItems([]);
+                  setLoading(true);
+                  // Will trigger loadDeviceMedia via useEffect
+                }}
+              >
+                {album.coverUri ? (
+                  <Image source={{ uri: album.coverUri }} style={styles.albumCover} contentFit="cover" />
+                ) : (
+                  <View style={[styles.albumCover, { backgroundColor: colors.inputBg, justifyContent: 'center', alignItems: 'center' }]}>
+                    <Text style={{ fontSize: 28 }}>📁</Text>
+                  </View>
+                )}
+                <Text style={styles.albumName} numberOfLines={1}>{album.title || 'Unknown'}</Text>
+                <Text style={styles.albumCount}>{album.assetCount} items</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </ScrollView>
+      )}
+
       {/* ── MEDIA GRID ───────────────────────────────────────────── */}
       {loading && !refreshing ? (
         <View style={styles.loadingContainer}>
@@ -662,11 +827,12 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
       ) : (
         <FlashList
           data={filteredMedia}
-          extraData={{ isSelectionMode, selectedItems }}
-          keyExtractor={(item, index) => item.id || item.path || item.uri || index.toString()}
+          extraData={{ isSelectionMode, selectedItems, deviceViewMode }}
+          keyExtractor={(item, index) => item.isSectionHeader ? `header-${item.dateKey}` : (item.id || item.path || item.uri || index.toString())}
           numColumns={3}
           estimatedItemSize={COLUMN_WIDTH + GAP}
           renderItem={renderMediaItem}
+          getItemType={(item) => item.isSectionHeader ? 'sectionHeader' : 'row'}
           contentContainerStyle={styles.gridContainer}
           onEndReached={activeSource === 'nas' ? loadMoreMedia : () => loadDeviceMedia(true)}
           onEndReachedThreshold={0.5}
@@ -674,6 +840,23 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
           }
         />
+      )}
+
+      {/* FLOATING SYNC TO NAS BUTTON */}
+      {activeSource === 'device' && !isSelectionMode && !isBatchUploading && filteredMedia.length > 0 && deviceViewMode === 'all' && (
+        <TouchableOpacity
+          style={[styles.syncFab, { backgroundColor: colors.accent }]}
+          activeOpacity={0.85}
+          onPress={() => {
+            const mediaOnly = filteredMedia.filter(i => !i.isSectionHeader);
+            const allKeys = mediaOnly.map(i => i.path || i.uri);
+            setSelectedItems(new Set(allKeys));
+            setIsSelectionMode(true);
+            setUploadModalVisible(true);
+          }}
+        >
+          <Text style={styles.syncFabText}>🔄 Sync to NAS</Text>
+        </TouchableOpacity>
       )}
 
       {/* CATEGORY PICKER MODAL */}
@@ -1425,5 +1608,102 @@ const getStyles = (colors) => StyleSheet.create({
   progressBarFill: {
     height: '100%',
     borderRadius: 4,
+  },
+
+  // SECTION HEADERS
+  sectionHeader: {
+    width: width,
+    paddingHorizontal: 14,
+    paddingTop: 16,
+    paddingBottom: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  sectionHeaderText: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.textPrimary,
+  },
+  sectionHeaderCount: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.textMuted,
+  },
+
+  // DEVICE VIEW TOGGLE
+  deviceViewToggleRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+  },
+  deviceViewPill: {
+    paddingVertical: 5,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+  },
+  deviceViewPillActive: {
+    backgroundColor: colors.accentBg,
+    borderColor: colors.accent,
+  },
+  deviceViewPillText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
+  deviceViewPillTextActive: {
+    color: colors.accent,
+    fontWeight: '700',
+  },
+
+  // ALBUM CARDS
+  albumCard: {
+    width: (width - 34) / 2,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: colors.surface,
+    marginBottom: 4,
+  },
+  albumCover: {
+    width: '100%',
+    height: (width - 34) / 2,
+    borderRadius: 12,
+  },
+  albumName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    marginTop: 6,
+    paddingHorizontal: 6,
+  },
+  albumCount: {
+    fontSize: 11,
+    color: colors.textMuted,
+    paddingHorizontal: 6,
+    paddingBottom: 8,
+  },
+
+  // SYNC FAB
+  syncFab: {
+    position: 'absolute',
+    bottom: 24,
+    right: 20,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 28,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    zIndex: 100,
+  },
+  syncFabText: {
+    color: '#0F172A',
+    fontSize: 14,
+    fontWeight: '800',
   },
 });

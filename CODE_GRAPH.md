@@ -1,4 +1,4 @@
-# Personal NAS - Architectural Code Graph & Technical Specification
+# Personal NAS — Architectural Code Graph & Technical Specification
 
 > **Target Audience**: AI Models, Autonomous Coding Agents, and Technical Architects.  
 > **Purpose**: Provides a comprehensive, structured code graph, dependency matrix, component hierarchy, data flow diagrams, and API specifications for understanding, extending, and implementing the **Personal NAS** project.
@@ -10,7 +10,7 @@
 ```mermaid
 graph TD
     subgraph Mobile Client [Expo React Native App]
-        AppJS[App.js - App Root & Navigation]
+        AppJS[App.js - App Root, TopBar Header & Navigation]
         ThemeCtx[ThemeContext.js]
         
         subgraph Mobile Screens
@@ -31,17 +31,18 @@ graph TD
             GaugeComp[CircularGauge.js]
         end
 
-        subgraph Mobile Services
+        subgraph Mobile Services & Plugins
             SyncService[syncService.js - AutoSync & Uploads]
             ApiFetch[apiFetch.js - HTTP Client]
             SecureStore[secureStoreService.js]
             CacheService[cacheService.js]
             OfflineQueue[offlineQueueService.js]
             BioService[biometricService.js]
+            CleartextPlugin[plugins/withCleartextTraffic.js]
         end
     end
 
-    subgraph Web Desktop Client [Vanilla JS & Glassmorphic UI]
+    subgraph Web Desktop Client [Vanilla JS & Liquid Glass UI]
         WebIndex[index.html]
         WebStyle[style.css]
         WebAppJS[app.js]
@@ -60,12 +61,12 @@ graph TD
             EmailService[emailService.js - SMTP Notifications]
             StreamService[streamService.js - Media Range Streaming]
             ThumbService[thumbnailService.js - Sharp Thumbnails]
-            TrashService[trashService.js - Recyle Bin Manager]
-            UsersService[usersService.js - User Migrations]
+            TrashService[trashService.js - Recycle Bin Manager]
+            UsersService[usersService.js - User Management]
         end
 
         Database[(SQLite: nas_data.db)]
-        FileSystem[[Host Storage / Disks C:, D:, etc.]]
+        FileSystem[[Host Storage / Disks C:, D:, G:, etc.]]
         Cloudflare[[Cloudflare Tunnel Binary / Network]]
     end
 
@@ -101,18 +102,17 @@ graph TD
 
 | Module | Responsibility | Primary Exports / Functions | Key Dependencies |
 | :--- | :--- | :--- | :--- |
-| [`index.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/index.js) | Main Express HTTP server, REST routes, auth middlewares, CORS, rate limiting, static web serving. | Express App Listener, Route Handlers | `express`, `cors`, `helmet`, `express-rate-limit`, `jsonwebtoken` |
-| [`dbService.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/dbService.js) | SQLite database interface for users, activity logs, sync manifests. | `getUserByEmail`, `createUser`, `logActivity`, `isSynced`, `recordSync`, `getSyncManifest` | `better-sqlite3`, `bcryptjs` |
+| [`index.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/index.js) | Main Express HTTP server, REST routes, auth middlewares, per-user disk permission filtering (`isPathAllowed`), rate limiting, static web serving. | Express App Listener, Route Handlers | `express`, `cors`, `helmet`, `express-rate-limit`, `jsonwebtoken` |
+| [`dbService.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/dbService.js) | SQLite database interface for users, activity logs, sync manifests, user roles (`admin`/`user`), and disk access JSON array. | `getUserByEmail`, `createUser`, `updateUserPermissions`, `logActivity`, `isSynced`, `recordSync` | `better-sqlite3`, `bcryptjs` |
 | [`fileService.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/fileService.js) | File Explorer operations, media gallery scanner, chunked upload processing, zip downloads. | `getDirectoryContents`, `getMediaGallery`, `handleChunkUpload`, `createZipArchive` | `fs`, `path`, `archiver`, `multer` |
 | [`driveService.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/driveService.js) | Windows WMI / PowerShell disk space detection and drive letter caching (5s TTL). | `getStorageDrives`, `getDriveSpace` | `child_process` (PowerShell `Get-Volume`) |
 | [`driveConfigService.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/driveConfigService.js) | Custom backup path validation, writability checks, target storage path resolution. | `getBackupDriveConfig`, `validateBackupTarget`, `setBackupDriveConfig` | `fs`, `path` |
-| [`tunnelService.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/tunnelService.js) | Cloudflare Quick Tunnels (`*.trycloudflare.com`) and Named Tunnel process manager. | `startQuickTunnel`, `getTunnelStatus`, `stopTunnel` | `child_process` (`cloudflared`) |
+| [`tunnelService.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/tunnelService.js) | Cloudflare Quick Tunnels (`*.trycloudflare.com`) and Named Tunnel process manager. | `startQuickTunnel`, `getTunnelStatus`, `stopTunnel`, `configureNamedTunnel` | `child_process` (`cloudflared`) |
 | [`emailService.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/emailService.js) | SMTP client for sending verification codes and system notifications. | `sendVerificationEmail`, `sendAlertEmail` | `nodemailer` |
 | [`streamService.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/streamService.js) | HTTP 206 Partial Content video and audio range streaming. | `streamMediaFile` | `fs` |
 | [`thumbnailService.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/thumbnailService.js) | Image thumbnail generation and persistent disk caching. | `generateThumbnail` | `sharp` |
 | [`trashService.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/trashService.js) | Soft delete / restore system with `.nas_trash` folder management. | `moveToTrash`, `restoreFromTrash`, `emptyTrash` | `fs`, `path` |
-| [`usersService.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/usersService.js) | Migration from legacy `users.json` file to SQLite database. | `migrateLegacyUsers` | `dbService` |
-| [`main.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/main.js) | Electron Desktop container wrapper for Windows background system tray operation. | Electron `app`, `BrowserWindow` | `electron` |
+| [`usersService.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/usersService.js) | User account management, creation, permissions updates, password resets, and account unlocking. | `createUser`, `updateUserPermissions`, `resetUserPassword`, `unlockUserAccount` | `dbService` |
 
 ---
 
@@ -123,31 +123,43 @@ REST API Routes (index.js)
 ├── /api/auth
 │   ├── POST /login               -> Verify 6-digit passcode or username/password -> JWT Token
 │   ├── POST /register            -> Register new user account with bcrypt hashing
+│   ├── GET  /verify              -> Validate JWT token and return logged-in user profile & username
 │   └── POST /verify-email        -> Verify email token
 ├── /api/drives
-│   └── GET  /                    -> List mounted storage drives & disk space stats
+│   ├── GET  /                    -> List allowed storage drives (filtered by req.user.allowedDisks)
+│   ├── GET  /available          -> List all host drives (admin only)
+│   ├── POST /add                 -> Add storage path (admin only)
+│   └── DELETE /remove            -> Remove storage path (admin only)
 ├── /api/files
-│   ├── GET  /list                -> List files and subfolders in directory path
+│   ├── GET  /list                -> List files in directory path (filtered by user disk access)
 │   ├── GET  /download            -> Stream single file or batch ZIP archive
-│   ├── POST /delete              -> Soft-delete to trash or permanent delete
-│   ├── POST /mkdir               -> Create new subfolder
-│   └── POST /rename              -> Move/rename file or folder
+│   ├── POST /delete              -> Soft-delete to trash or permanent delete (checks read-write permission)
+│   ├── POST /mkdir               -> Create new subfolder (checks read-write permission)
+│   └── POST /rename              -> Move/rename file or folder (checks read-write permission)
 ├── /api/upload
-│   ├── POST /                    -> Standard multipart file upload
+│   ├── POST /                    -> Standard multipart file upload to target path
 │   └── POST /chunk               -> 5MB chunked streaming upload for large files/videos
 ├── /api/sync
 │   ├── POST /validate-target     -> Check target drive/folder writability & free space
 │   ├── GET  /manifest            -> Retrieve device sync history manifest
 │   └── POST /record              -> Record synced file hash in SQLite manifest
 ├── /api/gallery
-│   └── GET  /                    -> Paginated media items across drives with format filtering
+│   └── GET  /                    -> Paginated media items across drives (filtered by user disk access)
 ├── /api/stream
 │   └── GET  /video               -> HTTP Range 206 video/audio streaming endpoint
+├── /api/admin/users
+│   ├── GET  /                    -> List registered user accounts (admin only)
+│   ├── POST /                    -> Create user account (admin only)
+│   ├── PUT  /:id/permissions     -> Update user role, read-only status, allowedDisks (admin only)
+│   ├── POST /:id/reset-password  -> Reset user password (admin only)
+│   └── POST /:id/unlock          -> Unlock locked user account (admin only)
 ├── /api/tunnel
 │   ├── GET  /status              -> Active Cloudflare tunnel URL and status
-│   └── POST /toggle              -> Start/Stop Cloudflare tunnel process
+│   ├── POST /start               -> Start Cloudflare tunnel process
+│   ├── POST /stop                -> Stop Cloudflare tunnel process
+│   └── POST /configure-named     -> Configure named custom domain tunnel
 └── /api/system
-    └── GET  /info                -> Hostname, IP addresses, system uptime, active passcode
+    └── GET  /                    -> Hostname, IP addresses, system uptime, security status
 ```
 
 ---
@@ -157,6 +169,7 @@ REST API Routes (index.js)
 ```mermaid
 graph TD
     App[App.js] --> ThemeContext[contexts/ThemeContext.js]
+    App --> TopBar[TopBar Header: Logo + User Badge]
     
     %% Navigation Screens
     App --> ConnectionScreen[components/ConnectionScreen.js]
@@ -177,12 +190,13 @@ graph TD
     StorageScreen --> CircularGauge[components/CircularGauge.js]
     ControlPanelScreen --> TunnelPanel[components/TunnelPanel.js]
 
-    %% Mobile Service Layer
+    %% Mobile Service Layer & Plugins
     AutoSyncModal --> SyncService[services/syncService.js]
     LibraryScreen --> SyncService
     ConnectionScreen --> ApiFetch[services/apiFetch.js]
     ConnectionScreen --> SecureStore[services/secureStoreService.js]
     ConnectionScreen --> BioService[services/biometricService.js]
+    App --> CleartextPlugin[plugins/withCleartextTraffic.js]
     
     SyncService --> CacheService[services/cacheService.js]
     SyncService --> OfflineQueue[services/offlineQueueService.js]
@@ -194,17 +208,17 @@ graph TD
 
 | File | Purpose | Key Exports & Hooks |
 | :--- | :--- | :--- |
-| [`App.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/mobile/App.js) | Root application component. Registers background fetch task `BACKGROUND_AUTOSYNC_TASK`, manages global authentication state, and mounts navigation tab bar. | `App` |
+| [`App.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/mobile/App.js) | Root application component. Renders TopBar header (Logo + live user badge), manages global auth state & JWT token verification, registers background fetch task, and mounts navigation tab bar. | `App`, `AppContent` |
 | [`contexts/ThemeContext.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/mobile/contexts/ThemeContext.js) | Provides dark/light theme tokens across all components with persistent storage. | `ThemeProvider`, `useTheme` |
-| [`components/ConnectionScreen.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/mobile/components/ConnectionScreen.js) | Server connection screen. Supports QR Code scanning, passcode login, user account login/register, and automatic Wi-Fi subnet scanning. | `ConnectionScreen` |
-| [`components/HomeScreen.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/mobile/components/HomeScreen.js) | Dashboard tab. Shows quick action cards, server storage usage gauge, auto-sync status card, and quick upload buttons. | `HomeScreen` |
-| [`components/LibraryScreen.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/mobile/components/LibraryScreen.js) | Gallery tab. Dual-mode viewer (`NAS Server` & `📱 Phone Gallery`), paginated `FlashList`, media extension filters, multiselect action bar, and direct targeted NAS upload modal. | `LibraryScreen` |
-| [`components/StorageScreen.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/mobile/components/StorageScreen.js) | Drive management tab. Displays circular gauges for each mounted drive and lets users configure default target backup drives. | `StorageScreen` |
-| [`components/ControlPanelScreen.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/mobile/components/ControlPanelScreen.js) | System settings tab. Manages Cloudflare Tunnels, system passcode, registered user accounts, and real-time server logs. | `ControlPanelScreen` |
-| [`components/BrowserScreen.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/mobile/components/BrowserScreen.js) | Interactive File Explorer tab for navigating NAS disk directories, opening files, and creating folders. | `BrowserScreen` |
-| [`components/FileExplorerModal.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/mobile/components/FileExplorerModal.js) | Reusable directory picker modal. Supports `mode="browse"` and `mode="selectFolder"` with path navigation and `+ Folder` creation. | `FileExplorerModal` |
-| [`components/AutoSyncModal.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/mobile/components/AutoSyncModal.js) | Auto-Sync settings dialog. Lets users pick target NAS drive and folder, set sync frequency, and enable background sync. | `AutoSyncModal` |
-| [`services/syncService.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/mobile/services/syncService.js) | Core Auto-Sync Engine. Handles local media scanning, SHA-256 deduplication, target validation, standard upload, and 5MB chunked upload. | `runFullAutoSync`, `uploadFile`, `uploadFileChunked`, `getSyncConfig`, `setSyncConfig` |
+| [`plugins/withCleartextTraffic.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/mobile/plugins/withCleartextTraffic.js) | Expo Config Plugin injecting `android:usesCleartextTraffic="true"` into `AndroidManifest.xml`. | `withCleartextTraffic` |
+| [`components/ConnectionScreen.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/mobile/components/ConnectionScreen.js) | Server connection screen. Supports QR Code scanning with user token parsing, passcode login, user account login/register, cleartext HTTP exception handling, and HTTPS tunnel failover. | `ConnectionScreen` |
+| [`components/HomeScreen.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/mobile/components/HomeScreen.js) | Dashboard tab. Shows multi-disk search bar, quick action cards, server storage usage gauge, and recent file list. | `HomeScreen` |
+| [`components/LibraryScreen.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/mobile/components/LibraryScreen.js) | Gallery tab. Dual-mode viewer (`NAS Server` & `📱 Phone Gallery`), date-grouped phone media grid, album view, paginated `FlashList`, media extension filters, multiselect action bar, and targeted NAS upload modal. | `LibraryScreen` |
+| [`components/StorageScreen.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/mobile/components/StorageScreen.js) | Drive management tab. Displays circular gauges for mounted drives filtered by user access. | `StorageScreen` |
+| [`components/ControlPanelScreen.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/mobile/components/ControlPanelScreen.js) | System settings tab. Manages Cloudflare Tunnels, system passcode status, registered user accounts, and real-time system metrics. | `ControlPanelScreen` |
+| [`components/BackupPanel.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/mobile/components/BackupPanel.js) | Camera roll backup panel. Resolves target drive letters (`drive.letter`), formats destination path (`<Drive>\NAS_Backup\<DeviceName>\`), paginates phone assets, and uploads media with live progress bars. | `BackupPanel` |
+| [`components/AutoSyncModal.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/mobile/components/AutoSyncModal.js) | Auto-Sync settings dialog. Configures target drive, default folder (`NAS_Backup\<DeviceName>`), sync constraints (Wi-Fi, charging), and background sync frequency. | `AutoSyncModal` |
+| [`services/syncService.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/mobile/services/syncService.js) | Core Auto-Sync Engine. Handles local media scanning, SHA-256 deduplication, target validation, standard upload, and 5MB chunked upload. | `runFullSync`, `uploadFile`, `uploadFileChunked`, `formatDestinationFolder` |
 
 ---
 
@@ -212,104 +226,75 @@ graph TD
 
 ```
 server/public/
-├── index.html     -> Main HTML5 single-page application structure. Contains navigation sidebar, storage gauges, drive cards, file explorer table, gallery modal, and system logs console.
-├── style.css      -> Apple Frosted Glassmorphism design system. 3-layer animated mesh background, light/dark mode variables, glass card components, custom scrollbars, and responsive layouts.
-└── app.js         -> Single-page JavaScript application logic. Handles authentication session tokens, WebSocket/REST metric polling, interactive file explorer CRUD operations, chunked file uploads, media viewer, and tunnel toggles.
+├── index.html     -> Main HTML5 single-page application structure. Contains navigation sidebar, floating topbar header, storage gauges, drive cards, file explorer table, gallery modal, admin panel, and system console.
+├── style.css      -> Apple Liquid Glassmorphism design system. Multi-layer radial mesh background, light/dark mode variables, floating dock, glass cards, custom scrollbars, and responsive layouts.
+└── app.js         -> Single-page JavaScript application logic. Handles authentication session tokens, WebSocket/REST metric polling, interactive file explorer CRUD operations, user-specific mobile pairing QR code generation ({ url, token }), chunked file uploads, media viewer, user permissions management, and tunnel toggles.
 ```
 
 ---
 
 ## 5. End-to-End Key Data Flows
 
-### 5.1 Flow A: Mobile Pairing & Authentication
+### 5.1 Flow A: User-Specific Mobile Pairing & Seamless Auto-Login
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor User
-    participant App as Mobile App (ConnectionScreen)
+    actor User as User (e.g. kaihkasha.firdous)
+    participant Web as Web Dashboard (app.js)
+    participant App as Mobile App (ConnectionScreen -> App.js)
     participant Server as Node.js Server (index.js)
     participant DB as SQLite (nas_data.db)
 
-    User->>App: Scan Web App QR Code or Enter Passcode
-    App->>Server: POST /api/auth/login { passcode: "881612" }
-    Server->>Server: Verify passcode against active system passcode
-    alt Valid Passcode
-        Server-->>App: { success: true, token: "JWT_TOKEN", user: {...} }
-        App->>App: Store token in expo-secure-store
-        App->>User: Navigate to HomeScreen Dashboard
-    else Invalid Passcode
-        Server-->>App: HTTP 401 Unauthorized
-        App->>User: Display Connection Error Alert
-    end
+    User->>Web: Log in as kaihkasha.firdous & open Remote Access
+    Web->>Web: Generate QR payload: JSON.stringify({ url: "https://mynas-hi.online", token: userJwtToken })
+    User->>App: Scan Mobile Pairing QR Code in Android App
+    App->>App: Parse parsed.url & parsed.token from QR JSON
+    App->>Server: GET /api/auth/verify (Header: Authorization Bearer userJwtToken)
+    Server->>DB: Verify JWT token & fetch user record (allowedDisks: ["C:", "G:"], role: "user")
+    Server-->>App: HTTP 200 OK { valid: true, username: "kaihkasha.firdous", user: {...} }
+    App->>App: Store token in expo-secure-store & set username to "kaihkasha.firdous"
+    App->>Server: GET /api/drives (Header: Authorization Bearer userJwtToken)
+    Server-->>App: Returns drives filtered strictly by ["C:", "G:"]
+    App->>User: Display TopBar with 👤 kaihkasha.firdous & show allowed content
 ```
 
 ---
 
-### 5.2 Flow B: Direct Mobile Gallery Targeted NAS Batch Upload
+### 5.2 Flow B: Direct Mobile Camera Roll Backup Sync
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor User
-    participant Lib as LibraryScreen.js
+    participant Panel as BackupPanel.js
     participant Media as expo-media-library
     participant Sync as syncService.js
     participant Server as fileService.js (Node.js)
 
-    User->>Lib: Switch to "📱 Phone Gallery" Tab
-    Lib->>Media: MediaLibrary.getAssetsAsync({ first: 100, mediaType: [...] })
-    Media-->>Lib: Returns asset URIs & metadata
-    User->>Lib: Select items (or tap "Select All") & tap "📤 Upload to NAS"
-    Lib->>User: Display Target Disk & Folder Selection Modal
-    User->>Lib: Choose Target Drive "D:" & Folder "D:\MobileUploads" -> Tap "Start Upload"
-    Lib->>Lib: Open Progress Modal (Percent & Counter)
+    User->>Panel: Open Backup Sync Center & Select Target Drive "C:"
+    Panel->>Panel: Compute destination path: "C:\NAS_Backup\<DeviceName>"
+    Panel->>Media: Paginate MediaLibrary.getAssetsAsync({ first: 100, mediaType: [...] })
+    Media-->>Panel: Returns local phone assets
+    Panel->>Panel: Filter out already backed-up asset IDs
+    User->>Panel: Tap "Start Backup Sync Now"
 
-    loop For Each Selected Media Item
-        Lib->>Sync: uploadFile(uri, targetFolder, serverUrl, token, onProgress)
-        Sync->>Sync: Check file size (> 10MB triggers chunked upload)
+    loop For Each Pending Asset
+        Panel->>Media: MediaLibrary.getAssetInfoAsync(asset.id)
+        Media-->>Panel: Local file URI
+        Panel->>Sync: uploadFile(uri, "C:\NAS_Backup\<DeviceName>", serverUrl, token, onProgress)
         alt File Size <= 10MB
-            Sync->>Server: POST /api/upload (Multipart FormData)
+            Sync->>Server: POST /api/upload?destination=C:\NAS_Backup\<DeviceName>
         else File Size > 10MB
             loop 5MB Chunks
-                Sync->>Server: POST /api/upload/chunk (chunkIndex, totalChunks, uploadId)
+                Sync->>Server: POST /api/upload/chunk
             end
         end
-        Server-->>Sync: HTTP 200 OK { success: true, filePath: "..." }
-        Sync-->>Lib: Update progress counter & percentage bar
+        Server-->>Sync: HTTP 200 OK { success: true }
+        Sync-->>Panel: Update progress bar & counter
     end
 
-    Lib->>User: Display "Batch Upload Complete!" Alert
-```
-
----
-
-### 5.3 Flow C: Background Auto-Sync & Deduplication Engine
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Task as Expo TaskManager (BACKGROUND_AUTOSYNC_TASK)
-    participant Sync as syncService.js
-    participant Server as Server REST API
-
-    Task->>Sync: Trigger runFullAutoSync()
-    Sync->>Server: POST /api/sync/validate-target { targetFolder: "D:\Backups\Phone" }
-    Server-->>Sync: { valid: true, writable: true, freeSpaceBytes: 50000000000 }
-    
-    Sync->>Sync: Query local phone media assets
-    Sync->>Server: GET /api/sync/manifest?deviceId=X
-    Server-->>Sync: Returns array of previously synced file hashes
-
-    loop For Each New Media Asset
-        Sync->>Sync: Calculate SHA-256 hash of file header
-        alt Hash exists in Server Manifest
-            Sync->>Sync: Skip upload (Deduplicated)
-        else Hash is new
-            Sync->>Server: Upload file via POST /api/upload
-            Sync->>Server: POST /api/sync/record { deviceId, fileHash, fileName, size }
-        end
-    end
+    Panel->>User: Alert "Backup Finished: Successfully backed up N files to C:\NAS_Backup\<DeviceName>"
 ```
 
 ---
@@ -324,6 +309,8 @@ erDiagram
         TEXT username
         TEXT password_hash
         TEXT role
+        INTEGER is_readonly
+        TEXT allowed_disks
         INTEGER is_verified
         TEXT verification_token
         TEXT created_at
@@ -358,7 +345,7 @@ erDiagram
 ### 7.1 Prerequisites
 - **Node.js**: v18.0.0 or higher
 - **Expo CLI**: v52.0.0+ / EAS CLI v21.0.0+
-- **Host OS**: Windows 10 / 11 (for native PowerShell drive detection and WMI features)
+- **Host OS**: Windows 10 / 11 (for native PowerShell disk space detection and NSSM service features)
 
 ### 7.2 Running the Stack Locally
 ```bash
@@ -373,7 +360,11 @@ cd mobile
 npm install
 npx expo start
 
-# 3. Build Production Android APK via EAS
+# 3. Build Production Android Standalone APK via EAS
 cd mobile
 npx eas-cli build --platform android --profile preview
+
+# 4. Publish Production OTA Update via EAS
+cd mobile
+npx eas-cli update --branch main --environment production
 ```

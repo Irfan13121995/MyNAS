@@ -41,6 +41,21 @@ db.exec(`
   );
 `);
 
+// Add permissions & status columns to users table if not exist
+const columns = db.pragma('table_info(users)').map(c => c.name);
+if (!columns.includes('role')) {
+  db.exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'");
+}
+if (!columns.includes('is_readonly')) {
+  db.exec("ALTER TABLE users ADD COLUMN is_readonly INTEGER DEFAULT 0");
+}
+if (!columns.includes('allowed_disks')) {
+  db.exec("ALTER TABLE users ADD COLUMN allowed_disks TEXT DEFAULT NULL");
+}
+if (!columns.includes('status')) {
+  db.exec("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'");
+}
+
 // Auto-migrate legacy users.json if exists
 const legacyFile = path.join(__dirname, 'users.json');
 if (fs.existsSync(legacyFile)) {
@@ -77,12 +92,24 @@ if (fs.existsSync(legacyFile)) {
  */
 function mapUserRow(row) {
   if (!row) return null;
+  let parsedDisks = null;
+  if (row.allowed_disks) {
+    try {
+      parsedDisks = typeof row.allowed_disks === 'string' ? JSON.parse(row.allowed_disks) : row.allowed_disks;
+    } catch (e) {
+      parsedDisks = null;
+    }
+  }
   return {
     id: row.id,
     username: row.username,
     email: row.email,
     passwordHash: row.password_hash,
     emailVerified: Boolean(row.email_verified),
+    role: row.role || 'user',
+    isReadonly: Boolean(row.is_readonly),
+    allowedDisks: Array.isArray(parsedDisks) ? parsedDisks : null,
+    status: row.status || 'active',
     failedAttempts: row.failed_attempts,
     lockUntil: row.lock_until,
     createdAt: row.created_at
@@ -109,6 +136,16 @@ function getUserByUsername(username) {
 }
 
 /**
+ * Retrieves a user record by ID.
+ * @param {string} id
+ * @returns {object|null}
+ */
+function getUserById(id) {
+  const row = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  return mapUserRow(row);
+}
+
+/**
  * Retrieves a user record by case-insensitive email.
  * @param {string} email
  * @returns {object|null}
@@ -119,21 +156,25 @@ function getUserByEmail(email) {
   return mapUserRow(row);
 }
 
-async function createUser({ username, email, password }) {
+async function createUser({ username, email, password, role }) {
   if (getUserByUsername(username) || getUserByEmail(email)) {
     const err = new Error('Username or email is already taken');
     err.code = 'USER_EXISTS';
     throw err;
   }
 
+  // First user is automatically admin unless specified otherwise
+  const isFirst = !hasAnyUsers();
+  const assignedRole = role || (isFirst ? 'admin' : 'user');
+
   const id = Math.random().toString(36).substring(2) + Date.now().toString(36);
   const passwordHash = await bcrypt.hash(password, 10);
   const createdAt = new Date().toISOString();
 
   db.prepare(`
-    INSERT INTO users (id, username, email, password_hash, email_verified, failed_attempts, lock_until, created_at)
-    VALUES (?, ?, ?, ?, ?, 0, 0, ?)
-  `).run(id, username, email || null, passwordHash, email ? 0 : 1, createdAt);
+    INSERT INTO users (id, username, email, password_hash, email_verified, role, is_readonly, allowed_disks, status, failed_attempts, lock_until, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, 0, NULL, 'active', 0, 0, ?)
+  `).run(id, username, email || null, passwordHash, email ? 0 : 1, assignedRole, createdAt);
 
   const user = getUserByUsername(username);
 
@@ -151,6 +192,14 @@ async function createUser({ username, email, password }) {
 async function verifyPassword(username, password) {
   const user = getUserByUsername(username);
   if (!user) return { success: false, reason: 'user_not_found' };
+
+  if (user.status === 'disabled') {
+    return {
+      success: false,
+      reason: 'account_disabled',
+      message: 'Your account has been disabled by the system administrator.'
+    };
+  }
 
   const now = Date.now();
   if (user.lockUntil && user.lockUntil > now) {
@@ -212,15 +261,53 @@ function verifyEmail(token) {
 }
 
 function getAllUsers() {
-  const rows = db.prepare('SELECT id, username, email, email_verified, failed_attempts, created_at FROM users ORDER BY created_at DESC').all();
-  return rows.map(r => ({
-    id: r.id,
-    username: r.username,
-    email: r.email,
-    emailVerified: Boolean(r.email_verified),
-    failedAttempts: r.failed_attempts,
-    createdAt: r.created_at
-  }));
+  const rows = db.prepare('SELECT * FROM users ORDER BY created_at DESC').all();
+  return rows.map(mapUserRow);
+}
+
+function updateUserPermissions(id, { role, isReadonly, allowedDisks, status }) {
+  const user = getUserById(id);
+  if (!user) throw new Error('User not found');
+
+  const newRole = role !== undefined ? role : user.role;
+  const newReadonly = isReadonly !== undefined ? (isReadonly ? 1 : 0) : (user.isReadonly ? 1 : 0);
+  const newStatus = status !== undefined ? status : user.status;
+  
+  let newAllowedDisksJson = user.allowedDisks ? JSON.stringify(user.allowedDisks) : null;
+  if (allowedDisks !== undefined) {
+    newAllowedDisksJson = (Array.isArray(allowedDisks) && allowedDisks.length > 0) ? JSON.stringify(allowedDisks) : null;
+  }
+
+  db.prepare(`
+    UPDATE users
+    SET role = ?, is_readonly = ?, allowed_disks = ?, status = ?
+    WHERE id = ?
+  `).run(newRole, newReadonly, newAllowedDisksJson, newStatus, id);
+
+  return getUserById(id);
+}
+
+async function resetUserPassword(id, newPassword) {
+  const user = getUserById(id);
+  if (!user) throw new Error('User not found');
+  const passwordHash = await bcrypt.hash(newPassword, 10);
+  db.prepare('UPDATE users SET password_hash = ?, failed_attempts = 0, lock_until = 0 WHERE id = ?').run(passwordHash, id);
+  return true;
+}
+
+function unlockUserAccount(id) {
+  const user = getUserById(id);
+  if (!user) throw new Error('User not found');
+  db.prepare('UPDATE users SET failed_attempts = 0, lock_until = 0 WHERE id = ?').run(id);
+  return true;
+}
+
+function deleteUser(id) {
+  const user = getUserById(id);
+  if (!user) throw new Error('User not found');
+  db.prepare('DELETE FROM users WHERE id = ?').run(id);
+  db.prepare('DELETE FROM sync_settings WHERE user_id = ? OR user_id = ?').run(id, user.username);
+  return true;
 }
 
 function getSyncSettings(userId) {
@@ -283,11 +370,16 @@ function saveSyncSettings(userId, settings) {
 module.exports = {
   hasAnyUsers,
   getUserByUsername,
+  getUserById,
   getUserByEmail,
   createUser,
   verifyPassword,
   verifyEmail,
   getAllUsers,
+  updateUserPermissions,
+  resetUserPassword,
+  unlockUserAccount,
+  deleteUser,
   getSyncSettings,
   saveSyncSettings
 };

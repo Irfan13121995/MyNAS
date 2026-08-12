@@ -24,5 +24,20 @@ module.exports = {
   verifyEmail: dbService.verifyEmail,
 
   /** Retrieve list of all registered users */
-  getAllUsers: dbService.getAllUsers
+  getAllUsers: dbService.getAllUsers,
+
+  /** Fetch user by ID */
+  getUserById: dbService.getUserById,
+
+  /** Update user permissions & status */
+  updateUserPermissions: dbService.updateUserPermissions,
+
+  /** Admin password reset */
+  resetUserPassword: dbService.resetUserPassword,
+
+  /** Unlock locked account */
+  unlockUserAccount: dbService.unlockUserAccount,
+
+  /** Delete user account */
+  deleteUser: dbService.deleteUser
 };

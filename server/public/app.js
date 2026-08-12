@@ -43,6 +43,468 @@ function bindThemeSwitches() {
 const savedTheme = localStorage.getItem('nas-theme') || 'dark';
 applyTheme(savedTheme);
 
+// ─── ADMIN PANEL ──────────────────────────────────────────────────────────────
+async function admin(content) {
+  content.innerHTML = `
+    <div class="page">
+      <div class="page-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px;margin-bottom:24px">
+        <div>
+          <h2>🛡️ Admin Control Panel</h2>
+          <p class="subtitle" style="color:var(--text-secondary);margin-top:4px">Manage system users, disk access permissions, read-only modes, and security logs</p>
+        </div>
+        <button class="btn btn-primary" id="admin-add-user-btn">
+          <span>➕ Create New Account</span>
+        </button>
+      </div>
+
+      <div class="admin-tabs" style="display:flex;gap:12px;margin-bottom:20px;border-bottom:1px solid var(--border);padding-bottom:12px">
+        <button class="btn btn-ghost admin-tab active" data-tab="users">👥 User Accounts & Permissions</button>
+        <button class="btn btn-ghost admin-tab" data-tab="storage">💾 Storage Governance</button>
+        <button class="btn btn-ghost admin-tab" data-tab="activity">📋 Security Audit Log</button>
+      </div>
+
+      <div id="admin-tab-users" class="admin-tab-content active">
+        <div class="card" style="padding:0;overflow:hidden">
+          <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+            <h4 style="margin:0">Registered Users</h4>
+            <span id="user-count-badge" class="badge" style="background:var(--accent-dim);color:var(--accent)">Loading...</span>
+          </div>
+          <div style="overflow-x:auto">
+            <table class="table" style="width:100%">
+              <thead>
+                <tr>
+                  <th>User</th>
+                  <th>Role</th>
+                  <th>Mode</th>
+                  <th>Allowed Disks</th>
+                  <th>Status</th>
+                  <th>Created</th>
+                  <th style="text-align:right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="admin-users-tbody">
+                <tr><td colspan="7" style="text-align:center;padding:32px"><div class="spinner"></div></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div id="admin-tab-storage" class="admin-tab-content hidden">
+        <div class="card" style="padding:20px">
+          <h4>💾 Storage Disk Permissions Matrix</h4>
+          <p style="color:var(--text-secondary);font-size:13px;margin-bottom:20px">Overview of active system drives and assigned user access permissions.</p>
+          <div id="admin-storage-matrix"><div class="spinner"></div></div>
+        </div>
+      </div>
+
+      <div id="admin-tab-activity" class="admin-tab-content hidden">
+        <div class="card" style="padding:20px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:12px">
+            <h4 style="margin:0">📋 Security & Activity Log</h4>
+            <input type="text" id="audit-log-search" class="input" placeholder="Search activity logs..." style="max-width:280px"/>
+          </div>
+          <div style="overflow-x:auto">
+            <table class="table" style="width:100%">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Type</th>
+                  <th>Event Details</th>
+                </tr>
+              </thead>
+              <tbody id="admin-activity-tbody">
+                <tr><td colspan="3" style="text-align:center;padding:32px"><div class="spinner"></div></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>`;
+
+  // Tab switcher
+  content.querySelectorAll('.admin-tab').forEach(t => {
+    t.addEventListener('click', () => {
+      content.querySelectorAll('.admin-tab').forEach(el => el.classList.remove('active'));
+      content.querySelectorAll('.admin-tab-content').forEach(el => el.classList.add('hidden'));
+      t.classList.add('active');
+      document.getElementById('admin-tab-' + t.dataset.tab).classList.remove('hidden');
+      if (t.dataset.tab === 'storage') loadStorageMatrix();
+      if (t.dataset.tab === 'activity') loadActivityLogs();
+    });
+  });
+
+  // Create User Button
+  document.getElementById('admin-add-user-btn').addEventListener('click', showCreateUserModal);
+
+  // Load User Accounts
+  await loadAdminUsersList();
+}
+
+async function loadAdminUsersList() {
+  const tbody = document.getElementById('admin-users-tbody');
+  const countBadge = document.getElementById('user-count-badge');
+  if (!tbody) return;
+
+  const r = await GET('/api/admin/users');
+  if (!r || !r.ok) {
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--red);padding:24px">Failed to load users: ${escapeHtml(r?.data?.error || 'Access Denied')}</td></tr>`;
+    return;
+  }
+
+  const users = r.data.users || [];
+  if (countBadge) countBadge.textContent = `${users.length} Users`;
+
+  if (users.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--text-secondary)">No users found in database.</td></tr>`;
+    return;
+  }
+
+  // Fetch drives to map disk letters
+  const drivesRes = await GET('/api/drives/available');
+  const availableDrives = drivesRes?.data || [];
+
+  tbody.innerHTML = users.map(u => {
+    const isPasscodeAdmin = u.username === 'Passcode Admin';
+    const roleBadge = u.role === 'admin'
+      ? `<span class="badge" style="background:rgba(0,188,212,0.15);color:#00bcd4;border:1px solid rgba(0,188,212,0.3)">👑 Admin</span>`
+      : `<span class="badge" style="background:rgba(148,163,184,0.1);color:#94a3b8">User</span>`;
+    
+    const modeBadge = u.isReadonly
+      ? `<span class="badge" style="background:rgba(234,179,8,0.15);color:#eab308;border:1px solid rgba(234,179,8,0.3)">🔒 Read-Only</span>`
+      : `<span class="badge" style="background:rgba(34,197,94,0.15);color:#22c55e;border:1px solid rgba(34,197,94,0.3)">✏️ Read-Write</span>`;
+
+    const statusBadge = u.status === 'disabled'
+      ? `<span class="badge" style="background:rgba(239,68,68,0.15);color:#ef4444;border:1px solid rgba(239,68,68,0.3)">🚫 Disabled</span>`
+      : u.lockUntil && u.lockUntil > Date.now()
+      ? `<span class="badge" style="background:rgba(249,115,22,0.15);color:#f97316">🔒 Locked</span>`
+      : `<span class="badge" style="background:rgba(34,197,94,0.1);color:#22c55e">Active</span>`;
+
+    let diskPills = '<span style="color:var(--text-secondary);font-size:12px">All Disks (Full Access)</span>';
+    if (u.allowedDisks && Array.isArray(u.allowedDisks) && u.allowedDisks.length > 0) {
+      diskPills = u.allowedDisks.map(d => `<span class="badge font-mono" style="background:var(--bg-card-hover);margin-right:4px">${escapeHtml(d)}</span>`).join('');
+    }
+
+    return `
+      <tr>
+        <td>
+          <div style="font-weight:600">${escapeHtml(u.username)}</div>
+          <div style="font-size:12px;color:var(--text-secondary)">${escapeHtml(u.email || 'No email registered')}</div>
+        </td>
+        <td>${roleBadge}</td>
+        <td>${modeBadge}</td>
+        <td>${diskPills}</td>
+        <td>${statusBadge}</td>
+        <td style="font-size:12px;color:var(--text-secondary)">${formatTime(u.createdAt)}</td>
+        <td style="text-align:right">
+          <button class="btn btn-ghost btn-sm edit-user-btn" data-id="${u.id}" title="Edit Permissions & Access">⚙️ Edit</button>
+          <button class="btn btn-ghost btn-sm reset-pwd-btn" data-id="${u.id}" data-username="${escapeHtml(u.username)}" title="Reset Password">🔑 Password</button>
+          ${u.lockUntil && u.lockUntil > Date.now() ? `<button class="btn btn-ghost btn-sm unlock-user-btn" data-id="${u.id}">🔓 Unlock</button>` : ''}
+          ${!isPasscodeAdmin ? `<button class="btn btn-ghost btn-sm delete-user-btn" data-id="${u.id}" data-username="${escapeHtml(u.username)}" style="color:var(--red)" title="Delete User">🗑️</button>` : ''}
+        </td>
+      </tr>`;
+  }).join('');
+
+  // Bind actions
+  tbody.querySelectorAll('.edit-user-btn').forEach(btn => {
+    btn.onclick = () => {
+      const u = users.find(x => x.id === btn.dataset.id);
+      if (u) showEditPermissionsModal(u, availableDrives);
+    };
+  });
+  tbody.querySelectorAll('.reset-pwd-btn').forEach(btn => {
+    btn.onclick = () => showResetPasswordModal(btn.dataset.id, btn.dataset.username);
+  });
+  tbody.querySelectorAll('.unlock-user-btn').forEach(btn => {
+    btn.onclick = async () => {
+      const res = await POST(`/api/admin/users/${btn.dataset.id}/unlock`);
+      if (res?.ok) { toast('Account unlocked successfully', 'success'); loadAdminUsersList(); }
+      else toast(res?.data?.error || 'Failed to unlock', 'error');
+    };
+  });
+  tbody.querySelectorAll('.delete-user-btn').forEach(btn => {
+    btn.onclick = async () => {
+      if (confirm(`Are you sure you want to delete user account "${btn.dataset.username}"?`)) {
+        const res = await DELETE(`/api/admin/users/${btn.dataset.id}`);
+        if (res?.ok) { toast('User deleted successfully', 'success'); loadAdminUsersList(); }
+        else toast(res?.data?.error || 'Failed to delete user', 'error');
+      }
+    };
+  });
+}
+
+function showEditPermissionsModal(user, availableDrives = []) {
+  const diskCheckboxes = availableDrives.length > 0 ? availableDrives.map(d => {
+    const isChecked = user.allowedDisks ? user.allowedDisks.some(ad => ad.toUpperCase().includes(d.letter.toUpperCase())) : false;
+    return `
+      <label style="display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer">
+        <input type="checkbox" class="disk-checkbox" value="${d.letter}" ${isChecked ? 'checked' : ''}/>
+        <span>💾 Drive <strong>${d.letter}</strong> ${d.name ? `(${escapeHtml(d.name)})` : ''} — ${formatBytes(d.freeSpace||0)} free</span>
+      </label>`;
+  }).join('') : '<p style="color:var(--text-secondary);font-size:13px">No drives detected</p>';
+
+  const isAllDisks = !user.allowedDisks || user.allowedDisks.length === 0;
+
+  const modalHtml = `
+    <div class="modal-backdrop" id="modal-backdrop">
+      <div class="modal" style="max-width:480px">
+        <div class="modal-header">
+          <h3>⚙️ User Permissions — ${escapeHtml(user.username)}</h3>
+          <button class="modal-close" id="modal-close-btn">✕</button>
+        </div>
+        <div class="modal-body">
+          <form id="edit-permissions-form">
+            <div style="margin-bottom:16px">
+              <label for="edit-role">User Role</label>
+              <select id="edit-role" class="select">
+                <option value="user" ${user.role === 'user' ? 'selected' : ''}>User (Standard Access)</option>
+                <option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Admin (Full System Control)</option>
+              </select>
+            </div>
+
+            <div style="margin-bottom:16px">
+              <label for="edit-mode">Permission Mode</label>
+              <select id="edit-mode" class="select">
+                <option value="rw" ${!user.isReadonly ? 'selected' : ''}>✏️ Read-Write (Can Upload, Edit, Delete)</option>
+                <option value="ro" ${user.isReadonly ? 'selected' : ''}>🔒 Read-Only (Can View, Stream, Download Only)</option>
+              </select>
+            </div>
+
+            <div style="margin-bottom:16px">
+              <label for="edit-status">Account Status</label>
+              <select id="edit-status" class="select">
+                <option value="active" ${user.status !== 'disabled' ? 'selected' : ''}>Active</option>
+                <option value="disabled" ${user.status === 'disabled' ? 'selected' : ''}>Disabled (Block Login)</option>
+              </select>
+            </div>
+
+            <div style="margin-bottom:16px;border-top:1px solid var(--border);padding-top:14px">
+              <label style="margin-bottom:8px">Allowed Disks (Storage Access Control)</label>
+              <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer">
+                <input type="checkbox" id="all-disks-checkbox" ${isAllDisks ? 'checked' : ''}/>
+                <strong>🌐 Allow Access to ALL Disks</strong>
+              </label>
+              <div id="specific-disks-container" style="padding-left:12px;margin-top:8px;${isAllDisks ? 'display:none' : ''}">
+                ${diskCheckboxes}
+              </div>
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" id="modal-cancel-btn">Cancel</button>
+          <button class="btn btn-primary" id="modal-save-permissions-btn">Save Changes</button>
+        </div>
+      </div>
+    </div>`;
+
+  const root = document.getElementById('modal-root');
+  root.innerHTML = modalHtml;
+
+  const close = () => { root.innerHTML = ''; };
+  document.getElementById('modal-close-btn').onclick = close;
+  document.getElementById('modal-cancel-btn').onclick = close;
+  document.getElementById('modal-backdrop').onclick = (e) => { if (e.target.id === 'modal-backdrop') close(); };
+
+  const allDisksCb = document.getElementById('all-disks-checkbox');
+  const specificContainer = document.getElementById('specific-disks-container');
+  allDisksCb.onchange = () => {
+    specificContainer.style.display = allDisksCb.checked ? 'none' : 'block';
+  };
+
+  document.getElementById('modal-save-permissions-btn').onclick = async () => {
+    const role = document.getElementById('edit-role').value;
+    const isReadonly = document.getElementById('edit-mode').value === 'ro';
+    const status = document.getElementById('edit-status').value;
+    const isAll = allDisksCb.checked;
+
+    let allowedDisks = null;
+    if (!isAll) {
+      const selected = Array.from(root.querySelectorAll('.disk-checkbox:checked')).map(c => c.value);
+      allowedDisks = selected.length > 0 ? selected : null;
+    }
+
+    const res = await api('PUT', `/api/admin/users/${user.id}/permissions`, { role, isReadonly, allowedDisks, status });
+    if (res?.ok) {
+      toast('Permissions updated successfully', 'success');
+      close();
+      loadAdminUsersList();
+    } else {
+      toast(res?.data?.error || 'Failed to update permissions', 'error');
+    }
+  };
+}
+
+function showCreateUserModal() {
+  const modalHtml = `
+    <div class="modal-backdrop" id="modal-backdrop">
+      <div class="modal" style="max-width:420px">
+        <div class="modal-header">
+          <h3>➕ Create New Account</h3>
+          <button class="modal-close" id="modal-close-btn">✕</button>
+        </div>
+        <div class="modal-body">
+          <form id="create-user-form">
+            <div style="margin-bottom:12px">
+              <label for="new-username">Username</label>
+              <input id="new-username" class="input" type="text" placeholder="Min 3 characters" required />
+            </div>
+            <div style="margin-bottom:12px">
+              <label for="new-email">Email Address (optional)</label>
+              <input id="new-email" class="input" type="email" placeholder="user@example.com" />
+            </div>
+            <div style="margin-bottom:12px">
+              <label for="new-password">Password</label>
+              <input id="new-password" class="input" type="password" placeholder="Min 6 characters" required />
+            </div>
+            <div style="margin-bottom:12px">
+              <label for="new-role">Account Role</label>
+              <select id="new-role" class="select">
+                <option value="user">User (Standard Access)</option>
+                <option value="admin">Admin (Full System Control)</option>
+              </select>
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" id="modal-cancel-btn">Cancel</button>
+          <button class="btn btn-primary" id="modal-create-submit-btn">Create User</button>
+        </div>
+      </div>
+    </div>`;
+
+  const root = document.getElementById('modal-root');
+  root.innerHTML = modalHtml;
+  const close = () => { root.innerHTML = ''; };
+  document.getElementById('modal-close-btn').onclick = close;
+  document.getElementById('modal-cancel-btn').onclick = close;
+  document.getElementById('modal-backdrop').onclick = (e) => { if (e.target.id === 'modal-backdrop') close(); };
+
+  document.getElementById('modal-create-submit-btn').onclick = async () => {
+    const username = document.getElementById('new-username').value.trim();
+    const email = document.getElementById('new-email').value.trim();
+    const password = document.getElementById('new-password').value;
+    const role = document.getElementById('new-role').value;
+
+    if (!username || username.length < 3) return toast('Username must be at least 3 characters', 'error');
+    if (!password || password.length < 6) return toast('Password must be at least 6 characters', 'error');
+
+    const res = await POST('/api/admin/users/create', { username, email, password, role });
+    if (res?.ok) {
+      toast(`User account "${username}" created successfully`, 'success');
+      close();
+      loadAdminUsersList();
+    } else {
+      toast(res?.data?.error || 'Failed to create user', 'error');
+    }
+  };
+}
+
+function showResetPasswordModal(userId, username) {
+  const modalHtml = `
+    <div class="modal-backdrop" id="modal-backdrop">
+      <div class="modal" style="max-width:380px">
+        <div class="modal-header">
+          <h3>🔑 Reset Password — ${escapeHtml(username)}</h3>
+          <button class="modal-close" id="modal-close-btn">✕</button>
+        </div>
+        <div class="modal-body">
+          <div style="margin-bottom:14px">
+            <label for="reset-new-password">New Password</label>
+            <input id="reset-new-password" class="input" type="password" placeholder="Min 6 characters" required />
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" id="modal-cancel-btn">Cancel</button>
+          <button class="btn btn-primary" id="modal-reset-submit-btn">Reset Password</button>
+        </div>
+      </div>
+    </div>`;
+
+  const root = document.getElementById('modal-root');
+  root.innerHTML = modalHtml;
+  const close = () => { root.innerHTML = ''; };
+  document.getElementById('modal-close-btn').onclick = close;
+  document.getElementById('modal-cancel-btn').onclick = close;
+  document.getElementById('modal-backdrop').onclick = (e) => { if (e.target.id === 'modal-backdrop') close(); };
+
+  document.getElementById('modal-reset-submit-btn').onclick = async () => {
+    const newPassword = document.getElementById('reset-new-password').value;
+    if (!newPassword || newPassword.length < 6) return toast('Password must be at least 6 characters', 'error');
+
+    const res = await POST(`/api/admin/users/${userId}/reset-password`, { newPassword });
+    if (res?.ok) {
+      toast(`Password for "${username}" reset successfully`, 'success');
+      close();
+    } else {
+      toast(res?.data?.error || 'Failed to reset password', 'error');
+    }
+  };
+}
+
+async function loadStorageMatrix() {
+  const container = document.getElementById('admin-storage-matrix');
+  if (!container) return;
+
+  const [drivesRes, usersRes] = await Promise.all([
+    GET('/api/drives/available'),
+    GET('/api/admin/users')
+  ]);
+
+  const drives = drivesRes?.data || [];
+  const users = usersRes?.data?.users || [];
+
+  if (drives.length === 0) {
+    container.innerHTML = '<p style="color:var(--text-secondary)">No storage drives detected.</p>';
+    return;
+  }
+
+  container.innerHTML = drives.map(d => {
+    const assignedUsers = users.filter(u => !u.allowedDisks || u.allowedDisks.some(ad => ad.toUpperCase().includes(d.letter.toUpperCase())));
+    return `
+      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div>
+            <strong>💾 Drive ${d.letter}</strong> ${d.name ? `(${escapeHtml(d.name)})` : ''}
+            <span class="badge" style="margin-left:8px;background:var(--bg-card-hover)">${formatBytes(d.freeSpace||0)} free / ${formatBytes(d.size||0)}</span>
+          </div>
+          <span class="badge" style="background:var(--accent-dim);color:var(--accent)">${assignedUsers.length} Authorized Users</span>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${assignedUsers.map(u => `<span class="badge" style="background:var(--bg-card-hover)">👤 ${escapeHtml(u.username)} (${u.role})</span>`).join('')}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+async function loadActivityLogs() {
+  const tbody = document.getElementById('admin-activity-tbody');
+  const searchInput = document.getElementById('audit-log-search');
+  if (!tbody) return;
+
+  const r = await GET('/api/admin/activity');
+  const logs = r?.data || [];
+
+  const renderLogs = (filter = '') => {
+    const cleanFilter = filter.toLowerCase().trim();
+    const filtered = logs.filter(l => !cleanFilter || l.type.toLowerCase().includes(cleanFilter) || l.detail.toLowerCase().includes(cleanFilter));
+    
+    if (filtered.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="3" style="text-align:center;padding:32px;color:var(--text-secondary)">No audit activity events recorded.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = filtered.map(l => `
+      <tr>
+        <td style="font-size:12px;color:var(--text-secondary);white-space:nowrap">${formatTime(l.time)}</td>
+        <td><span class="badge" style="background:var(--bg-card-hover)">${activityIcon(l.type)} ${l.type}</span></td>
+        <td>${escapeHtml(l.detail)}</td>
+      </tr>`).join('');
+  };
+
+  renderLogs();
+  if (searchInput) searchInput.oninput = (e) => renderLogs(e.target.value);
+}
+
 // ─── API HELPERS ──────────────────────────────────────────────────────────────
 async function parseResponse(res) {
   const contentType = res.headers.get('content-type') || '';
@@ -61,12 +523,13 @@ async function api(method, endpoint, body) {
     const opts = { method, headers: Auth.headers() };
     if (body) opts.body = JSON.stringify(body);
     const res = await fetch(API_BASE + endpoint, opts);
-    if (res.status === 401 || res.status === 403) {
+    const data = await parseResponse(res);
+
+    if (res.status === 401 || (res.status === 403 && (data?.error?.includes('Invalid or expired token') || data?.error?.includes('disabled') || data?.error?.includes('no longer exists')))) {
       Auth.clear();
       showLogin();
       return null;
     }
-    const data = await parseResponse(res);
     return { ok: res.ok, status: res.status, data };
   } catch (err) {
     console.warn(`API ${method} ${endpoint} error:`, err);
@@ -196,8 +659,13 @@ async function doLogin(credentials) {
   const data = await parseResponse(res);
   if (!res.ok) throw new Error(data.error || 'Login failed');
   Auth.setToken(data.token);
-  const username = body.username || 'Passcode Admin';
+  const username = data.username || body.username || 'Passcode Admin';
   localStorage.setItem('nas_user', username);
+  if (data.user) {
+    localStorage.setItem('nas_user_info', JSON.stringify(data.user));
+  } else if (body.passcode) {
+    localStorage.setItem('nas_user_info', JSON.stringify({ username: 'Passcode Admin', role: 'admin', isReadonly: false }));
+  }
 }
 
 async function doRegister(username, password) {
@@ -209,6 +677,9 @@ async function doRegister(username, password) {
   if (!res.ok) throw new Error(data.error || 'Registration failed');
   Auth.setToken(data.token);
   localStorage.setItem('nas_user', username);
+  if (data.user) {
+    localStorage.setItem('nas_user_info', JSON.stringify(data.user));
+  }
 }
 
 // ─── SIDEBAR & MOBILE DRAWER STATE ────────────────────────────────────────────
@@ -239,10 +710,10 @@ function closeMobileSidebar() {
 }
 
 // ─── ROUTER ───────────────────────────────────────────────────────────────────
-const pages = { dashboard, storage, files, gallery, backup, remote, settings };
+const pages = { dashboard, storage, files, gallery, backup, remote, settings, admin };
 const titles = {
   dashboard: 'Dashboard', storage: 'Storage', files: 'Files', gallery: 'Media Gallery',
-  backup: 'Backup Center', remote: 'Remote Access', settings: 'Settings'
+  backup: 'Backup Center', remote: 'Remote Access', settings: 'Settings', admin: 'Admin Panel'
 };
 let currentPage = 'dashboard';
 
@@ -278,9 +749,6 @@ function navigate(page, params = null) {
   }
 }
 
-let activePasscode = '';
-let isPasscodeVisible = false;
-
 // ─── SYSTEM INFO (Sidebar + Topbar) ───────────────────────────────────────────
 async function loadSystemInfo() {
   const r = await GET('/api/system');
@@ -289,22 +757,44 @@ async function loadSystemInfo() {
   const ip = s.ipAddresses?.[0] || 'localhost';
   document.getElementById('sidebar-ip').textContent = ip;
 
-  activePasscode = s.passcode || '';
-  const display = document.getElementById('passcode-display');
-  if (display) {
-    display.textContent = isPasscodeVisible ? activePasscode : '••••••';
+  let userInfo = {};
+  try { userInfo = JSON.parse(localStorage.getItem('nas_user_info') || '{}'); } catch(e) {}
+  const username = userInfo.username || localStorage.getItem('nas_user') || 'Passcode Admin';
+  const role = userInfo.role || 'user';
+  const isReadonly = Boolean(userInfo.isReadonly);
+
+  const userBadge = document.getElementById('username-display');
+  if (userBadge) {
+    userBadge.textContent = username;
+  }
+
+  const roleBadge = document.getElementById('role-badge');
+  if (roleBadge) {
+    if (role === 'admin') {
+      roleBadge.textContent = 'Admin';
+      roleBadge.className = 'role-badge role-admin';
+      roleBadge.classList.remove('hidden');
+    } else if (isReadonly) {
+      roleBadge.textContent = 'Read-Only';
+      roleBadge.className = 'role-badge role-readonly';
+      roleBadge.classList.remove('hidden');
+    } else {
+      roleBadge.textContent = 'User';
+      roleBadge.className = 'role-badge role-user';
+      roleBadge.classList.remove('hidden');
+    }
+  }
+
+  const adminNav = document.getElementById('nav-item-admin');
+  if (adminNav) {
+    if (role === 'admin') adminNav.classList.remove('hidden');
+    else adminNav.classList.add('hidden');
   }
 
   // Check tunnel status for badge
   const tr = await GET('/api/tunnel/status');
   if (tr?.data?.status === 'running') {
-    document.getElementById('tunnel-badge').classList.remove('hidden');
-  }
-
-  const username = localStorage.getItem('nas_user') || 'Irfan.Ahmed';
-  const userBadge = document.getElementById('username-display');
-  if (userBadge) {
-    userBadge.textContent = username;
+    document.getElementById('tunnel-badge')?.classList.remove('hidden');
   }
 }
 
@@ -1453,18 +1943,17 @@ async function remote(container) {
   if (isRunning && tunnel.url) {
     const qrContainer = document.getElementById('qr-container');
     if (qrContainer) {
-      // Embed both URL and passcode so mobile app can auto-login
-      const qrPayload = JSON.stringify({ url: tunnel.url, passcode: sys.passcode || '' });
+      // Embed URL and session token so mobile app can auto-login as this user
+      const qrPayload = JSON.stringify({ url: tunnel.url, token: Auth.getToken() });
       const img = document.createElement('img');
       img.src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qrPayload)}`;
       img.style.borderRadius = '8px';
-      img.alt = 'QR Code for tunnel URL and passcode';
+      img.alt = 'QR Code for tunnel URL and auto-login';
       qrContainer.appendChild(img);
 
-      // Show passcode hint below QR so user knows what's embedded
       const hint = document.createElement('p');
       hint.style.cssText = 'font-size:12px;color:var(--text-secondary);margin-top:10px;text-align:center';
-      hint.textContent = '✅ Passcode is embedded — scan to auto-login';
+      hint.textContent = '⚡ Scan in mobile app to pair & auto-login seamlessly';
       qrContainer.appendChild(hint);
     }
   }
@@ -1514,13 +2003,13 @@ async function settings(container) {
         </div>
 
         <div class="card settings-section" style="margin-bottom:20px">
-          <h3>🔒 Security</h3>
+          <h3>🔒 Security & Authentication</h3>
           <div class="settings-row">
             <div class="settings-row-info">
-              <h4>Active Passcode</h4>
-              <p>Used to authenticate the mobile app and dashboard.</p>
+              <h4>Dashboard Passcode</h4>
+              <p>6-digit master passcode authentication is active and encrypted with bcrypt.</p>
             </div>
-            <span class="badge badge-yellow font-mono" style="font-size:14px;padding:6px 14px">${escapeHtml(sys.passcode || activePasscode || '******')}</span>
+            <span class="badge badge-green">Encrypted</span>
           </div>
         </div>
 
@@ -1729,24 +2218,6 @@ async function init() {
   document.getElementById('logout-btn').addEventListener('click', () => {
     Auth.clear();
     showLogin();
-  });
-
-  document.getElementById('toggle-passcode-btn')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    isPasscodeVisible = !isPasscodeVisible;
-    const display = document.getElementById('passcode-display');
-    const btn = document.getElementById('toggle-passcode-btn');
-    if (display && btn) {
-      if (isPasscodeVisible) {
-        display.textContent = activePasscode || '••••••';
-        btn.textContent = '🙈';
-        btn.title = 'Hide passcode';
-      } else {
-        display.textContent = '••••••';
-        btn.textContent = '👁️';
-        btn.title = 'Show passcode';
-      }
-    }
   });
 
   document.getElementById('sidebar-toggle').addEventListener('click', toggleSidebar);

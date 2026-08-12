@@ -76,8 +76,8 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives = [], 
       const savedCharging = await AsyncStorage.getItem('autosync_charging_only');
       const savedLowBat = await AsyncStorage.getItem('autosync_low_battery_pause');
 
-      const deviceName = Device.modelName || Device.deviceName || 'Android Phone';
-      const defaultFolder = `Mobile Backups\\${deviceName}\\Photos`;
+      const deviceName = (Device.deviceName || Device.modelName || 'Android_Phone').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const defaultFolder = `NAS_Backup\\${deviceName}`;
 
       const activeDrive = remoteSettings?.targetDrive ?? savedDrive ?? (drives[0]?.letter || '');
       const activeFolder = remoteSettings?.targetFolderPath ?? savedFolder ?? defaultFolder;

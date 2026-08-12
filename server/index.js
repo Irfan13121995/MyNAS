@@ -8,6 +8,7 @@ const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const { Bonjour } = require('bonjour-service');
 const multer = require('multer');
+const bcrypt = require('bcryptjs');
 
 const rateLimit = require('express-rate-limit');
 
@@ -37,11 +38,12 @@ const envPath = path.join(BASE_DIR, '.env');
 if (!fs.existsSync(envPath)) {
   const secret = crypto.randomBytes(32).toString('hex');
   const passcode = Math.floor(100000 + Math.random() * 900000).toString();
-  const envContent = `PORT=3000\nJWT_SECRET=${secret}\nPASSCODE=${passcode}\nREQUIRE_EMAIL_VERIFICATION=true\n`;
+  const passcodeHash = bcrypt.hashSync(passcode, 10);
+  const envContent = `PORT=3000\nJWT_SECRET=${secret}\nPASSCODE_HASH=${passcodeHash}\nREQUIRE_EMAIL_VERIFICATION=true\n`;
   fs.writeFileSync(envPath, envContent);
 }
 
-require('dotenv').config();
+require('dotenv').config({ path: envPath });
 
 const { getDrives } = require('./driveService');
 const { listFiles, validatePath, getMediaGallery, rescanMediaGallery, searchFiles } = require('./fileService');
@@ -59,7 +61,13 @@ const app = express();
 app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex');
-const PASSCODE = process.env.PASSCODE;
+
+// Load or compute bcrypt hash for passcode authentication
+let PASSCODE_HASH = process.env.PASSCODE_HASH;
+if (!PASSCODE_HASH && process.env.PASSCODE) {
+  PASSCODE_HASH = bcrypt.hashSync(process.env.PASSCODE.toString(), 10);
+}
+
 const SERVER_START_TIME = Date.now();
 
 // In-memory activity log (last 50 events)
@@ -121,7 +129,7 @@ app.use(express.json());
 app.use('/api/', globalApiLimiter);
 
 console.log('====================================');
-console.log(`  Personal NAS Server Active Passcode: ${PASSCODE}`);
+console.log('  Personal NAS Server Status: Active');
 console.log('  Dashboard: http://localhost:' + PORT);
 console.log('====================================');
 
@@ -131,12 +139,69 @@ const authenticateToken = (req, res, next) => {
   if (!token && req.query.token) token = req.query.token;
   if (!token) return res.status(401).json({ error: 'Authentication token required' });
 
-  jwt.verify(token, JWT_SECRET, (err, user) => {
+  jwt.verify(token, JWT_SECRET, (err, decoded) => {
     if (err) return res.status(403).json({ error: 'Invalid or expired token' });
-    req.user = user;
+    
+    // Refresh user permissions from database if username present
+    if (decoded.username && decoded.username !== 'Passcode Admin') {
+      const dbUser = usersService.getUserByUsername(decoded.username);
+      if (!dbUser) return res.status(403).json({ error: 'User account no longer exists' });
+      if (dbUser.status === 'disabled') return res.status(403).json({ error: 'Your account has been disabled by an administrator.' });
+      
+      req.user = {
+        ...decoded,
+        id: dbUser.id,
+        role: dbUser.role || 'user',
+        isReadonly: dbUser.isReadonly,
+        allowedDisks: dbUser.allowedDisks
+      };
+    } else {
+      req.user = {
+        role: 'admin',
+        isReadonly: false,
+        allowedDisks: null,
+        ...decoded
+      };
+    }
     next();
   });
 };
+
+const requireAdmin = (req, res, next) => {
+  if (req.user?.role !== 'admin') {
+    return res.status(403).json({ error: 'Access denied. Administrative privileges required.' });
+  }
+  next();
+};
+
+const checkReadWrite = (req, res, next) => {
+  if (req.user?.isReadonly) {
+    return res.status(403).json({ error: 'Read-Only Account: File modification, uploads, and deletions are disabled for your account.' });
+  }
+  next();
+};
+
+function isPathAllowed(targetPath, allowedDisks) {
+  if (!allowedDisks || !Array.isArray(allowedDisks) || allowedDisks.length === 0) return true;
+  if (!targetPath) return true;
+
+  let cleanTarget = String(targetPath).replace(/::+/g, ':').trim().toUpperCase();
+  if (/^[A-Z]:?$/.test(cleanTarget)) {
+    cleanTarget = cleanTarget.replace(':', '') + ':\\';
+  }
+  cleanTarget = path.normalize(cleanTarget);
+  if (!cleanTarget.endsWith('\\')) cleanTarget += '\\';
+
+  return allowedDisks.some(disk => {
+    let normDisk = String(disk).replace(/::+/g, ':').trim().toUpperCase();
+    if (/^[A-Z]:?$/.test(normDisk)) {
+      normDisk = normDisk.replace(':', '') + ':\\';
+    }
+    normDisk = path.normalize(normDisk);
+    if (!normDisk.endsWith('\\')) normDisk += '\\';
+    return cleanTarget.startsWith(normDisk);
+  });
+}
 
 // ─── 3. AUTH ENDPOINTS ────────────────────────────────────────────────────────
 
@@ -176,8 +241,15 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
       });
     }
 
-    const token = jwt.sign({ authenticated: true, username }, JWT_SECRET, { expiresIn: '7d' });
-    return res.json({ token, username, user: result.user });
+    const token = jwt.sign({
+      authenticated: true,
+      id: result.user.id,
+      username: result.user.username,
+      role: result.user.role,
+      isReadonly: result.user.isReadonly,
+      allowedDisks: result.user.allowedDisks
+    }, JWT_SECRET, { expiresIn: '7d' });
+    return res.json({ token, username: result.user.username, user: result.user });
   } catch (err) {
     if (err.code === 'USER_EXISTS') {
       return res.status(400).json({ error: 'Username or email is already taken' });
@@ -190,10 +262,10 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
   const { passcode, username, password } = req.body;
   
   if (passcode) {
-    if (passcode.toString() === PASSCODE) {
-      const token = jwt.sign({ authenticated: true }, JWT_SECRET, { expiresIn: '7d' });
+    if (PASSCODE_HASH && bcrypt.compareSync(passcode.toString(), PASSCODE_HASH)) {
+      const token = jwt.sign({ authenticated: true, role: 'admin', username: 'Passcode Admin' }, JWT_SECRET, { expiresIn: '7d' });
       logActivity('auth', 'Dashboard login via passcode');
-      return res.json({ token });
+      return res.json({ token, username: 'Passcode Admin', user: { username: 'Passcode Admin', role: 'admin', isReadonly: false, allowedDisks: null } });
     }
     return res.status(401).json({ error: 'Incorrect passcode' });
   }
@@ -201,11 +273,21 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
   if (username && password) {
     const result = await usersService.verifyPassword(username, password);
     if (result.success) {
-      const token = jwt.sign({ authenticated: true, username: result.user.username }, JWT_SECRET, { expiresIn: '7d' });
+      const token = jwt.sign({
+        authenticated: true,
+        id: result.user.id,
+        username: result.user.username,
+        role: result.user.role || 'user',
+        isReadonly: result.user.isReadonly,
+        allowedDisks: result.user.allowedDisks
+      }, JWT_SECRET, { expiresIn: '7d' });
       logActivity('auth', 'Dashboard login: ' + result.user.username);
       return res.json({ token, username: result.user.username, user: result.user });
     }
 
+    if (result.reason === 'account_disabled') {
+      return res.status(403).json({ error: result.message });
+    }
     if (result.reason === 'account_locked') {
       return res.status(429).json({ error: result.message });
     }
@@ -266,16 +348,87 @@ app.get('/api/auth/verify-email', (req, res) => {
 });
 
 app.get('/api/auth/verify', authenticateToken, (req, res) => {
-  res.json({ valid: true });
+  res.json({ valid: true, username: req.user?.username || 'Passcode Admin', user: req.user });
 });
 
-app.get('/api/users', authenticateToken, (req, res) => {
+app.get('/api/users', authenticateToken, requireAdmin, (req, res) => {
   try {
     const users = usersService.getAllUsers();
     return res.json({ success: true, count: users.length, users });
   } catch (err) {
     return res.status(500).json({ error: `Failed to fetch users: ${err.message}` });
   }
+});
+
+// ─── 3.5. ADMIN MANAGEMENT ENDPOINTS ──────────────────────────────────────────
+
+app.get('/api/admin/users', authenticateToken, requireAdmin, (req, res) => {
+  try {
+    const users = usersService.getAllUsers();
+    res.json({ success: true, count: users.length, users });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/users/create', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { username, email, password, role } = req.body;
+    if (!username || username.length < 3) return res.status(400).json({ error: 'Username must be at least 3 characters' });
+    if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+
+    const result = await usersService.createUser({ username, email, password, role });
+    logActivity('admin', `Admin created user: ${username} (Role: ${result.user.role})`);
+    res.json({ success: true, user: result.user });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.put('/api/admin/users/:id/permissions', authenticateToken, requireAdmin, (req, res) => {
+  try {
+    const updated = usersService.updateUserPermissions(req.params.id, req.body);
+    logActivity('admin', `Updated permissions for user: ${updated.username} (Role: ${updated.role}, ReadOnly: ${updated.isReadonly}, Status: ${updated.status})`);
+    res.json({ success: true, user: updated });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/users/:id/reset-password', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { newPassword } = req.body;
+    if (!newPassword || newPassword.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    await usersService.resetUserPassword(req.params.id, newPassword);
+    logActivity('admin', `Reset password for user ID: ${req.params.id}`);
+    res.json({ success: true, message: 'Password reset successfully' });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/users/:id/unlock', authenticateToken, requireAdmin, (req, res) => {
+  try {
+    usersService.unlockUserAccount(req.params.id);
+    logActivity('admin', `Unlocked account for user ID: ${req.params.id}`);
+    res.json({ success: true, message: 'Account unlocked' });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/admin/users/:id', authenticateToken, requireAdmin, (req, res) => {
+  try {
+    usersService.deleteUser(req.params.id);
+    logActivity('admin', `Deleted user account ID: ${req.params.id}`);
+    res.json({ success: true, message: 'User deleted' });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/activity', authenticateToken, requireAdmin, (req, res) => {
+  res.json(activityLog);
 });
 
 // ─── 4. SYSTEM ENDPOINT ────────────────────────────────────────────────────────
@@ -302,8 +455,7 @@ app.get('/api/system', authenticateToken, (req, res) => {
     platform: os.platform(),
     hostname: os.hostname(),
     ipAddresses: ips,
-    port: PORT,
-    passcode: PASSCODE,
+    port: PORT
   });
 });
 
@@ -315,7 +467,7 @@ app.get('/api/activity', authenticateToken, (req, res) => {
 
 // ─── 6. DRIVES ENDPOINTS ─────────────────────────────────────────────────────
 
-// Get NAS-allowed drives (filtered by config)
+// Get NAS-allowed drives (filtered by config and user permissions)
 app.get('/api/drives', authenticateToken, async (req, res) => {
   try {
     const allDrives = await getDrives();
@@ -347,6 +499,11 @@ app.get('/api/drives', authenticateToken, async (req, res) => {
       }
     }
 
+    // Apply user disk permission filter
+    if (req.user?.allowedDisks && Array.isArray(req.user.allowedDisks) && req.user.allowedDisks.length > 0) {
+      drives = drives.filter(d => isPathAllowed(d.letter, req.user.allowedDisks));
+    }
+
     res.json(drives);
   } catch (err) {
     res.status(500).json({ error: `Failed to retrieve drives: ${err.message}` });
@@ -354,7 +511,7 @@ app.get('/api/drives', authenticateToken, async (req, res) => {
 });
 
 // Get ALL available drives (for "Add Storage" modal)
-app.get('/api/drives/available', authenticateToken, async (req, res) => {
+app.get('/api/drives/available', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const allDrives = await getDrives();
     const allowedPaths = driveConfig.getAllowedPaths();
@@ -371,7 +528,7 @@ app.get('/api/drives/available', authenticateToken, async (req, res) => {
 });
 
 // Add a drive/path to the NAS
-app.post('/api/drives/add', authenticateToken, async (req, res) => {
+app.post('/api/drives/add', authenticateToken, requireAdmin, checkReadWrite, async (req, res) => {
   const { drivePath, label } = req.body;
   if (!drivePath) return res.status(400).json({ error: 'drivePath is required' });
 
@@ -390,7 +547,7 @@ app.post('/api/drives/add', authenticateToken, async (req, res) => {
 });
 
 // Remove a drive/path from the NAS
-app.delete('/api/drives/remove', authenticateToken, async (req, res) => {
+app.delete('/api/drives/remove', authenticateToken, requireAdmin, checkReadWrite, async (req, res) => {
   const { drivePath } = req.body;
   if (!drivePath) return res.status(400).json({ error: 'drivePath is required' });
 
@@ -424,6 +581,10 @@ app.get('/api/files', authenticateToken, async (req, res) => {
         );
       }
 
+      if (req.user?.allowedDisks && Array.isArray(req.user.allowedDisks) && req.user.allowedDisks.length > 0) {
+        filteredDrives = filteredDrives.filter(d => isPathAllowed(d.letter, req.user.allowedDisks));
+      }
+
       const driveDirectories = filteredDrives.map(d => ({
         name: d.letter,
         path: d.letter + path.sep,
@@ -444,6 +605,11 @@ app.get('/api/files', authenticateToken, async (req, res) => {
       cleanPath = cleanPath.replace(':', '') + ':\\';
     }
     const normalizedTargetPath = cleanPath;
+
+    if (!isPathAllowed(normalizedTargetPath, req.user?.allowedDisks)) {
+      return res.status(403).json({ error: 'Access Denied: You do not have permission to access this drive or folder.' });
+    }
+
     const files = await listFiles(normalizedTargetPath);
     logActivity('browse', `Browsed: ${normalizedTargetPath}`);
     const results = files.map(f => ({ ...f, path: path.join(normalizedTargetPath, f.name) }));
@@ -463,8 +629,15 @@ app.get('/api/files/search', authenticateToken, async (req, res) => {
     return res.json([]);
   }
 
+  if (targetDrive && !isPathAllowed(targetDrive, req.user?.allowedDisks)) {
+    return res.status(403).json({ error: 'Access Denied: Unauthorized drive' });
+  }
+
   try {
-    const results = await searchFiles(query, targetDrive);
+    let results = await searchFiles(query, targetDrive);
+    if (req.user?.allowedDisks && Array.isArray(req.user.allowedDisks) && req.user.allowedDisks.length > 0) {
+      results = results.filter(f => isPathAllowed(f.path, req.user.allowedDisks));
+    }
     logActivity('search', `Global search for: "${query}" (${results.length} found)`);
     res.json(results);
   } catch (err) {
@@ -478,14 +651,21 @@ app.get('/api/gallery', authenticateToken, async (req, res) => {
   const targetDrive = req.query.drive;
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   let limit = parseInt(req.query.limit, 10) || 500;
-  // Cap at 500 max per page to prevent memory/DOM performance issues
   if (req.query.limit === 'all' || limit > 500) {
     limit = 500;
   }
   limit = Math.max(1, limit);
 
+  if (targetDrive && !isPathAllowed(targetDrive, req.user?.allowedDisks)) {
+    return res.status(403).json({ error: 'Access Denied: Unauthorized drive' });
+  }
+
   try {
-    const allMedia = await getMediaGallery(targetDrive);
+    let allMedia = await getMediaGallery(targetDrive);
+    if (req.user?.allowedDisks && Array.isArray(req.user.allowedDisks) && req.user.allowedDisks.length > 0) {
+      allMedia = allMedia.filter(item => isPathAllowed(item.path, req.user.allowedDisks));
+    }
+
     const totalItems = allMedia.length;
     const totalPages = Math.max(1, Math.ceil(totalItems / limit));
     const startIndex = (page - 1) * limit;
@@ -514,6 +694,11 @@ app.post('/api/gallery/rescan', authenticateToken, (req, res) => {
 app.get('/api/stream', authenticateToken, async (req, res) => {
   const targetPath = req.query.path;
   if (!targetPath) return res.status(400).json({ error: 'Path is required to stream' });
+
+  if (!isPathAllowed(targetPath, req.user?.allowedDisks)) {
+    return res.status(403).json({ error: 'Access Denied: Unauthorized drive or file path' });
+  }
+
   try {
     await validatePath(targetPath);
     logActivity('stream', `Streamed: ${path.basename(targetPath)}`);
@@ -525,13 +710,18 @@ app.get('/api/stream', authenticateToken, async (req, res) => {
 
 // ─── 9. UPLOAD ENDPOINT ──────────────────────────────────────────────────────
 
-app.post('/api/upload', authenticateToken, upload.single('file'), async (req, res) => {
+app.post('/api/upload', authenticateToken, checkReadWrite, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   const destinationDir = req.query.destination;
   if (!destinationDir) {
     try { await fs.promises.unlink(req.file.path); } catch {}
     return res.status(400).json({ error: 'Destination path query is required' });
+  }
+
+  if (!isPathAllowed(destinationDir, req.user?.allowedDisks)) {
+    try { await fs.promises.unlink(req.file.path); } catch {}
+    return res.status(403).json({ error: 'Access Denied: You do not have permission to upload to this drive or directory.' });
   }
 
   try {
@@ -558,7 +748,7 @@ app.post('/api/upload', authenticateToken, upload.single('file'), async (req, re
 
 // ─── 9.5. CHUNKED UPLOAD ENDPOINT ───────────────────────────────────────────
 
-app.post('/api/upload/chunk', authenticateToken, upload.single('chunk'), async (req, res) => {
+app.post('/api/upload/chunk', authenticateToken, checkReadWrite, upload.single('chunk'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No chunk file provided' });
 
   const fileId = req.headers['x-file-id'] || req.query.fileId;
@@ -570,6 +760,11 @@ app.post('/api/upload/chunk', authenticateToken, upload.single('chunk'), async (
   if (!fileId || !destinationDir) {
     try { await fs.promises.unlink(req.file.path); } catch {}
     return res.status(400).json({ error: 'Missing fileId or destination parameter' });
+  }
+
+  if (!isPathAllowed(destinationDir, req.user?.allowedDisks)) {
+    try { await fs.promises.unlink(req.file.path); } catch {}
+    return res.status(403).json({ error: 'Access Denied: You do not have permission to upload to this drive or directory.' });
   }
 
   const chunkDir = path.join(__dirname, 'temp_uploads', 'chunks', fileId.replace(/[^a-zA-Z0-9_-]/g, ''));
@@ -660,17 +855,17 @@ app.post('/api/tunnel/stop', authenticateToken, (req, res) => {
 
 // ─── 10.5. SYSTEM CONTROL & MAINTENANCE ENDPOINTS ──────────────────────────────
 
-app.post('/api/system/reboot', authenticateToken, (req, res) => {
+app.post('/api/system/reboot', authenticateToken, requireAdmin, (req, res) => {
   logActivity('system', 'System reboot requested');
   res.json({ success: true, message: 'System reboot request acknowledged.' });
 });
 
-app.post('/api/system/shutdown', authenticateToken, (req, res) => {
+app.post('/api/system/shutdown', authenticateToken, requireAdmin, (req, res) => {
   logActivity('system', 'System shutdown requested');
   res.json({ success: true, message: 'System shutdown request acknowledged.' });
 });
 
-app.post('/api/system/cleanup', authenticateToken, async (req, res) => {
+app.post('/api/system/cleanup', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const files = await fs.promises.readdir(uploadTempDir);
     let count = 0;
@@ -685,7 +880,7 @@ app.post('/api/system/cleanup', authenticateToken, async (req, res) => {
   }
 });
 
-app.post('/api/drives/refresh', authenticateToken, async (req, res) => {
+app.post('/api/drives/refresh', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const drives = await getDrives();
     logActivity('storage', `Refreshed drive list (${drives.length} drives detected)`);
@@ -700,6 +895,9 @@ app.post('/api/drives/refresh', authenticateToken, async (req, res) => {
 app.get('/api/thumbnail', authenticateToken, async (req, res) => {
   const targetPath = req.query.path;
   if (!targetPath) return res.status(400).json({ error: 'Path is required' });
+  if (!isPathAllowed(targetPath, req.user?.allowedDisks)) {
+    return res.status(403).json({ error: 'Access Denied: Unauthorized file path' });
+  }
   try {
     const thumbPath = await thumbnailService.getOrGenerateThumbnail(targetPath, 250);
     res.sendFile(thumbPath);
@@ -712,7 +910,7 @@ app.get('/api/trash', authenticateToken, (req, res) => {
   res.json(trashService.listTrash());
 });
 
-app.post('/api/trash/restore', authenticateToken, (req, res) => {
+app.post('/api/trash/restore', authenticateToken, checkReadWrite, (req, res) => {
   try {
     const item = trashService.restoreFromTrash(req.body.id);
     logActivity('trash', `Restored: ${item.fileName}`);
@@ -722,7 +920,7 @@ app.post('/api/trash/restore', authenticateToken, (req, res) => {
   }
 });
 
-app.delete('/api/trash/purge', authenticateToken, (req, res) => {
+app.delete('/api/trash/purge', authenticateToken, checkReadWrite, (req, res) => {
   try {
     trashService.purgeTrash(req.query.id);
     logActivity('trash', 'Purged trash item');
@@ -732,9 +930,12 @@ app.delete('/api/trash/purge', authenticateToken, (req, res) => {
   }
 });
 
-app.post('/api/files/delete', authenticateToken, (req, res) => {
+app.post('/api/files/delete', authenticateToken, checkReadWrite, (req, res) => {
   const targetPath = req.body.path;
   if (!targetPath) return res.status(400).json({ error: 'Path is required' });
+  if (!isPathAllowed(targetPath, req.user?.allowedDisks)) {
+    return res.status(403).json({ error: 'Access Denied: You do not have permission to delete files on this drive.' });
+  }
   try {
     const item = trashService.moveToTrash(targetPath);
     logActivity('trash', `Moved to trash: ${item.fileName}`);
@@ -753,6 +954,9 @@ app.post('/api/files/batch-zip', authenticateToken, async (req, res) => {
   // Validate every path before archiving
   try {
     for (const p of paths) {
+      if (!isPathAllowed(p, req.user?.allowedDisks)) {
+        return res.status(403).json({ error: `Access Denied: Unauthorized drive in batch zip (${p})` });
+      }
       await validatePath(p);
     }
   } catch (err) {
@@ -780,9 +984,13 @@ app.post('/api/files/batch-zip', authenticateToken, async (req, res) => {
 });
 
 // Create new directory on server
-app.post('/api/files/mkdir', authenticateToken, async (req, res) => {
+app.post('/api/files/mkdir', authenticateToken, checkReadWrite, async (req, res) => {
   const { path: targetPath } = req.body || {};
   if (!targetPath) return res.status(400).json({ error: 'Path is required' });
+
+  if (!isPathAllowed(targetPath, req.user?.allowedDisks)) {
+    return res.status(403).json({ error: 'Access Denied: You do not have permission to create folders on this drive.' });
+  }
 
   try {
     const validatedDir = await validatePath(targetPath);

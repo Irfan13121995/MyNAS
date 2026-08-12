@@ -92,11 +92,13 @@ export default function ConnectionScreen({ onConnect }) {
 
     let targetUrl = data.trim();
     let targetPasscode = passcode;
+    let targetToken = null;
 
     try {
       if (targetUrl.startsWith('{') && targetUrl.endsWith('}')) {
         const parsed = JSON.parse(targetUrl);
         if (parsed.url) targetUrl = parsed.url;
+        if (parsed.token) targetToken = parsed.token;
         if (parsed.passcode) {
           targetPasscode = parsed.passcode;
           setPasscode(parsed.passcode);
@@ -104,16 +106,20 @@ export default function ConnectionScreen({ onConnect }) {
       }
     } catch (e) {}
 
-    setScannedUrl(targetUrl);
-    setIpAddress(targetUrl);
+    const cleanUrl = getCleanUrl(targetUrl);
+    setScannedUrl(cleanUrl);
+    setIpAddress(cleanUrl);
     setQrModalVisible(false);
 
-    if (targetPasscode) {
-      handleConnect(targetUrl, targetPasscode);
+    if (targetToken) {
+      // Seamless auto-login with session token embedded in QR code!
+      onConnect(cleanUrl, targetToken);
+    } else if (targetPasscode) {
+      handleConnect(cleanUrl, targetPasscode);
     } else {
       Alert.alert(
         'QR Code Scanned 📷',
-        `Server URL updated to:\n${targetUrl}\n\nPlease enter your 6-digit NAS Passcode to connect.`,
+        `Server URL updated to:\n${cleanUrl}\n\nPlease enter your passcode or account credentials to connect.`,
         [{ text: 'OK' }]
       );
     }
@@ -142,10 +148,24 @@ export default function ConnectionScreen({ onConnect }) {
         throw new Error(data.error || 'Authentication failed');
       }
 
-      onConnect(cleanUrl, data.token);
+      onConnect(cleanUrl, data.token, data.username || data.user?.username);
     } catch (err) {
       const msg = err.message || '';
-      if (msg.includes('UnknownHostException') || msg.includes('Unable to resolve host') || msg.includes('Network request failed')) {
+      if (msg.includes('CLEARTEXT') || msg.includes('cleartext') || msg.includes('UnknownServiceException')) {
+        Alert.alert(
+          'HTTP Cleartext Blocked by Android',
+          `Android OS blocked plain HTTP connection to:\n"${cleanUrl}"\n\n👉 Solution:\n1. Tap "📷 QR Scan" to auto-connect via secure HTTPS.\n2. Or switch to the Cloudflare HTTPS Tunnel: https://mynas-hi.online\n3. Or install the updated APK build v1.2.2.`,
+          [
+            {
+              text: 'Use Secure HTTPS Tunnel',
+              onPress: () => {
+                setIpAddress('https://mynas-hi.online');
+              }
+            },
+            { text: 'OK' }
+          ]
+        );
+      } else if (msg.includes('UnknownHostException') || msg.includes('Unable to resolve host') || msg.includes('Network request failed')) {
         Alert.alert(
           'Tunnel / Host Expired',
           `Unable to resolve server address: "${cleanUrl}".\n\nThe Cloudflare Tunnel domain has expired or changed.\n\n👉 Solution:\n1. If on local Wi-Fi, enter IP: http://10.31.30.50:3000\n2. Or scan the fresh QR code on your Windows Web Dashboard.`
@@ -186,9 +206,26 @@ export default function ConnectionScreen({ onConnect }) {
         throw new Error(data.error || 'Login failed');
       }
 
-      onConnect(cleanUrl, data.token);
+      onConnect(cleanUrl, data.token, data.username || data.user?.username);
     } catch (err) {
-      Alert.alert('Login Failed', err.message || 'Unable to log in');
+      const msg = err.message || '';
+      if (msg.includes('CLEARTEXT') || msg.includes('cleartext') || msg.includes('UnknownServiceException')) {
+        Alert.alert(
+          'HTTP Cleartext Blocked by Android',
+          `Android OS blocked plain HTTP connection to:\n"${cleanUrl}"\n\n👉 Solution:\n1. Tap "📷 QR Scan" to auto-connect via secure HTTPS.\n2. Or switch to the Cloudflare HTTPS Tunnel: https://mynas-hi.online\n3. Or install the updated APK build v1.2.2.`,
+          [
+            {
+              text: 'Use Secure HTTPS Tunnel',
+              onPress: () => {
+                setIpAddress('https://mynas-hi.online');
+              }
+            },
+            { text: 'OK' }
+          ]
+        );
+      } else {
+        Alert.alert('Login Failed', err.message || 'Unable to log in');
+      }
     } finally {
       setLoading(false);
     }
