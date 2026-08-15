@@ -60,8 +60,8 @@ export default function StorageScreen({ serverUrl, token, onOpenAddStorage }) {
 
   return (
     <View style={styles.container}>
-      {/* ── DARK GLASS TOPBAR (SAFE FROM STATUS BAR) ─────────────────── */}
-      <View style={[styles.topbar, { paddingTop: statusBarPadding }]}>
+      {/* ── DARK GLASS TOPBAR ─────────────────── */}
+      <View style={[styles.topbar, { paddingTop: 6 }]}>
         <Text style={styles.topbarTitle}>Storage</Text>
         <View style={styles.topbarActions}>
           <TouchableOpacity style={styles.iconBtn} onPress={onRefresh}>

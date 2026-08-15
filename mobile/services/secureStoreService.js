@@ -4,16 +4,27 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export async function setSecureItem(key, value) {
   try {
+    if (value === null || value === undefined) {
+      await deleteSecureItem(key);
+      return;
+    }
+    const stringValue = String(value);
     if (Platform.OS === 'web') {
-      await AsyncStorage.setItem(key, value);
+      await AsyncStorage.setItem(key, stringValue);
     } else {
-      await SecureStore.setItemAsync(key, value, {
-        keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-      });
+      try {
+        await SecureStore.setItemAsync(key, stringValue, {
+          keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK,
+        });
+      } catch (e1) {
+        await SecureStore.setItemAsync(key, stringValue);
+      }
     }
   } catch (err) {
     console.warn(`SecureStore write error for key ${key}:`, err.message);
-    await AsyncStorage.setItem(key, value);
+    if (value != null) {
+      await AsyncStorage.setItem(key, String(value));
+    }
   }
 }
 
@@ -22,14 +33,14 @@ export async function getSecureItem(key) {
     if (Platform.OS === 'web') {
       return await AsyncStorage.getItem(key);
     } else {
-      let item = await SecureStore.getItemAsync(key);
+      let item = null;
+      try {
+        item = await SecureStore.getItemAsync(key);
+      } catch (e1) {}
+
       if (!item) {
-        // Fallback check legacy AsyncStorage for smooth migration
+        // Fallback check AsyncStorage
         item = await AsyncStorage.getItem(key);
-        if (item) {
-          await setSecureItem(key, item);
-          await AsyncStorage.removeItem(key);
-        }
       }
       return item;
     }
@@ -42,7 +53,9 @@ export async function getSecureItem(key) {
 export async function deleteSecureItem(key) {
   try {
     if (Platform.OS !== 'web') {
-      await SecureStore.deleteItemAsync(key);
+      try {
+        await SecureStore.deleteItemAsync(key);
+      } catch (e1) {}
     }
     await AsyncStorage.removeItem(key);
   } catch (err) {

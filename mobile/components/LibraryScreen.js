@@ -594,9 +594,9 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
 
   return (
     <View style={styles.container}>
-      {/* ── DARK GLASS TOPBAR (SAFE FROM STATUS BAR) ─────────────────── */}
+      {/* ── DARK GLASS TOPBAR ─────────────────── */}
       {isSelectionMode ? (
-        <View style={[styles.topbar, styles.selectionTopbar, { paddingTop: statusBarPadding }]}>
+        <View style={[styles.topbar, styles.selectionTopbar, { paddingTop: 6 }]}>
           <View style={styles.selectionTopbarInner}>
             <TouchableOpacity style={styles.cancelBtn} onPress={() => { setIsSelectionMode(false); setSelectedItems(new Set()); }}>
               <Text style={styles.selectionCancelText}>✕</Text>
@@ -647,7 +647,7 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
           </View>
         </View>
       ) : (
-      <View style={[styles.topbar, { paddingTop: statusBarPadding }]}>
+      <View style={[styles.topbar, { paddingTop: 6 }]}>
         <View style={styles.topbarInner}>
           <Text style={styles.topbarTitle}>Media Gallery</Text>
           <Text style={styles.itemCount}>

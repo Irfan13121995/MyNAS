@@ -11,14 +11,13 @@ import { useTheme } from '../contexts/ThemeContext';
 export default function ConnectionScreen({ onConnect }) {
   const { colors } = useTheme();
   const styles = useMemo(() => getStyles(colors), [colors]);
-  const [authMode, setAuthMode] = useState('passcode'); // 'passcode' | 'login' | 'register'
+  const [authMode, setAuthMode] = useState('login'); // 'login' | 'register'
 
   // Server location
-  const [ipAddress, setIpAddress] = useState('10.31.30.50');
+  const [ipAddress, setIpAddress] = useState('https://mynas-hi.online');
   const [port, setPort] = useState('3000');
 
   // Credentials
-  const [passcode, setPasscode] = useState('');
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -69,10 +68,24 @@ export default function ConnectionScreen({ onConnect }) {
 
   const getCleanUrl = (rawUrl = null) => {
     let cleanUrl = (rawUrl || ipAddress).trim();
+
+    // Remove trailing slash if present
+    cleanUrl = cleanUrl.replace(/\/+$/, '');
+
+    // Domain names (Cloudflare tunnels, custom domains) default to HTTPS
+    const isDomain = cleanUrl.includes('.online') || cleanUrl.includes('.org') || cleanUrl.includes('.com') || cleanUrl.includes('.net') || cleanUrl.includes('trycloudflare') || cleanUrl.includes('mynas-hi');
+
+    if (isDomain) {
+      if (!cleanUrl.startsWith('https://') && !cleanUrl.startsWith('http://')) {
+        cleanUrl = `https://${cleanUrl}`;
+      }
+      return cleanUrl;
+    }
+
     if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
       cleanUrl = `http://${cleanUrl}`;
     }
-    if (!cleanUrl.includes('trycloudflare.com') && !cleanUrl.includes(':')) {
+    if (!cleanUrl.includes(':') && !cleanUrl.startsWith('https://')) {
       cleanUrl = `${cleanUrl}:${port || '3000'}`;
     }
     return cleanUrl;
@@ -86,116 +99,119 @@ export default function ConnectionScreen({ onConnect }) {
     }
   };
 
+  const parseQrPayload = (rawData) => {
+    if (!rawData) return { url: '', token: null, passcode: null, username: null };
+    let trimmed = rawData.trim();
+    let url = trimmed;
+    let token = null;
+    let passcodeVal = null;
+    let usernameVal = null;
+
+    try {
+      if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('%7B') && trimmed.endsWith('%7D'))) {
+        const decoded = trimmed.startsWith('%7B') ? decodeURIComponent(trimmed) : trimmed;
+        const parsed = JSON.parse(decoded);
+        if (parsed.url) url = parsed.url;
+        if (parsed.token) token = parsed.token;
+        if (parsed.passcode) passcodeVal = parsed.passcode;
+        if (parsed.username || parsed.user?.username) usernameVal = parsed.username || parsed.user?.username;
+      }
+    } catch (e) {}
+
+    return { url, token, passcode: passcodeVal, username: usernameVal };
+  };
+
+  const safeJsonParse = async (res) => {
+    try {
+      const contentType = res.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        return await res.json();
+      }
+      const text = await res.text();
+      return { error: text || `HTTP ${res.status}` };
+    } catch (e) {
+      return { error: `HTTP ${res.status}` };
+    }
+  };
+
   const handleBarCodeScanned = ({ data }) => {
     if (scanned || !data) return;
     setScanned(true);
 
-    let targetUrl = data.trim();
-    let targetPasscode = passcode;
-    let targetToken = null;
+    const { url, token: targetToken, passcode: targetPasscode, username: targetUser } = parseQrPayload(data);
 
-    try {
-      if (targetUrl.startsWith('{') && targetUrl.endsWith('}')) {
-        const parsed = JSON.parse(targetUrl);
-        if (parsed.url) targetUrl = parsed.url;
-        if (parsed.token) targetToken = parsed.token;
-        if (parsed.passcode) {
-          targetPasscode = parsed.passcode;
-          setPasscode(parsed.passcode);
-        }
-      }
-    } catch (e) {}
-
-    const cleanUrl = getCleanUrl(targetUrl);
+    const cleanUrl = getCleanUrl(url);
     setScannedUrl(cleanUrl);
     setIpAddress(cleanUrl);
     setQrModalVisible(false);
 
     if (targetToken) {
       // Seamless auto-login with session token embedded in QR code!
-      onConnect(cleanUrl, targetToken);
-    } else if (targetPasscode) {
-      handleConnect(cleanUrl, targetPasscode);
+      onConnect(cleanUrl, targetToken, targetUser);
     } else {
       Alert.alert(
         'QR Code Scanned 📷',
-        `Server URL updated to:\n${cleanUrl}\n\nPlease enter your passcode or account credentials to connect.`,
+        `Server URL updated to:\n${cleanUrl}\n\nPlease enter your account credentials to connect.`,
         [{ text: 'OK' }]
       );
     }
   };
 
-  const handleConnect = async (customUrl = null, customPasscode = null) => {
-    const activePasscode = customPasscode || passcode;
-
-    if (!activePasscode) {
-      Alert.alert('Error', 'Please enter your NAS Passcode');
-      return;
-    }
-
-    setLoading(true);
-    const cleanUrl = getCleanUrl(customUrl);
-
-    try {
-      const res = await fetch(`${cleanUrl}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ passcode: activePasscode })
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Authentication failed');
-      }
-
-      onConnect(cleanUrl, data.token, data.username || data.user?.username);
-    } catch (err) {
-      const msg = err.message || '';
-      if (msg.includes('CLEARTEXT') || msg.includes('cleartext') || msg.includes('UnknownServiceException')) {
-        Alert.alert(
-          'HTTP Cleartext Blocked by Android',
-          `Android OS blocked plain HTTP connection to:\n"${cleanUrl}"\n\n👉 Solution:\n1. Tap "📷 QR Scan" to auto-connect via secure HTTPS.\n2. Or switch to the Cloudflare HTTPS Tunnel: https://mynas-hi.online\n3. Or install the updated APK build v1.2.2.`,
-          [
-            {
-              text: 'Use Secure HTTPS Tunnel',
-              onPress: () => {
-                setIpAddress('https://mynas-hi.online');
-              }
-            },
-            { text: 'OK' }
-          ]
-        );
-      } else if (msg.includes('UnknownHostException') || msg.includes('Unable to resolve host') || msg.includes('Network request failed')) {
-        Alert.alert(
-          'Tunnel / Host Expired',
-          `Unable to resolve server address: "${cleanUrl}".\n\nThe Cloudflare Tunnel domain has expired or changed.\n\n👉 Solution:\n1. If on local Wi-Fi, enter IP: http://10.31.30.50:3000\n2. Or scan the fresh QR code on your Windows Web Dashboard.`
-        );
-      } else {
-        Alert.alert('Connection Failed', msg || 'Could not connect to Personal NAS server.');
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleUserLogin = async () => {
+  const handleUserLogin = async (customUrl = null) => {
     if (!username.trim() || !password) {
       Alert.alert('Error', 'Please enter your username and password');
       return;
     }
 
     setLoading(true);
-    const cleanUrl = getCleanUrl();
+    const cleanUrl = getCleanUrl(customUrl);
+
+    // Candidates to try if initial cleanUrl times out or fails network check
+    const candidateUrls = [
+      cleanUrl,
+      'http://10.31.30.50:3000',
+      'https://mynas-hi.online',
+      'https://mynas-hi.eu.org'
+    ].filter((u, index, self) => u && self.indexOf(u) === index);
+
+    let lastError = null;
+    let successfulRes = null;
+    let successfulUrl = null;
+
+    for (const targetUrl of candidateUrls) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 4500);
+
+        const res = await fetch(`${targetUrl}/api/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: username.trim(), password }),
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+
+        if (res) {
+          successfulRes = res;
+          successfulUrl = targetUrl;
+          break;
+        }
+      } catch (err) {
+        lastError = err;
+        // If it's a 401 / 400 credentials error response, stop trying other servers
+        if (err.name === 'AbortError') {
+          console.warn(`Connection timeout to ${targetUrl}`);
+        }
+      }
+    }
 
     try {
-      const res = await fetch(`${cleanUrl}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: username.trim(), password })
-      });
+      if (!successfulRes) {
+        throw lastError || new Error('Could not connect to NAS server. Please check host IP or scan QR code.');
+      }
 
-      const data = await res.json();
-      if (!res.ok) {
+      const data = await safeJsonParse(successfulRes);
+      if (!successfulRes.ok) {
         if (data.requireEmailVerification) {
           Alert.alert(
             'Email Verification Needed',
@@ -203,28 +219,31 @@ export default function ConnectionScreen({ onConnect }) {
           );
           return;
         }
-        throw new Error(data.error || 'Login failed');
+        throw new Error(data.error || 'Invalid username or password');
       }
 
-      onConnect(cleanUrl, data.token, data.username || data.user?.username);
+      setIpAddress(successfulUrl);
+      onConnect(successfulUrl, data.token, data.username || data.user?.username);
     } catch (err) {
       const msg = err.message || '';
-      if (msg.includes('CLEARTEXT') || msg.includes('cleartext') || msg.includes('UnknownServiceException')) {
+      if (msg.includes('App Transport Security') || msg.includes('secure connection') || msg.includes('CLEARTEXT') || msg.includes('cleartext') || msg.includes('UnknownServiceException')) {
         Alert.alert(
-          'HTTP Cleartext Blocked by Android',
-          `Android OS blocked plain HTTP connection to:\n"${cleanUrl}"\n\n👉 Solution:\n1. Tap "📷 QR Scan" to auto-connect via secure HTTPS.\n2. Or switch to the Cloudflare HTTPS Tunnel: https://mynas-hi.online\n3. Or install the updated APK build v1.2.2.`,
+          'HTTP Blocked by Mobile OS Policy',
+          `Mobile OS network security policy blocked unencrypted HTTP connection to:\n"${cleanUrl}"\n\n👉 Solution:\n1. Tap "📷 QR Scan" to auto-connect via secure HTTPS.\n2. Or switch to the Cloudflare HTTPS Tunnel: https://mynas-hi.online`,
           [
             {
               text: 'Use Secure HTTPS Tunnel',
               onPress: () => {
-                setIpAddress('https://mynas-hi.online');
+                const tunnelUrl = 'https://mynas-hi.online';
+                setIpAddress(tunnelUrl);
+                handleUserLogin(tunnelUrl);
               }
             },
             { text: 'OK' }
           ]
         );
       } else {
-        Alert.alert('Login Failed', err.message || 'Unable to log in');
+        Alert.alert('Login Failed', err.message || 'Unable to log in. Please check your credentials.');
       }
     } finally {
       setLoading(false);
@@ -259,7 +278,7 @@ export default function ConnectionScreen({ onConnect }) {
         })
       });
 
-      const data = await res.json();
+      const data = await safeJsonParse(res);
       if (!res.ok) {
         throw new Error(data.error || 'Registration failed');
       }
@@ -272,7 +291,7 @@ export default function ConnectionScreen({ onConnect }) {
         );
       } else {
         Alert.alert('Success 🎉', 'Account created successfully! Logging you in...');
-        onConnect(cleanUrl, data.token);
+        onConnect(cleanUrl, data.token, username.trim());
       }
     } catch (err) {
       Alert.alert('Registration Failed', err.message || 'Could not create account');
@@ -286,15 +305,17 @@ export default function ConnectionScreen({ onConnect }) {
       Alert.alert('QR Scanner', 'Please paste or scan a valid Tunnel URL');
       return;
     }
-    const clean = scannedUrl.trim();
+    const { url, token: targetToken, username: targetUser } = parseQrPayload(scannedUrl);
+    const clean = getCleanUrl(url);
     setIpAddress(clean);
     setQrModalVisible(false);
-    if (passcode) {
-      handleConnect(clean, passcode);
+
+    if (targetToken) {
+      onConnect(clean, targetToken, targetUser);
     } else {
       Alert.alert(
         'Server URL Set 🌐',
-        `Target address set to:\n${clean}\n\nPlease enter your 6-digit NAS Passcode below to connect.`,
+        `Target address set to:\n${clean}\n\nPlease enter your account credentials to connect.`,
         [{ text: 'OK' }]
       );
     }
@@ -341,12 +362,6 @@ export default function ConnectionScreen({ onConnect }) {
             {/* Auth Mode Tabs */}
             <View style={styles.tabContainer}>
               <TouchableOpacity
-                style={[styles.tabBtn, authMode === 'passcode' && styles.tabBtnActive]}
-                onPress={() => setAuthMode('passcode')}
-              >
-                <Text style={[styles.tabText, authMode === 'passcode' && styles.tabTextActive]}>Passcode</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
                 style={[styles.tabBtn, authMode === 'login' && styles.tabBtnActive]}
                 onPress={() => setAuthMode('login')}
               >
@@ -359,49 +374,6 @@ export default function ConnectionScreen({ onConnect }) {
                 <Text style={[styles.tabText, authMode === 'register' && styles.tabTextActive]}>Register</Text>
               </TouchableOpacity>
             </View>
-
-            <Text style={styles.label}>NAS Server IP or Tunnel URL</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g. 192.168.1.100 or tunnel.trycloudflare.com"
-              placeholderTextColor="#64748B"
-              value={ipAddress}
-              onChangeText={setIpAddress}
-              autoCapitalize="none"
-            />
-
-            {!ipAddress.includes('trycloudflare.com') && (
-              <>
-                <Text style={styles.label}>Server Port</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="3001"
-                  placeholderTextColor="#64748B"
-                  value={port}
-                  onChangeText={setPort}
-                  keyboardType="numeric"
-                />
-              </>
-            )}
-
-            {/* PASSCODE MODE */}
-            {authMode === 'passcode' && (
-              <>
-                <Text style={styles.label}>System Passcode</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter passcode"
-                  placeholderTextColor="#64748B"
-                  value={passcode}
-                  onChangeText={setPasscode}
-                  secureTextEntry
-                />
-
-                <TouchableOpacity style={styles.connectBtn} onPress={() => handleConnect()} disabled={loading} activeOpacity={0.85}>
-                  {loading ? <ActivityIndicator color={colors.background} /> : <Text style={styles.connectBtnText}>Connect via Passcode</Text>}
-                </TouchableOpacity>
-              </>
-            )}
 
             {/* USER LOGIN MODE */}
             {authMode === 'login' && (

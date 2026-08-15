@@ -26,6 +26,7 @@ The **Personal NAS** is a private, self-hosted cloud storage and media server de
 - **Phone Media Gallery:** Date-grouped phone photo & video gallery powered by `FlashList` with album filtering and multi-select sync.
 - **Camera Roll Backup Center:** High-performance backup engine supporting SHA-256 deduplication, incremental sync, 5MB chunked uploads for large files, and standard path formatting (`<Drive>\NAS_Backup\<DeviceName>\`).
 - **Interactive Disk Explorer:** Browse and manage files across mounted NAS drives with `FileExplorerModal`.
+- **In-App OTA Update Checker & Installer:** Built-in update module in System Settings allowing users to check for new Over-The-Air app updates (`Updates.checkForUpdateAsync()`), download updates with live progress, and install/reload with 1 tap (`Updates.reloadAsync()`).
 - **Security & Biometrics:** Biometric unlock (Fingerprint / Face ID), passcode fallback PIN, and encrypted credentials storage via `expo-secure-store`.
 - **Cleartext Traffic Support:** Custom Expo config plugin (`withCleartextTraffic.js`) and HTTPS tunnel failover for smooth HTTP/HTTPS connectivity on Android 9-14.
 

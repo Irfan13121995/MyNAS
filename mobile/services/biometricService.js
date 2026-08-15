@@ -19,9 +19,9 @@ export async function authenticateBiometric(promptMessage = 'Unlock Personal NAS
 
     const result = await LocalAuthentication.authenticateAsync({
       promptMessage,
-      fallbackLabel: 'Use System Passcode',
+      fallbackLabel: '',
       cancelLabel: 'Cancel',
-      disableDeviceFallback: false,
+      disableDeviceFallback: true,
     });
 
     return result;

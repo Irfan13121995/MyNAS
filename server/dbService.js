@@ -189,8 +189,8 @@ async function createUser({ username, email, password, role }) {
   return { user, emailResult };
 }
 
-async function verifyPassword(username, password) {
-  const user = getUserByUsername(username);
+async function verifyPassword(usernameOrEmail, password) {
+  const user = getUserByUsername(usernameOrEmail) || getUserByEmail(usernameOrEmail);
   if (!user) return { success: false, reason: 'user_not_found' };
 
   if (user.status === 'disabled') {

@@ -21,10 +21,10 @@ export async function apiFetch(url, options = {}, token = null) {
     const response = await fetch(url, {
       ...options,
       headers,
-      signal: controller.signal,
+      signal: options.signal || controller.signal,
     });
 
-    if (response.status === 401) {
+    if (response.status === 401 || response.status === 403) {
       throw new AuthError(`Authentication failed with status ${response.status}`);
     }
 

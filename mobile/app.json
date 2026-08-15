@@ -2,18 +2,24 @@
   "expo": {
     "name": "Personal NAS",
     "slug": "personal-nas",
-    "version": "1.2.2",
+    "version": "1.2.3",
     "description": "Self-hosted personal NAS — access, stream, and sync your files from anywhere.",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.irfan.personalnas"
+      "bundleIdentifier": "com.irfan.personalnas",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
+      }
     },
     "android": {
       "package": "com.irfan.personalnas",
-      "versionCode": 11,
+      "versionCode": 12,
       "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "backgroundColor": "#0B0F17",

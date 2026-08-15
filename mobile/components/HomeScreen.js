@@ -247,8 +247,8 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
 
   return (
     <View style={styles.container}>
-      {/* ── DARK GLASS SEARCH & TOOLBAR (SAFE FROM STATUS BAR) ────────── */}
-      <View style={[styles.header, { paddingTop: statusBarPadding }]}>
+      {/* ── DARK GLASS SEARCH & TOOLBAR ────────── */}
+      <View style={[styles.header, { paddingTop: 6 }]}>
         <View style={styles.searchBar}>
           <Text style={styles.searchIcon}>🔍</Text>
           <TextInput

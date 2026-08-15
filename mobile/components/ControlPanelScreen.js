@@ -3,6 +3,7 @@ import {
   StyleSheet, View, Text, ScrollView, TouchableOpacity,
   TextInput, Modal, ActivityIndicator, Alert, Platform, StatusBar
 } from 'react-native';
+import * as Updates from 'expo-updates';
 
 import { useTheme } from '../contexts/ThemeContext';
 import { THEME_MODES } from '../services/themeService';
@@ -16,6 +17,87 @@ export default function ControlPanelScreen({ serverUrl, token, onNavigateModule,
   const [actionLoading, setActionLoading] = useState(false);
   const [systemData, setSystemData] = useState(null);
   const [tunnelData, setTunnelData] = useState(null);
+
+  // App Updates State
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [downloadingUpdate, setDownloadingUpdate] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState(null);
+
+  const handleCheckForUpdates = async () => {
+    setCheckingUpdate(true);
+    try {
+      if (__DEV__) {
+        await new Promise(r => setTimeout(r, 1200));
+        setUpdateInfo({
+          isAvailable: false,
+          lastChecked: new Date().toLocaleTimeString(),
+          message: 'Development Mode: Expo Updates API is active in production builds. (Simulated check passed)'
+        });
+        Alert.alert('App Update Check', 'Your app bundle is up-to-date!');
+        return;
+      }
+
+      const update = await Updates.checkForUpdateAsync();
+      const nowStr = new Date().toLocaleTimeString();
+      if (update.isAvailable) {
+        setUpdateInfo({
+          isAvailable: true,
+          manifest: update.manifest,
+          lastChecked: nowStr,
+          message: 'New Over-The-Air update is available for download!'
+        });
+        Alert.alert(
+          '⚡ Update Available',
+          'A new update is available for Personal NAS! Tap "Download & Install Update" to apply it now.',
+          [
+            { text: 'Download Now', onPress: handleDownloadAndApplyUpdate },
+            { text: 'Later', style: 'cancel' }
+          ]
+        );
+      } else {
+        setUpdateInfo({
+          isAvailable: false,
+          lastChecked: nowStr,
+          message: 'You are using the latest version of Personal NAS.'
+        });
+        Alert.alert('App Up To Date', 'No new updates found. You are running the latest version of Personal NAS.');
+      }
+    } catch (err) {
+      console.warn('Check update error:', err);
+      Alert.alert('Update Check Failed', err.message || 'Unable to check for app updates.');
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
+
+  const handleDownloadAndApplyUpdate = async () => {
+    setDownloadingUpdate(true);
+    try {
+      if (__DEV__) {
+        await new Promise(r => setTimeout(r, 1500));
+        Alert.alert('Update Downloaded', 'Simulation: App would reload now with the new update bundle.');
+        return;
+      }
+
+      await Updates.fetchUpdateAsync();
+      Alert.alert(
+        '🚀 Update Ready!',
+        'The latest update has been downloaded successfully. Restart the app now to apply changes.',
+        [
+          {
+            text: 'Restart App & Apply',
+            onPress: async () => {
+              await Updates.reloadAsync();
+            }
+          }
+        ]
+      );
+    } catch (err) {
+      Alert.alert('Update Download Failed', err.message || 'Failed to download and install update.');
+    } finally {
+      setDownloadingUpdate(false);
+    }
+  };
 
   const handleSelectTheme = async (mode) => {
     setThemeMode(mode);
@@ -36,6 +118,7 @@ export default function ControlPanelScreen({ serverUrl, token, onNavigateModule,
     {
       title: 'General & Maintenance',
       modules: [
+        { id: 'updates', label: 'App Updates & OTA', icon: '🚀', bg: 'rgba(16, 185, 129, 0.25)', color: '#34D399' },
         { id: 'theme', label: 'App Theme Mode', icon: '☀️', bg: 'rgba(245, 158, 11, 0.25)', color: '#F59E0B' },
         { id: 'hardware', label: 'Hardware & Power', icon: '🔋', bg: 'rgba(16, 185, 129, 0.25)', color: '#34D399' },
         { id: 'trash', label: 'Recycle Bin', icon: '🗑️', bg: 'rgba(239, 68, 68, 0.25)', color: '#F87171' },
@@ -164,8 +247,8 @@ export default function ControlPanelScreen({ serverUrl, token, onNavigateModule,
 
   return (
     <View style={styles.container}>
-      {/* ── DARK GLASS TOPBAR (SAFE FROM STATUS BAR) ─────────────────── */}
-      <View style={[styles.topbar, { paddingTop: statusBarPadding }]}>
+      {/* ── DARK GLASS TOPBAR ─────────────────── */}
+      <View style={[styles.topbar, { paddingTop: 6 }]}>
         <Text style={styles.topbarTitle}>Control Panel</Text>
         <View style={styles.topbarActions}>
           <TouchableOpacity style={styles.iconBtn} onPress={onLogout}>
@@ -239,6 +322,7 @@ export default function ControlPanelScreen({ serverUrl, token, onNavigateModule,
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
                 <Text style={styles.modalTitle}>
+                  {activeModal === 'updates' && '🚀 App Updates & OTA'}
                   {activeModal === 'hardware' && '🔋 Hardware & Power'}
                   {activeModal === 'network' && '🌐 Network Configuration'}
                   {activeModal === 'security' && '🛡️ Security Settings'}
@@ -286,6 +370,65 @@ export default function ControlPanelScreen({ serverUrl, token, onNavigateModule,
                             <Text style={styles.actionBtnText}>🔥 Purge All Trash</Text>
                           </TouchableOpacity>
                         )}
+                      </View>
+                    )}
+
+                    {activeModal === 'updates' && (
+                      <View style={styles.modalSection}>
+                        <View style={{ backgroundColor: colors.card, padding: 14, borderRadius: 14, borderWidth: 1, borderColor: colors.borderLight, marginBottom: 14 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                            <Text style={{ fontSize: 16, fontWeight: '700', color: colors.textPrimary }}>Personal NAS Mobile</Text>
+                            <View style={{ backgroundColor: colors.accentBg, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 }}>
+                              <Text style={{ color: colors.accent, fontSize: 12, fontWeight: '800' }}>v1.2.3</Text>
+                            </View>
+                          </View>
+                          <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 2 }}>Runtime Version: 1.2.2 (Channel: main)</Text>
+                          <Text style={{ fontSize: 12, color: colors.textMuted }}>
+                            {updateInfo?.lastChecked ? `Last Checked: ${updateInfo.lastChecked}` : 'Status: Ready to check for updates'}
+                          </Text>
+                        </View>
+
+                        {/* Status Message */}
+                        {updateInfo && (
+                          <View style={{
+                            padding: 12, borderRadius: 12, marginBottom: 14,
+                            backgroundColor: updateInfo.isAvailable ? 'rgba(16, 185, 129, 0.15)' : 'rgba(59, 130, 246, 0.15)',
+                            borderColor: updateInfo.isAvailable ? '#10B981' : '#3B82F6',
+                            borderWidth: 1
+                          }}>
+                            <Text style={{ fontSize: 13, fontWeight: '700', color: updateInfo.isAvailable ? '#10B981' : '#60A5FA', marginBottom: 2 }}>
+                              {updateInfo.isAvailable ? '⚡ New App Update Available!' : '✅ App is Up To Date'}
+                            </Text>
+                            <Text style={{ fontSize: 12, color: colors.textSecondary }}>{updateInfo.message}</Text>
+                          </View>
+                        )}
+
+                        {/* Action Buttons */}
+                        {updateInfo?.isAvailable ? (
+                          <TouchableOpacity
+                            style={[styles.actionBtn, { backgroundColor: colors.accent, borderColor: colors.accent, marginBottom: 10 }]}
+                            onPress={handleDownloadAndApplyUpdate}
+                            disabled={downloadingUpdate}
+                          >
+                            {downloadingUpdate ? (
+                              <ActivityIndicator size="small" color="#0F172A" />
+                            ) : (
+                              <Text style={{ color: '#0F172A', fontWeight: '800', fontSize: 14 }}>⬇️ Download & Install Update</Text>
+                            )}
+                          </TouchableOpacity>
+                        ) : null}
+
+                        <TouchableOpacity
+                          style={[styles.actionBtn, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}
+                          onPress={handleCheckForUpdates}
+                          disabled={checkingUpdate}
+                        >
+                          {checkingUpdate ? (
+                            <ActivityIndicator size="small" color={colors.accent} />
+                          ) : (
+                            <Text style={{ color: colors.textPrimary, fontWeight: '700', fontSize: 14 }}>🔍 Check for Updates</Text>
+                          )}
+                        </TouchableOpacity>
                       </View>
                     )}
 

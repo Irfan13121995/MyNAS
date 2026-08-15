@@ -24,6 +24,7 @@ A self-hosted, enterprise-grade Personal NAS ecosystem providing unified private
   - **Camera Roll Backup Engine:** Multi-protocol background photo/video backup, SHA-256 deduplication, target directory validation (`/api/sync/validate-target`), 5MB chunked large-file uploads, and standard path formatting (`<Drive>\NAS_Backup\<DeviceName>\`).
   - **Media Gallery:** High-performance paginated media grid (`FlashList`), date grouping, format extension filter bar (`ALL`, `.JPG`, `.PNG`, `.WEBP`, `.MP4`, `.MKV`), long-press batch selection mode with **Select All / Deselect All**, and direct targeted NAS upload modal.
   - **Storage & Interactive Explorer:** Circular storage gauges and full Interactive NAS Disk File Explorer (`FileExplorerModal`).
+  - **In-App OTA Update Checker & Installer:** Built-in update module under System Settings allowing users to check for new Over-The-Air app updates (`Updates.checkForUpdateAsync()`), download updates with live progress, and install/reload with 1 tap (`Updates.reloadAsync()`).
   - **Security & Network:** Biometric unlock (Fingerprint / Face ID), passcode fallback modal, custom Expo config plugin (`withCleartextTraffic.js`), and HTTPS tunnel failover for HTTP cleartext exceptions.
 
 ## 4. API Endpoint Reference

@@ -81,7 +81,7 @@ function AppContent() {
   const [loading, setLoading] = useState(true);
   const [serverUrl, setServerUrl] = useState(null);
   const [token, setToken] = useState(null);
-  const [username, setUsername] = useState('Passcode Admin');
+  const [username, setUsername] = useState('NAS User');
   const [activeTab, setActiveTab] = useState('home'); // 'home' | 'storage' | 'library' | 'control'
   const [libraryFilter, setLibraryFilter] = useState('all'); // 'all' | 'photos' | 'videos'
   const [drives, setDrives] = useState([]);
@@ -156,8 +156,8 @@ function AppContent() {
       if (storedUser) setUsername(storedUser);
 
       if (storedUrl && storedToken) {
-        const ok = await verifyToken(storedUrl, storedToken, signal);
-        if (ok) {
+        const verifyResult = await verifyToken(storedUrl, storedToken, signal);
+        if (verifyResult.valid || verifyResult.networkError) {
           // Biometric prompt on launch if enrolled
           const bioRes = await authenticateBiometric('Unlock Personal NAS');
           if (bioRes && bioRes.success) {
@@ -171,6 +171,7 @@ function AppContent() {
             setPinFallbackVisible(true);
           }
         } else {
+          // Explicitly 401 / 403 unauthorized token -> log out
           handleLogout();
         }
       }
@@ -195,11 +196,14 @@ function AppContent() {
           setUsername(data.username);
           await AsyncStorage.setItem('nas_username', data.username);
         }
-        return true;
+        return { valid: true, networkError: false };
       }
-      return false;
+      if (res.status === 401 || res.status === 403) {
+        return { valid: false, networkError: false };
+      }
+      return { valid: false, networkError: true };
     } catch (e) {
-      return false;
+      return { valid: false, networkError: true };
     }
   };
 
@@ -238,7 +242,7 @@ function AppContent() {
         } catch (e) {}
       }
 
-      nameToSet = nameToSet || 'Passcode Admin';
+      nameToSet = nameToSet || 'NAS User';
       await AsyncStorage.setItem('nas_username', nameToSet);
       setServerUrl(url);
       setToken(jwtToken);
@@ -256,7 +260,7 @@ function AppContent() {
       await AsyncStorage.removeItem('nas_username');
       setServerUrl(null);
       setToken(null);
-      setUsername('Passcode Admin');
+      setUsername('NAS User');
       setDrives([]);
     } catch (e) {
       console.error('Failed to clear credentials', e);
@@ -276,9 +280,11 @@ function AppContent() {
         body: JSON.stringify({ passcode: fallbackPin })
       });
       if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        const validToken = data.token || pendingToken;
         setServerUrl(pendingUrl);
-        setToken(pendingToken);
-        fetchDrives(pendingUrl, pendingToken);
+        setToken(validToken);
+        fetchDrives(pendingUrl, validToken);
         setPinFallbackVisible(false);
         setFallbackPin('');
       } else {
@@ -366,7 +372,7 @@ function AppContent() {
             <View style={[styles.userBadge, { backgroundColor: colors.accentBg, borderColor: colors.borderLight }]}>
               <Text style={styles.userBadgeIcon}>👤</Text>
               <Text style={[styles.userBadgeText, { color: colors.accent }]} numberOfLines={1}>
-                {username || 'Passcode Admin'}
+                {username || 'NAS User'}
               </Text>
             </View>
           </View>
