@@ -109,12 +109,13 @@ async function admin(content) {
               <thead>
                 <tr>
                   <th>Time</th>
+                  <th>User</th>
                   <th>Type</th>
                   <th>Event Details</th>
                 </tr>
               </thead>
               <tbody id="admin-activity-tbody">
-                <tr><td colspan="3" style="text-align:center;padding:32px"><div class="spinner"></div></td></tr>
+                <tr><td colspan="4" style="text-align:center;padding:32px"><div class="spinner"></div></td></tr>
               </tbody>
             </table>
           </div>
@@ -486,16 +487,17 @@ async function loadActivityLogs() {
 
   const renderLogs = (filter = '') => {
     const cleanFilter = filter.toLowerCase().trim();
-    const filtered = logs.filter(l => !cleanFilter || l.type.toLowerCase().includes(cleanFilter) || l.detail.toLowerCase().includes(cleanFilter));
+    const filtered = logs.filter(l => !cleanFilter || l.type.toLowerCase().includes(cleanFilter) || l.detail.toLowerCase().includes(cleanFilter) || (l.username && l.username.toLowerCase().includes(cleanFilter)));
     
     if (filtered.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="3" style="text-align:center;padding:32px;color:var(--text-secondary)">No audit activity events recorded.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;padding:32px;color:var(--text-secondary)">No audit activity events recorded.</td></tr>`;
       return;
     }
 
     tbody.innerHTML = filtered.map(l => `
       <tr>
         <td style="font-size:12px;color:var(--text-secondary);white-space:nowrap">${formatTime(l.time)}</td>
+        <td><span class="badge font-mono" style="background:var(--bg-card-hover)">👤 ${escapeHtml(l.username || 'System')}</span></td>
         <td><span class="badge" style="background:var(--bg-card-hover)">${activityIcon(l.type)} ${l.type}</span></td>
         <td>${escapeHtml(l.detail)}</td>
       </tr>`).join('');
@@ -798,7 +800,7 @@ async function loadSystemInfo() {
   }
 }
 
-// ─── FILE UPLOAD MODAL ────────────────────────────────────────────────────────
+// ─── FILE & FOLDER UPLOAD MODAL ────────────────────────────────────────────────────────
 async function showUploadModal(preselectedDrive = '') {
   const r = await GET('/api/drives');
   const drives = r?.data || [];
@@ -817,7 +819,7 @@ async function showUploadModal(preselectedDrive = '') {
     <div class="modal-backdrop" id="modal-backdrop">
       <div class="modal">
         <div class="modal-header">
-          <h3 id="modal-title">📤 Upload File to Storage</h3>
+          <h3 id="modal-title">📤 Upload Items to Storage</h3>
           <button class="modal-close" id="modal-close-btn">✕</button>
         </div>
         <div class="modal-body" id="modal-body">
@@ -832,9 +834,20 @@ async function showUploadModal(preselectedDrive = '') {
               <input id="upload-folder-input" class="input" type="text" placeholder="e.g. Documents or Photos/2026"/>
             </div>
 
-            <div style="margin-bottom:16px">
-              <label for="upload-file-input">Choose File</label>
-              <input id="upload-file-input" class="input" type="file" required style="padding:6px"/>
+            <div style="margin-bottom:12px; display:flex; gap:8px;">
+              <button type="button" id="upload-mode-files-btn" class="btn btn-sm btn-primary" style="flex:1">📄 Upload File(s)</button>
+              <button type="button" id="upload-mode-folder-btn" class="btn btn-sm btn-ghost" style="flex:1">📁 Upload Folder</button>
+            </div>
+
+            <div id="upload-files-container" style="margin-bottom:16px">
+              <label for="upload-file-input">Choose File(s)</label>
+              <input id="upload-file-input" class="input" type="file" multiple style="padding:6px"/>
+            </div>
+
+            <div id="upload-folder-container" style="margin-bottom:16px; display:none">
+              <label for="upload-folder-select-input">Choose Folder</label>
+              <input id="upload-folder-select-input" class="input" type="file" webkitdirectory directory multiple style="padding:6px"/>
+              <div style="font-size:11px; color:var(--text-muted); margin-top:6px">Selecting a folder will upload all contained files and nested subfolders automatically.</div>
             </div>
           </form>
         </div>
@@ -855,37 +868,66 @@ async function showUploadModal(preselectedDrive = '') {
     if (e.target.id === 'modal-backdrop') close();
   });
 
-  document.getElementById('upload-submit-btn').addEventListener('click', () => {
+  let currentUploadMode = 'files';
+  const filesBtn = document.getElementById('upload-mode-files-btn');
+  const folderBtn = document.getElementById('upload-mode-folder-btn');
+  const filesContainer = document.getElementById('upload-files-container');
+  const folderContainer = document.getElementById('upload-folder-container');
+
+  filesBtn.addEventListener('click', () => {
+    currentUploadMode = 'files';
+    filesBtn.className = 'btn btn-sm btn-primary';
+    folderBtn.className = 'btn btn-sm btn-ghost';
+    filesContainer.style.display = 'block';
+    folderContainer.style.display = 'none';
+  });
+
+  folderBtn.addEventListener('click', () => {
+    currentUploadMode = 'folder';
+    folderBtn.className = 'btn btn-sm btn-primary';
+    filesBtn.className = 'btn btn-sm btn-ghost';
+    folderContainer.style.display = 'block';
+    filesContainer.style.display = 'none';
+  });
+
+  document.getElementById('upload-submit-btn').addEventListener('click', async () => {
     const driveLetter = document.getElementById('upload-drive-select').value;
     const subfolder = document.getElementById('upload-folder-input').value.trim();
-    const fileInput = document.getElementById('upload-file-input');
 
-    if (!fileInput.files || fileInput.files.length === 0) {
-      toast('Please select a file to upload.', 'error');
+    const fileInput = currentUploadMode === 'folder'
+      ? document.getElementById('upload-folder-select-input')
+      : document.getElementById('upload-file-input');
+
+    const selectedFiles = fileInput.files ? Array.from(fileInput.files) : [];
+
+    if (selectedFiles.length === 0) {
+      toast(currentUploadMode === 'folder' ? 'Please select a folder to upload.' : 'Please select at least one file to upload.', 'error');
       return;
     }
 
-    const file = fileInput.files[0];
     let destination = driveLetter;
     if (!destination.endsWith('\\') && !destination.endsWith('/')) destination += '\\';
     if (subfolder) destination += subfolder;
 
-    // Switch to Upload Progress Animation view
+    const totalSize = selectedFiles.reduce((sum, f) => sum + f.size, 0);
+
     const modalTitle = document.getElementById('modal-title');
     const modalBody = document.getElementById('modal-body');
     const modalFooter = document.getElementById('modal-footer');
     const modalCloseBtn = document.getElementById('modal-close-btn');
 
-    modalTitle.textContent = '📤 Uploading File...';
+    modalTitle.textContent = selectedFiles.length > 1 ? `📤 Uploading ${selectedFiles.length} Items...` : '📤 Uploading File...';
     modalCloseBtn.style.display = 'none';
     modalFooter.style.display = 'none';
+
+    const firstRelPath = selectedFiles[0].webkitRelativePath || selectedFiles[0].name;
 
     modalBody.innerHTML = `
       <div class="upload-modal-progress">
         <div class="upload-anim-icon">☁️ ⚡</div>
         <div class="upload-file-info">
-          <div class="upload-file-name">${escapeHtml(file.name)}</div>
-          <div class="upload-file-meta">Target: <span class="font-mono" style="color:var(--accent)">${escapeHtml(destination)}</span></div>
+          <div class="upload-file-name" id="upload-file-name">${escapeHtml(firstRelPath)}</div>
+          <div class="upload-file-meta" id="upload-file-meta">Item 1 of ${selectedFiles.length} • Target: <span class="font-mono" style="color:var(--accent)">${escapeHtml(destination)}</span></div>
         </div>
 
         <div class="upload-progress-container">
@@ -893,103 +935,134 @@ async function showUploadModal(preselectedDrive = '') {
         </div>
 
         <div class="upload-stats-row">
-          <span id="upload-bytes-label">0 B / ${formatBytes(file.size)}</span>
+          <span id="upload-bytes-label">0 B / ${formatBytes(totalSize)}</span>
           <span id="upload-pct-label" class="upload-pct-badge">0%</span>
         </div>
 
-        <div class="upload-status-sub" id="upload-status-text">Transferring file to Personal NAS...</div>
+        <div class="upload-status-sub" id="upload-status-text">Transferring items to Personal NAS...</div>
       </div>`;
 
-    const formData = new FormData();
-    formData.append('file', file);
+    let overallLoaded = 0;
+    let successCount = 0;
+    let lastSavedPath = '';
+    let uploadError = null;
 
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', `/api/upload?destination=${encodeURIComponent(destination)}`);
-    xhr.setRequestHeader('Authorization', `Bearer ${Auth.getToken()}`);
+    for (let i = 0; i < selectedFiles.length; i++) {
+      const file = selectedFiles[i];
+      const relativePath = file.webkitRelativePath || file.name;
 
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) {
-        const pct = Math.round((e.loaded / e.total) * 100);
-        const fill = document.getElementById('upload-progress-fill');
-        const pctLabel = document.getElementById('upload-pct-label');
-        const bytesLabel = document.getElementById('upload-bytes-label');
-        const statusText = document.getElementById('upload-status-text');
+      const fileNameEl = document.getElementById('upload-file-name');
+      const fileMetaEl = document.getElementById('upload-file-meta');
+      if (fileNameEl) fileNameEl.textContent = relativePath;
+      if (fileMetaEl) fileMetaEl.innerHTML = `Item ${i + 1} of ${selectedFiles.length} • Target: <span class="font-mono" style="color:var(--accent)">${escapeHtml(destination)}</span>`;
 
-        if (fill) fill.style.width = pct + '%';
-        if (pctLabel) pctLabel.textContent = pct + '%';
-        if (bytesLabel) bytesLabel.textContent = `${formatBytes(e.loaded)} / ${formatBytes(e.total)}`;
-        if (pct === 100 && statusText) {
-          statusText.textContent = 'Finishing & saving to target drive...';
+      try {
+        const resp = await new Promise((resolve, reject) => {
+          const formData = new FormData();
+          formData.append('file', file);
+
+          const xhr = new XMLHttpRequest();
+          const uploadUrl = `/api/upload?destination=${encodeURIComponent(destination)}&relativePath=${encodeURIComponent(relativePath)}`;
+          xhr.open('POST', uploadUrl);
+          xhr.setRequestHeader('Authorization', `Bearer ${Auth.getToken()}`);
+
+          let fileLoadedPrev = 0;
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+              const delta = e.loaded - fileLoadedPrev;
+              fileLoadedPrev = e.loaded;
+              overallLoaded += delta;
+
+              const pct = Math.round((overallLoaded / Math.max(totalSize, 1)) * 100);
+              const fill = document.getElementById('upload-progress-fill');
+              const pctLabel = document.getElementById('upload-pct-label');
+              const bytesLabel = document.getElementById('upload-bytes-label');
+              const statusText = document.getElementById('upload-status-text');
+
+              if (fill) fill.style.width = Math.min(pct, 100) + '%';
+              if (pctLabel) pctLabel.textContent = Math.min(pct, 100) + '%';
+              if (bytesLabel) bytesLabel.textContent = `${formatBytes(overallLoaded)} / ${formatBytes(totalSize)}`;
+              if (pct >= 100 && statusText) {
+                statusText.textContent = i === selectedFiles.length - 1 ? 'Finishing & saving to target drive...' : `Saving item ${i + 1} of ${selectedFiles.length}...`;
+              }
+            }
+          };
+
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              try { resolve(JSON.parse(xhr.responseText)); } catch { resolve({}); }
+            } else {
+              let errStr = 'Upload failed';
+              try { errStr = JSON.parse(xhr.responseText).error || errStr; } catch {}
+              reject(new Error(errStr));
+            }
+          };
+
+          xhr.onerror = () => reject(new Error('Network error during upload'));
+          xhr.send(formData);
+        });
+
+        successCount++;
+        if (resp.path) lastSavedPath = resp.path;
+      } catch (err) {
+        console.error(`Upload error for ${relativePath}:`, err);
+        uploadError = err.message;
+        if (selectedFiles.length === 1) break;
+      }
+    }
+
+    if (successCount > 0) {
+      const savedLocationText = lastSavedPath || `${destination}${selectedFiles[0].name}`;
+
+      modalTitle.textContent = '✅ Upload Confirmed';
+      modalCloseBtn.style.display = 'block';
+      modalFooter.style.display = 'flex';
+      modalFooter.innerHTML = `
+        <button class="btn btn-ghost" id="upload-another-btn">Upload More</button>
+        <button class="btn btn-primary" id="upload-done-btn">Done</button>`;
+
+      modalBody.innerHTML = `
+        <div class="upload-success-box">
+          <div class="upload-success-icon">✓</div>
+          <div class="upload-success-title">${successCount === 1 ? 'File Uploaded Successfully!' : `${successCount} Items Uploaded Successfully!`}</div>
+          <div class="upload-success-desc">Uploaded ${successCount} of ${selectedFiles.length} item(s) (${formatBytes(totalSize)}) to disk.</div>
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;text-align:left">Saved location:</div>
+          <div class="upload-success-path">${escapeHtml(savedLocationText)}</div>
+        </div>`;
+
+      toast(`Successfully uploaded ${successCount} item(s)!`, 'success');
+
+      document.getElementById('upload-done-btn')?.addEventListener('click', () => {
+        close();
+        if (currentPage === 'dashboard' || currentPage === 'storage' || currentPage === 'files' || currentPage === 'gallery') {
+          navigate(currentPage);
         }
-      }
-    };
+      });
 
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        let resp = {};
-        try { resp = JSON.parse(xhr.responseText); } catch {}
-        const savedPath = resp.path || `${destination}${file.name}`;
+      document.getElementById('upload-another-btn')?.addEventListener('click', () => {
+        close();
+        if (currentPage === 'dashboard' || currentPage === 'storage' || currentPage === 'files' || currentPage === 'gallery') {
+          navigate(currentPage);
+        }
+        setTimeout(() => showUploadModal(preselectedDrive), 100);
+      });
+    } else {
+      toast(uploadError || 'Upload failed', 'error');
 
-        modalTitle.textContent = '✅ Upload Confirmed';
-        modalCloseBtn.style.display = 'block';
-        modalFooter.style.display = 'flex';
-        modalFooter.innerHTML = `
-          <button class="btn btn-ghost" id="upload-another-btn">Upload Another</button>
-          <button class="btn btn-primary" id="upload-done-btn">Done</button>`;
+      modalTitle.textContent = '❌ Upload Failed';
+      modalCloseBtn.style.display = 'block';
+      modalFooter.style.display = 'flex';
+      modalFooter.innerHTML = `<button class="btn btn-ghost" id="upload-close-err-btn">Close</button>`;
 
-        modalBody.innerHTML = `
-          <div class="upload-success-box">
-            <div class="upload-success-icon">✓</div>
-            <div class="upload-success-title">File Uploaded Successfully!</div>
-            <div class="upload-success-desc">"${escapeHtml(file.name)}" (${formatBytes(file.size)}) has been saved to disk.</div>
-            <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;text-align:left">Saved location:</div>
-            <div class="upload-success-path">${escapeHtml(savedPath)}</div>
-          </div>`;
+      modalBody.innerHTML = `
+        <div class="upload-success-box">
+          <div class="upload-success-icon" style="border-color:var(--red);color:var(--red);background:rgba(248,81,73,0.15)">✕</div>
+          <div class="upload-success-title" style="color:var(--red)">Upload Encountered an Error</div>
+          <div class="upload-success-desc">${escapeHtml(uploadError || 'An error occurred during upload.')}</div>
+        </div>`;
 
-        toast(`Successfully uploaded "${file.name}"!`, 'success');
-
-        document.getElementById('upload-done-btn')?.addEventListener('click', () => {
-          close();
-          if (currentPage === 'dashboard' || currentPage === 'storage' || currentPage === 'files' || currentPage === 'gallery') {
-            navigate(currentPage);
-          }
-        });
-
-        document.getElementById('upload-another-btn')?.addEventListener('click', () => {
-          close();
-          if (currentPage === 'dashboard' || currentPage === 'storage' || currentPage === 'files' || currentPage === 'gallery') {
-            navigate(currentPage);
-          }
-          setTimeout(() => showUploadModal(preselectedDrive), 100);
-        });
-
-      } else {
-        let errStr = 'Upload failed';
-        try { errStr = JSON.parse(xhr.responseText).error || errStr; } catch {}
-        toast(errStr, 'error');
-
-        modalTitle.textContent = '❌ Upload Failed';
-        modalCloseBtn.style.display = 'block';
-        modalFooter.style.display = 'flex';
-        modalFooter.innerHTML = `<button class="btn btn-ghost" id="upload-close-err-btn">Close</button>`;
-
-        modalBody.innerHTML = `
-          <div class="upload-success-box">
-            <div class="upload-success-icon" style="border-color:var(--red);color:var(--red);background:rgba(248,81,73,0.15)">✕</div>
-            <div class="upload-success-title" style="color:var(--red)">Upload Encountered an Error</div>
-            <div class="upload-success-desc">${escapeHtml(errStr)}</div>
-          </div>`;
-
-        document.getElementById('upload-close-err-btn')?.addEventListener('click', close);
-      }
-    };
-
-    xhr.onerror = () => {
-      toast('Network error during file upload', 'error');
-      close();
-    };
-
-    xhr.send(formData);
+      document.getElementById('upload-close-err-btn')?.addEventListener('click', close);
+    }
   });
 }
 
@@ -1005,6 +1078,10 @@ async function dashboard(container) {
   const sys = systemR?.data || {};
   const activity = activityR?.data || [];
   const tunnel = tunnelR?.data || {};
+
+  let currentUserInfo = {};
+  try { currentUserInfo = JSON.parse(localStorage.getItem('nas_user_info') || '{}'); } catch(e) {}
+  const isAdminUser = currentUserInfo.role === 'admin' || localStorage.getItem('nas_user') === 'Passcode Admin';
 
   const totalSize = drives.reduce((a, d) => a + (d.size || 0), 0);
   const totalFree = drives.reduce((a, d) => a + (d.freeSpace || 0), 0);
@@ -1120,14 +1197,20 @@ async function dashboard(container) {
               <div class="card-title">📋 Recent Activity</div>
             </div>
             ${activity.length === 0 ? '<p style="color:var(--text-secondary);font-size:13px">No activity yet.</p>' :
-              activity.slice(0,8).map(a => `
+              activity.slice(0,8).map(a => {
+                const userTag = (isAdminUser && a.username && a.username !== 'System') ? `<span class="badge font-mono" style="font-size:10px;padding:1px 5px;background:var(--bg-card-hover);margin-left:6px">👤 ${escapeHtml(a.username)}</span>` : '';
+                return `
                 <div class="activity-item">
                   <div class="activity-icon" style="background:var(--bg-secondary)">${activityIcon(a.type)}</div>
                   <div class="activity-text">
-                    <div class="activity-title">${a.detail}</div>
+                    <div class="activity-title" style="display:flex;align-items:center;flex-wrap:wrap">
+                      <span>${escapeHtml(a.detail)}</span>
+                      ${userTag}
+                    </div>
                     <div class="activity-time">${formatTime(a.time)}</div>
                   </div>
-                </div>`).join('')
+                </div>`;
+              }).join('')
             }
           </div>
         </div>

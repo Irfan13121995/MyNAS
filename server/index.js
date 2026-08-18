@@ -70,11 +70,14 @@ if (!PASSCODE_HASH && process.env.PASSCODE) {
 
 const SERVER_START_TIME = Date.now();
 
-// In-memory activity log (last 50 events)
+// In-memory activity log (synced with SQLite for persistence)
 const activityLog = [];
-function logActivity(type, detail) {
-  activityLog.unshift({ type, detail, time: new Date().toISOString() });
-  if (activityLog.length > 50) activityLog.pop();
+function logActivity(type, detail, username = null) {
+  const user = username || 'System';
+  const entry = { type, detail, username: user, time: new Date().toISOString() };
+  activityLog.unshift(entry);
+  if (activityLog.length > 200) activityLog.pop();
+  dbService.recordActivity(type, detail, user);
 }
 
 const helmet = require('helmet');
@@ -151,15 +154,25 @@ const authenticateToken = (req, res, next) => {
       req.user = {
         ...decoded,
         id: dbUser.id,
+        username: dbUser.username,
         role: dbUser.role || 'user',
-        isReadonly: dbUser.isReadonly,
+        isReadonly: Boolean(dbUser.isReadonly),
         allowedDisks: dbUser.allowedDisks
+      };
+    } else if (decoded.username === 'Passcode Admin' || decoded.role === 'admin') {
+      req.user = {
+        role: 'admin',
+        username: decoded.username || 'Passcode Admin',
+        isReadonly: false,
+        allowedDisks: null,
+        ...decoded
       };
     } else {
       req.user = {
-        role: 'admin',
-        isReadonly: false,
-        allowedDisks: null,
+        role: 'user',
+        username: decoded.username || 'user',
+        isReadonly: Boolean(decoded.isReadonly),
+        allowedDisks: decoded.allowedDisks || null,
         ...decoded
       };
     }
@@ -229,7 +242,7 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     const baseUrl = `${protocol}://${host}`;
 
     const result = await usersService.createUser({ username, email, password, baseUrl });
-    logActivity('auth', 'New account created: ' + username);
+    logActivity('auth', 'New account created: ' + username, username);
     
     // Check if email verification is required and pending
     const requireVerification = process.env.REQUIRE_EMAIL_VERIFICATION !== 'false';
@@ -264,7 +277,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
   if (passcode) {
     if (PASSCODE_HASH && bcrypt.compareSync(passcode.toString(), PASSCODE_HASH)) {
       const token = jwt.sign({ authenticated: true, role: 'admin', username: 'Passcode Admin' }, JWT_SECRET, { expiresIn: '7d' });
-      logActivity('auth', 'Dashboard login via passcode');
+      logActivity('auth', 'Dashboard login via passcode', 'Passcode Admin');
       return res.json({ token, username: 'Passcode Admin', user: { username: 'Passcode Admin', role: 'admin', isReadonly: false, allowedDisks: null } });
     }
     return res.status(401).json({ error: 'Incorrect passcode' });
@@ -281,7 +294,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
         isReadonly: result.user.isReadonly,
         allowedDisks: result.user.allowedDisks
       }, JWT_SECRET, { expiresIn: '7d' });
-      logActivity('auth', 'Dashboard login: ' + result.user.username);
+      logActivity('auth', 'Dashboard login: ' + result.user.username, result.user.username);
       return res.json({ token, username: result.user.username, user: result.user });
     }
 
@@ -308,7 +321,7 @@ app.get('/api/auth/verify-email', (req, res) => {
   const { token } = req.query;
   const result = usersService.verifyEmail(token);
   if (result.success) {
-    logActivity('auth', `Email verified for user: ${result.username}`);
+    logActivity('auth', `Email verified for user: ${result.username}`, result.username);
     return res.send(`
       <!DOCTYPE html>
       <html>
@@ -378,7 +391,7 @@ app.post('/api/admin/users/create', authenticateToken, requireAdmin, async (req,
     if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
 
     const result = await usersService.createUser({ username, email, password, role });
-    logActivity('admin', `Admin created user: ${username} (Role: ${result.user.role})`);
+    logActivity('admin', `Admin created user: ${username} (Role: ${result.user.role})`, req.user?.username);
     res.json({ success: true, user: result.user });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -388,7 +401,7 @@ app.post('/api/admin/users/create', authenticateToken, requireAdmin, async (req,
 app.put('/api/admin/users/:id/permissions', authenticateToken, requireAdmin, (req, res) => {
   try {
     const updated = usersService.updateUserPermissions(req.params.id, req.body);
-    logActivity('admin', `Updated permissions for user: ${updated.username} (Role: ${updated.role}, ReadOnly: ${updated.isReadonly}, Status: ${updated.status})`);
+    logActivity('admin', `Updated permissions for user: ${updated.username} (Role: ${updated.role}, ReadOnly: ${updated.isReadonly}, Status: ${updated.status})`, req.user?.username);
     res.json({ success: true, user: updated });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -400,7 +413,7 @@ app.post('/api/admin/users/:id/reset-password', authenticateToken, requireAdmin,
     const { newPassword } = req.body;
     if (!newPassword || newPassword.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
     await usersService.resetUserPassword(req.params.id, newPassword);
-    logActivity('admin', `Reset password for user ID: ${req.params.id}`);
+    logActivity('admin', `Reset password for user ID: ${req.params.id}`, req.user?.username);
     res.json({ success: true, message: 'Password reset successfully' });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -410,7 +423,7 @@ app.post('/api/admin/users/:id/reset-password', authenticateToken, requireAdmin,
 app.post('/api/admin/users/:id/unlock', authenticateToken, requireAdmin, (req, res) => {
   try {
     usersService.unlockUserAccount(req.params.id);
-    logActivity('admin', `Unlocked account for user ID: ${req.params.id}`);
+    logActivity('admin', `Unlocked account for user ID: ${req.params.id}`, req.user?.username);
     res.json({ success: true, message: 'Account unlocked' });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -420,7 +433,7 @@ app.post('/api/admin/users/:id/unlock', authenticateToken, requireAdmin, (req, r
 app.delete('/api/admin/users/:id', authenticateToken, requireAdmin, (req, res) => {
   try {
     usersService.deleteUser(req.params.id);
-    logActivity('admin', `Deleted user account ID: ${req.params.id}`);
+    logActivity('admin', `Deleted user account ID: ${req.params.id}`, req.user?.username);
     res.json({ success: true, message: 'User deleted' });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -428,7 +441,7 @@ app.delete('/api/admin/users/:id', authenticateToken, requireAdmin, (req, res) =
 });
 
 app.get('/api/admin/activity', authenticateToken, requireAdmin, (req, res) => {
-  res.json(activityLog);
+  res.json(dbService.getActivityLogs({ username: req.user?.username, role: 'admin', limit: 200 }));
 });
 
 // ─── 4. SYSTEM ENDPOINT ────────────────────────────────────────────────────────
@@ -462,7 +475,16 @@ app.get('/api/system', authenticateToken, (req, res) => {
 // ─── 5. ACTIVITY LOG ──────────────────────────────────────────────────────────
 
 app.get('/api/activity', authenticateToken, (req, res) => {
-  res.json(activityLog);
+  const role = req.user?.role || 'user';
+  const username = req.user?.username;
+
+  if (role === 'admin') {
+    return res.json(dbService.getActivityLogs({ username, role: 'admin', limit: 50 }));
+  }
+
+  if (!username) return res.json([]);
+  const userLogs = dbService.getActivityLogs({ username, role: 'user', limit: 50 });
+  res.json(userLogs);
 });
 
 // ─── 6. DRIVES ENDPOINTS ─────────────────────────────────────────────────────
@@ -539,7 +561,7 @@ app.post('/api/drives/add', authenticateToken, requireAdmin, checkReadWrite, asy
     driveConfig.initializeWithDrives(currentLetters);
 
     driveConfig.addPath(drivePath, label || drivePath);
-    logActivity('storage', `Added storage: ${drivePath}`);
+    logActivity('storage', `Added storage: ${drivePath}`, req.user?.username);
     res.json({ success: true });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -557,7 +579,7 @@ app.delete('/api/drives/remove', authenticateToken, requireAdmin, checkReadWrite
     driveConfig.initializeWithDrives(currentLetters);
 
     driveConfig.removePath(drivePath);
-    logActivity('storage', `Removed storage: ${drivePath}`);
+    logActivity('storage', `Removed storage: ${drivePath}`, req.user?.username);
     res.json({ success: true });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -611,7 +633,7 @@ app.get('/api/files', authenticateToken, async (req, res) => {
     }
 
     const files = await listFiles(normalizedTargetPath);
-    logActivity('browse', `Browsed: ${normalizedTargetPath}`);
+    logActivity('browse', `Browsed: ${normalizedTargetPath}`, req.user?.username);
     const results = files.map(f => ({ ...f, path: path.join(normalizedTargetPath, f.name) }));
     res.json(results);
   } catch (err) {
@@ -638,7 +660,7 @@ app.get('/api/files/search', authenticateToken, async (req, res) => {
     if (req.user?.allowedDisks && Array.isArray(req.user.allowedDisks) && req.user.allowedDisks.length > 0) {
       results = results.filter(f => isPathAllowed(f.path, req.user.allowedDisks));
     }
-    logActivity('search', `Global search for: "${query}" (${results.length} found)`);
+    logActivity('search', `Global search for: "${query}" (${results.length} found)`, req.user?.username);
     res.json(results);
   } catch (err) {
     res.status(500).json({ error: `Failed to execute search: ${err.message}` });
@@ -701,7 +723,7 @@ app.get('/api/stream', authenticateToken, async (req, res) => {
 
   try {
     await validatePath(targetPath);
-    logActivity('stream', `Streamed: ${path.basename(targetPath)}`);
+    logActivity('stream', `Streamed: ${path.basename(targetPath)}`, req.user?.username);
     await streamFile(targetPath, req, res);
   } catch (err) {
     res.status(403).json({ error: err.message });
@@ -727,7 +749,17 @@ app.post('/api/upload', authenticateToken, checkReadWrite, upload.single('file')
   try {
     const validatedDir = await validatePath(destinationDir);
     await fs.promises.mkdir(validatedDir, { recursive: true });
-    const finalPath = path.join(validatedDir, req.file.originalname);
+
+    let relativePath = req.query.relativePath || req.headers['x-relative-path'] || '';
+    let finalPath;
+    if (relativePath) {
+      const cleanRelPath = relativePath.replace(/\\/g, '/').split('/').filter(p => p !== '' && p !== '..').join(path.sep);
+      finalPath = path.join(validatedDir, cleanRelPath);
+    } else {
+      finalPath = path.join(validatedDir, req.file.originalname);
+    }
+
+    await fs.promises.mkdir(path.dirname(finalPath), { recursive: true });
 
     try {
       await fs.promises.rename(req.file.path, finalPath);
@@ -738,7 +770,7 @@ app.post('/api/upload', authenticateToken, checkReadWrite, upload.single('file')
       } else throw renameErr;
     }
 
-    logActivity('upload', `Uploaded: ${req.file.originalname}`);
+    logActivity('upload', `Uploaded: ${relativePath || req.file.originalname}`, req.user?.username);
     res.json({ success: true, path: finalPath });
   } catch (err) {
     try { await fs.promises.unlink(req.file.path); } catch {}
@@ -796,7 +828,7 @@ app.post('/api/upload/chunk', authenticateToken, checkReadWrite, upload.single('
       // Clean up chunk directory
       await fs.promises.rmdir(chunkDir).catch(() => {});
 
-      logActivity('upload', `Uploaded (chunked): ${originalName}`);
+      logActivity('upload', `Uploaded (chunked): ${originalName}`, req.user?.username);
       return res.json({ success: true, completed: true, path: finalPath });
     }
 
@@ -821,7 +853,7 @@ app.post('/api/tunnel/start', authenticateToken, async (req, res) => {
     const targetCustomUrl = customUrl || savedConfig.customUrl || '';
 
     const url = await startTunnel(PORT, targetMode, targetToken, targetCustomUrl);
-    logActivity('tunnel', `Tunnel (${targetMode}) activated: ${url}`);
+    logActivity('tunnel', `Tunnel (${targetMode}) activated: ${url}`, req.user?.username);
     res.json({ success: true, mode: targetMode, url });
   } catch (err) {
     res.status(500).json({ error: `Failed to start tunnel: ${err.message}` });
@@ -840,7 +872,7 @@ app.post('/api/tunnel/configure-named', authenticateToken, async (req, res) => {
     // Restart tunnel with new named configuration
     stopTunnel();
     const url = await startTunnel(PORT, 'named', token.trim(), (customUrl || '').trim());
-    logActivity('tunnel', `Permanent Named Tunnel configured: ${url}`);
+    logActivity('tunnel', `Permanent Named Tunnel configured: ${url}`, req.user?.username);
     res.json({ success: true, mode: 'named', url });
   } catch (err) {
     res.status(500).json({ error: `Failed to configure named tunnel: ${err.message}` });
@@ -849,19 +881,19 @@ app.post('/api/tunnel/configure-named', authenticateToken, async (req, res) => {
 
 app.post('/api/tunnel/stop', authenticateToken, (req, res) => {
   stopTunnel();
-  logActivity('tunnel', 'Tunnel deactivated');
+  logActivity('tunnel', 'Tunnel deactivated', req.user?.username);
   res.json({ success: true });
 });
 
 // ─── 10.5. SYSTEM CONTROL & MAINTENANCE ENDPOINTS ──────────────────────────────
 
 app.post('/api/system/reboot', authenticateToken, requireAdmin, (req, res) => {
-  logActivity('system', 'System reboot requested');
+  logActivity('system', 'System reboot requested', req.user?.username);
   res.json({ success: true, message: 'System reboot request acknowledged.' });
 });
 
 app.post('/api/system/shutdown', authenticateToken, requireAdmin, (req, res) => {
-  logActivity('system', 'System shutdown requested');
+  logActivity('system', 'System shutdown requested', req.user?.username);
   res.json({ success: true, message: 'System shutdown request acknowledged.' });
 });
 
@@ -873,7 +905,7 @@ app.post('/api/system/cleanup', authenticateToken, requireAdmin, async (req, res
       await fs.promises.unlink(path.join(uploadTempDir, f)).catch(() => {});
       count++;
     }
-    logActivity('system', `Cleaned up ${count} temporary files`);
+    logActivity('system', `Cleaned up ${count} temporary files`, req.user?.username);
     res.json({ success: true, filesCleaned: count });
   } catch (err) {
     res.status(500).json({ error: `Cleanup failed: ${err.message}` });
@@ -883,7 +915,7 @@ app.post('/api/system/cleanup', authenticateToken, requireAdmin, async (req, res
 app.post('/api/drives/refresh', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const drives = await getDrives();
-    logActivity('storage', `Refreshed drive list (${drives.length} drives detected)`);
+    logActivity('storage', `Refreshed drive list (${drives.length} drives detected)`, req.user?.username);
     res.json({ success: true, count: drives.length, drives });
   } catch (err) {
     res.status(500).json({ error: `Drive refresh failed: ${err.message}` });
@@ -913,7 +945,7 @@ app.get('/api/trash', authenticateToken, (req, res) => {
 app.post('/api/trash/restore', authenticateToken, checkReadWrite, (req, res) => {
   try {
     const item = trashService.restoreFromTrash(req.body.id);
-    logActivity('trash', `Restored: ${item.fileName}`);
+    logActivity('trash', `Restored: ${item.fileName}`, req.user?.username);
     res.json({ success: true, item });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -923,7 +955,7 @@ app.post('/api/trash/restore', authenticateToken, checkReadWrite, (req, res) => 
 app.delete('/api/trash/purge', authenticateToken, checkReadWrite, (req, res) => {
   try {
     trashService.purgeTrash(req.query.id);
-    logActivity('trash', 'Purged trash item');
+    logActivity('trash', 'Purged trash item', req.user?.username);
     res.json({ success: true });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -938,7 +970,7 @@ app.post('/api/files/delete', authenticateToken, checkReadWrite, (req, res) => {
   }
   try {
     const item = trashService.moveToTrash(targetPath);
-    logActivity('trash', `Moved to trash: ${item.fileName}`);
+    logActivity('trash', `Moved to trash: ${item.fileName}`, req.user?.username);
     res.json({ success: true, item });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -999,7 +1031,7 @@ app.post('/api/files/mkdir', authenticateToken, checkReadWrite, async (req, res)
       return res.json({ success: true, exists: true, path: validatedDir });
     }
     await fs.promises.mkdir(validatedDir, { recursive: true });
-    logActivity('files', `Created folder: ${validatedDir}`);
+    logActivity('files', `Created folder: ${validatedDir}`, req.user?.username);
     res.json({ success: true, created: true, path: validatedDir });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -1024,7 +1056,7 @@ app.post('/api/sync/settings', authenticateToken, (req, res) => {
   try {
     const userId = req.user?.id || req.user?.username || 'default_user';
     const saved = dbService.saveSyncSettings(userId, req.body || {});
-    logActivity('sync', `Updated auto-sync settings for ${userId}`);
+    logActivity('sync', `Updated auto-sync settings for ${userId}`, req.user?.username);
     res.json({ success: true, settings: saved });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1149,7 +1181,7 @@ app.post('/api/upload/chunk', authenticateToken, upload.single('chunk'), async (
       }
       await fs.promises.rmdir(chunksDir).catch(() => {});
 
-      logActivity('upload', `Chunked upload complete: ${fileName}`);
+      logActivity('upload', `Chunked upload complete: ${fileName}`, req.user?.username);
       return res.json({ success: true, complete: true, path: finalPath });
     }
 

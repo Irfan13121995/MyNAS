@@ -39,6 +39,16 @@ db.exec(`
     low_battery_pause INTEGER DEFAULT 1,
     updated_at TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS activity_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT NOT NULL,
+    detail TEXT NOT NULL,
+    username TEXT NOT NULL,
+    time TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_activity_logs_username ON activity_logs(username);
+  CREATE INDEX IF NOT EXISTS idx_activity_logs_time ON activity_logs(time);
 `);
 
 // Add permissions & status columns to users table if not exist
@@ -367,6 +377,38 @@ function saveSyncSettings(userId, settings) {
   return getSyncSettings(uId);
 }
 
+/**
+ * Persists an activity log entry to SQLite.
+ * Keeps max 500 recent records.
+ */
+function recordActivity(type, detail, username = 'System') {
+  const user = username || 'System';
+  const time = new Date().toISOString();
+  try {
+    db.prepare('INSERT INTO activity_logs (type, detail, username, time) VALUES (?, ?, ?, ?)').run(type, detail, user, time);
+    db.prepare('DELETE FROM activity_logs WHERE id NOT IN (SELECT id FROM activity_logs ORDER BY id DESC LIMIT 500)').run();
+  } catch (err) {
+    console.warn('Failed to record activity log to SQLite:', err.message);
+  }
+}
+
+/**
+ * Retrieves activity logs filtered by role/username.
+ * Admin sees all; standard user only sees their own activity.
+ */
+function getActivityLogs({ username, role, limit = 50 }) {
+  try {
+    if (role === 'admin') {
+      return db.prepare('SELECT type, detail, username, time FROM activity_logs ORDER BY id DESC LIMIT ?').all(limit);
+    }
+    if (!username) return [];
+    return db.prepare('SELECT type, detail, username, time FROM activity_logs WHERE LOWER(username) = LOWER(?) ORDER BY id DESC LIMIT ?').all(username, limit);
+  } catch (err) {
+    console.warn('Failed to get activity logs from SQLite:', err.message);
+    return [];
+  }
+}
+
 module.exports = {
   hasAnyUsers,
   getUserByUsername,
@@ -381,5 +423,7 @@ module.exports = {
   unlockUserAccount,
   deleteUser,
   getSyncSettings,
-  saveSyncSettings
+  saveSyncSettings,
+  recordActivity,
+  getActivityLogs
 };

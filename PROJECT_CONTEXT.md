@@ -36,11 +36,13 @@ A self-hosted, enterprise-grade Personal NAS ecosystem providing unified private
 - `/api/gallery`: Serves paginated media items filtered by user disk access rules.
 - `/api/users` & `/api/admin/users`: Manages registered users, creation, permissions updates, password resets, and account unlocking.
 - `/api/tunnel`: Manages Cloudflare Quick Tunnels and Permanent Named Tunnels (`/start`, `/stop`, `/configure-named`, `/status`).
+- `/api/activity`: Serves recent activity logs with strict user isolation (regular users only receive their own activity, while admins see global activity with user attribution tags).
+- `/api/admin/activity`: Admin-only endpoint serving the full security audit log with user attribution.
 - `/api/system`: Serves server status, uptime, network IP addresses, and system info.
 
 ## 5. Database Schema (`nas_data.db`)
 - **`users`**: Stores user ID, username, email, bcrypt password hash, role (`admin`/`user`), `is_readonly` flag, `allowed_disks` JSON array, email verification status, and timestamp.
-- **`activity_logs`**: Tracks file access, uploads, logins, administrative changes, and system events.
+- **`activity_logs`**: SQLite table storing `id`, `type`, `detail`, `username`, and `time` with indexed username and timestamp columns for fast, secure audit querying.
 - **`sync_manifest`**: Keeps track of device ID, file hashes, filenames, file sizes, target NAS paths, and sync timestamps for deduplication.
 
 ## 6. Remote Access & Tunnels
