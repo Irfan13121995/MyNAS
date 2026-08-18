@@ -801,7 +801,7 @@ async function loadSystemInfo() {
 }
 
 // ─── FILE & FOLDER UPLOAD MODAL ────────────────────────────────────────────────────────
-async function showUploadModal(preselectedDrive = '') {
+async function showUploadModal(preselectedDrive = '', preselectedFolder = '') {
   const r = await GET('/api/drives');
   const drives = r?.data || [];
 
@@ -810,50 +810,68 @@ async function showUploadModal(preselectedDrive = '') {
     return;
   }
 
+  // Auto clean drive and folder defaults
+  let defaultDrive = preselectedDrive || (drives.length > 0 ? drives[0].letter : '');
+  let defaultFolder = preselectedFolder || '';
+
   const driveOptions = drives.map(d => `
-    <option value="${d.letter}" ${d.letter === preselectedDrive ? 'selected' : ''}>
+    <option value="${d.letter}" ${d.letter.toUpperCase().startsWith(defaultDrive.toUpperCase()) ? 'selected' : ''}>
       ${d.name || d.letter} (${d.letter}) — ${formatBytes(d.freeSpace || 0)} free
     </option>`).join('');
 
   const modalHtml = `
     <div class="modal-backdrop" id="modal-backdrop">
-      <div class="modal">
+      <div class="modal" style="max-width: 580px;">
         <div class="modal-header">
-          <h3 id="modal-title">📤 Upload Items to Storage</h3>
+          <h3 id="modal-title">📤 Upload Files & Folders</h3>
           <button class="modal-close" id="modal-close-btn">✕</button>
         </div>
         <div class="modal-body" id="modal-body">
           <form id="upload-form">
-            <div style="margin-bottom:16px">
-              <label for="upload-drive-select">Select Target Drive</label>
-              <select id="upload-drive-select" class="select">${driveOptions}</select>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">
+              <div>
+                <label for="upload-drive-select" style="font-weight:600; font-size:12px; margin-bottom:6px; display:block">Select Target Drive</label>
+                <select id="upload-drive-select" class="select">${driveOptions}</select>
+              </div>
+              <div>
+                <label for="upload-folder-input" style="font-weight:600; font-size:12px; margin-bottom:6px; display:block">Destination Subfolder (optional)</label>
+                <input id="upload-folder-input" class="input" type="text" placeholder="e.g. Documents or Photos" value="${escapeHtml(defaultFolder)}"/>
+              </div>
             </div>
 
-            <div style="margin-bottom:16px">
-              <label for="upload-folder-input">Destination Subfolder (optional)</label>
-              <input id="upload-folder-input" class="input" type="text" placeholder="e.g. Documents or Photos/2026"/>
+            <!-- Drag & Drop Zone -->
+            <div id="upload-dropzone" class="upload-dropzone">
+              <div class="upload-dropzone-icon">☁️ 📁</div>
+              <div class="upload-dropzone-title">Drag & drop files or folders here</div>
+              <div class="upload-dropzone-sub">or click a button below to choose items from your computer</div>
+              
+              <div class="upload-dropzone-actions" onclick="event.stopPropagation()">
+                <button type="button" id="btn-pick-files" class="btn btn-sm btn-primary">
+                  <span>📄 Select Multiple Files</span>
+                </button>
+                <button type="button" id="btn-pick-folder" class="btn btn-sm btn-ghost" style="border: 1px solid var(--border); background: var(--bg-card-hover)">
+                  <span>📁 Select Complete Folder</span>
+                </button>
+              </div>
+
+              <!-- Hidden native file inputs -->
+              <input id="native-file-input" type="file" multiple style="display:none" />
+              <input id="native-folder-input" type="file" webkitdirectory directory multiple style="display:none" />
             </div>
 
-            <div style="margin-bottom:12px; display:flex; gap:8px;">
-              <button type="button" id="upload-mode-files-btn" class="btn btn-sm btn-primary" style="flex:1">📄 Upload File(s)</button>
-              <button type="button" id="upload-mode-folder-btn" class="btn btn-sm btn-ghost" style="flex:1">📁 Upload Folder</button>
-            </div>
-
-            <div id="upload-files-container" style="margin-bottom:16px">
-              <label for="upload-file-input">Choose File(s)</label>
-              <input id="upload-file-input" class="input" type="file" multiple style="padding:6px"/>
-            </div>
-
-            <div id="upload-folder-container" style="margin-bottom:16px; display:none">
-              <label for="upload-folder-select-input">Choose Folder</label>
-              <input id="upload-folder-select-input" class="input" type="file" webkitdirectory directory multiple style="padding:6px"/>
-              <div style="font-size:11px; color:var(--text-muted); margin-top:6px">Selecting a folder will upload all contained files and nested subfolders automatically.</div>
+            <!-- Selected Files Staging List -->
+            <div id="upload-selected-summary" style="display:none; margin-bottom: 12px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+                <span id="upload-staging-count" class="badge" style="background:var(--accent-dim); color:var(--accent); font-weight:700">0 items selected</span>
+                <button type="button" id="upload-clear-staging-btn" class="btn btn-ghost btn-xs text-muted" style="font-size:11px">✕ Clear All</button>
+              </div>
+              <div id="upload-file-list" class="upload-file-list"></div>
             </div>
           </form>
         </div>
         <div class="modal-footer" id="modal-footer">
           <button class="btn btn-ghost" id="upload-cancel-btn">Cancel</button>
-          <button class="btn btn-primary" id="upload-submit-btn">Upload Now</button>
+          <button class="btn btn-primary" id="upload-submit-btn" disabled style="opacity:0.6">Upload Now</button>
         </div>
       </div>
     </div>`;
@@ -868,40 +886,168 @@ async function showUploadModal(preselectedDrive = '') {
     if (e.target.id === 'modal-backdrop') close();
   });
 
-  let currentUploadMode = 'files';
-  const filesBtn = document.getElementById('upload-mode-files-btn');
-  const folderBtn = document.getElementById('upload-mode-folder-btn');
-  const filesContainer = document.getElementById('upload-files-container');
-  const folderContainer = document.getElementById('upload-folder-container');
+  const dropzone = document.getElementById('upload-dropzone');
+  const nativeFileInput = document.getElementById('native-file-input');
+  const nativeFolderInput = document.getElementById('native-folder-input');
+  const btnPickFiles = document.getElementById('btn-pick-files');
+  const btnPickFolder = document.getElementById('btn-pick-folder');
+  const clearStagingBtn = document.getElementById('upload-clear-staging-btn');
 
-  filesBtn.addEventListener('click', () => {
-    currentUploadMode = 'files';
-    filesBtn.className = 'btn btn-sm btn-primary';
-    folderBtn.className = 'btn btn-sm btn-ghost';
-    filesContainer.style.display = 'block';
-    folderContainer.style.display = 'none';
+  let stagedFiles = []; // Array of { file: File, relativePath: string }
+
+  function addFilesToStaging(fileList) {
+    for (let i = 0; i < fileList.length; i++) {
+      const file = fileList[i];
+      const relPath = file.webkitRelativePath || file.name;
+      stagedFiles.push({ file, relativePath: relPath });
+    }
+    renderStagedList();
+  }
+
+  // Recursively traverse directory entries when folders are dragged and dropped
+  async function traverseDirectory(entry, currentPath = '') {
+    if (entry.isFile) {
+      return new Promise((resolve) => {
+        entry.file((file) => {
+          const relativePath = currentPath ? `${currentPath}/${file.name}` : file.name;
+          stagedFiles.push({ file, relativePath });
+          resolve();
+        });
+      });
+    } else if (entry.isDirectory) {
+      const dirReader = entry.createReader();
+      const readEntries = async () => {
+        return new Promise((resolve) => {
+          dirReader.readEntries(async (entries) => {
+            if (entries.length === 0) {
+              resolve();
+            } else {
+              const subPath = currentPath ? `${currentPath}/${entry.name}` : entry.name;
+              for (const subEntry of entries) {
+                await traverseDirectory(subEntry, subPath);
+              }
+              await readEntries();
+              resolve();
+            }
+          });
+        });
+      };
+      await readEntries();
+    }
+  }
+
+  function renderStagedList() {
+    const summary = document.getElementById('upload-selected-summary');
+    const countBadge = document.getElementById('upload-staging-count');
+    const listEl = document.getElementById('upload-file-list');
+    const submitBtn = document.getElementById('upload-submit-btn');
+    if (!summary || !countBadge || !listEl || !submitBtn) return;
+
+    if (stagedFiles.length === 0) {
+      summary.style.display = 'none';
+      submitBtn.disabled = true;
+      submitBtn.style.opacity = '0.6';
+      submitBtn.textContent = 'Upload Now';
+      return;
+    }
+
+    const totalBytes = stagedFiles.reduce((sum, item) => sum + item.file.size, 0);
+    summary.style.display = 'block';
+    countBadge.textContent = `${stagedFiles.length} item(s) selected • ${formatBytes(totalBytes)}`;
+    submitBtn.disabled = false;
+    submitBtn.style.opacity = '1';
+    submitBtn.textContent = `Upload ${stagedFiles.length} Item(s)`;
+
+    listEl.innerHTML = stagedFiles.slice(0, 100).map((item, idx) => `
+      <div class="upload-file-item">
+        <span style="margin-right:4px">${fileIcon(item.file.name.split('.').pop(), false)}</span>
+        <span class="upload-file-item-name" title="${escapeHtml(item.relativePath)}">${escapeHtml(item.relativePath)}</span>
+        <span class="upload-file-item-size">${formatBytes(item.file.size)}</span>
+        <span class="upload-file-item-remove" data-idx="${idx}" title="Remove file">✕</span>
+      </div>
+    `).join('') + (stagedFiles.length > 100 ? `<div style="text-align:center;font-size:11px;color:var(--text-muted);padding:4px">+ ${stagedFiles.length - 100} more items</div>` : '');
+
+    listEl.querySelectorAll('.upload-file-item-remove').forEach(btn => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        const removeIdx = parseInt(btn.dataset.idx);
+        stagedFiles.splice(removeIdx, 1);
+        renderStagedList();
+      };
+    });
+  }
+
+  btnPickFiles.addEventListener('click', (e) => {
+    e.stopPropagation();
+    nativeFileInput.value = '';
+    nativeFileInput.click();
   });
 
-  folderBtn.addEventListener('click', () => {
-    currentUploadMode = 'folder';
-    folderBtn.className = 'btn btn-sm btn-primary';
-    filesBtn.className = 'btn btn-sm btn-ghost';
-    folderContainer.style.display = 'block';
-    filesContainer.style.display = 'none';
+  btnPickFolder.addEventListener('click', (e) => {
+    e.stopPropagation();
+    nativeFolderInput.value = '';
+    nativeFolderInput.click();
+  });
+
+  nativeFileInput.addEventListener('change', (e) => {
+    if (e.target.files && e.target.files.length > 0) {
+      addFilesToStaging(e.target.files);
+    }
+  });
+
+  nativeFolderInput.addEventListener('change', (e) => {
+    if (e.target.files && e.target.files.length > 0) {
+      addFilesToStaging(e.target.files);
+    }
+  });
+
+  clearStagingBtn?.addEventListener('click', () => {
+    stagedFiles = [];
+    renderStagedList();
+  });
+
+  // Drag & Drop event handling
+  dropzone.addEventListener('click', () => {
+    nativeFileInput.click();
+  });
+
+  dropzone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropzone.classList.add('drag-over');
+  });
+
+  dropzone.addEventListener('dragleave', () => {
+    dropzone.classList.remove('drag-over');
+  });
+
+  dropzone.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    dropzone.classList.remove('drag-over');
+
+    const items = e.dataTransfer.items;
+    if (items && items.length > 0) {
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.webkitGetAsEntry) {
+          const entry = item.webkitGetAsEntry();
+          if (entry) await traverseDirectory(entry);
+        } else {
+          const f = item.getAsFile();
+          if (f) stagedFiles.push({ file: f, relativePath: f.name });
+        }
+      }
+    } else if (e.dataTransfer.files) {
+      addFilesToStaging(e.dataTransfer.files);
+    }
+    renderStagedList();
   });
 
   document.getElementById('upload-submit-btn').addEventListener('click', async () => {
     const driveLetter = document.getElementById('upload-drive-select').value;
     const subfolder = document.getElementById('upload-folder-input').value.trim();
 
-    const fileInput = currentUploadMode === 'folder'
-      ? document.getElementById('upload-folder-select-input')
-      : document.getElementById('upload-file-input');
-
-    const selectedFiles = fileInput.files ? Array.from(fileInput.files) : [];
-
-    if (selectedFiles.length === 0) {
-      toast(currentUploadMode === 'folder' ? 'Please select a folder to upload.' : 'Please select at least one file to upload.', 'error');
+    if (stagedFiles.length === 0) {
+      toast('Please select at least one file or folder to upload.', 'error');
       return;
     }
 
@@ -909,25 +1055,25 @@ async function showUploadModal(preselectedDrive = '') {
     if (!destination.endsWith('\\') && !destination.endsWith('/')) destination += '\\';
     if (subfolder) destination += subfolder;
 
-    const totalSize = selectedFiles.reduce((sum, f) => sum + f.size, 0);
+    const totalSize = stagedFiles.reduce((sum, f) => sum + f.file.size, 0);
 
     const modalTitle = document.getElementById('modal-title');
     const modalBody = document.getElementById('modal-body');
     const modalFooter = document.getElementById('modal-footer');
     const modalCloseBtn = document.getElementById('modal-close-btn');
 
-    modalTitle.textContent = selectedFiles.length > 1 ? `📤 Uploading ${selectedFiles.length} Items...` : '📤 Uploading File...';
+    modalTitle.textContent = stagedFiles.length > 1 ? `📤 Uploading ${stagedFiles.length} Items...` : '📤 Uploading File...';
     modalCloseBtn.style.display = 'none';
     modalFooter.style.display = 'none';
 
-    const firstRelPath = selectedFiles[0].webkitRelativePath || selectedFiles[0].name;
+    const firstRelPath = stagedFiles[0].relativePath || stagedFiles[0].file.name;
 
     modalBody.innerHTML = `
       <div class="upload-modal-progress">
         <div class="upload-anim-icon">☁️ ⚡</div>
         <div class="upload-file-info">
           <div class="upload-file-name" id="upload-file-name">${escapeHtml(firstRelPath)}</div>
-          <div class="upload-file-meta" id="upload-file-meta">Item 1 of ${selectedFiles.length} • Target: <span class="font-mono" style="color:var(--accent)">${escapeHtml(destination)}</span></div>
+          <div class="upload-file-meta" id="upload-file-meta">Item 1 of ${stagedFiles.length} • Target: <span class="font-mono" style="color:var(--accent)">${escapeHtml(destination)}</span></div>
         </div>
 
         <div class="upload-progress-container">
@@ -947,14 +1093,15 @@ async function showUploadModal(preselectedDrive = '') {
     let lastSavedPath = '';
     let uploadError = null;
 
-    for (let i = 0; i < selectedFiles.length; i++) {
-      const file = selectedFiles[i];
-      const relativePath = file.webkitRelativePath || file.name;
+    for (let i = 0; i < stagedFiles.length; i++) {
+      const item = stagedFiles[i];
+      const file = item.file;
+      const relativePath = item.relativePath || file.name;
 
       const fileNameEl = document.getElementById('upload-file-name');
       const fileMetaEl = document.getElementById('upload-file-meta');
       if (fileNameEl) fileNameEl.textContent = relativePath;
-      if (fileMetaEl) fileMetaEl.innerHTML = `Item ${i + 1} of ${selectedFiles.length} • Target: <span class="font-mono" style="color:var(--accent)">${escapeHtml(destination)}</span>`;
+      if (fileMetaEl) fileMetaEl.innerHTML = `Item ${i + 1} of ${stagedFiles.length} • Target: <span class="font-mono" style="color:var(--accent)">${escapeHtml(destination)}</span>`;
 
       try {
         const resp = await new Promise((resolve, reject) => {
@@ -983,7 +1130,7 @@ async function showUploadModal(preselectedDrive = '') {
               if (pctLabel) pctLabel.textContent = Math.min(pct, 100) + '%';
               if (bytesLabel) bytesLabel.textContent = `${formatBytes(overallLoaded)} / ${formatBytes(totalSize)}`;
               if (pct >= 100 && statusText) {
-                statusText.textContent = i === selectedFiles.length - 1 ? 'Finishing & saving to target drive...' : `Saving item ${i + 1} of ${selectedFiles.length}...`;
+                statusText.textContent = i === stagedFiles.length - 1 ? 'Finishing & saving to target drive...' : `Saving item ${i + 1} of ${stagedFiles.length}...`;
               }
             }
           };
@@ -1007,12 +1154,12 @@ async function showUploadModal(preselectedDrive = '') {
       } catch (err) {
         console.error(`Upload error for ${relativePath}:`, err);
         uploadError = err.message;
-        if (selectedFiles.length === 1) break;
+        if (stagedFiles.length === 1) break;
       }
     }
 
     if (successCount > 0) {
-      const savedLocationText = lastSavedPath || `${destination}${selectedFiles[0].name}`;
+      const savedLocationText = lastSavedPath || `${destination}${stagedFiles[0].relativePath || stagedFiles[0].file.name}`;
 
       modalTitle.textContent = '✅ Upload Confirmed';
       modalCloseBtn.style.display = 'block';
@@ -1025,7 +1172,7 @@ async function showUploadModal(preselectedDrive = '') {
         <div class="upload-success-box">
           <div class="upload-success-icon">✓</div>
           <div class="upload-success-title">${successCount === 1 ? 'File Uploaded Successfully!' : `${successCount} Items Uploaded Successfully!`}</div>
-          <div class="upload-success-desc">Uploaded ${successCount} of ${selectedFiles.length} item(s) (${formatBytes(totalSize)}) to disk.</div>
+          <div class="upload-success-desc">Uploaded ${successCount} of ${stagedFiles.length} item(s) (${formatBytes(totalSize)}) to disk.</div>
           <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;text-align:left">Saved location:</div>
           <div class="upload-success-path">${escapeHtml(savedLocationText)}</div>
         </div>`;
@@ -1044,7 +1191,7 @@ async function showUploadModal(preselectedDrive = '') {
         if (currentPage === 'dashboard' || currentPage === 'storage' || currentPage === 'files' || currentPage === 'gallery') {
           navigate(currentPage);
         }
-        setTimeout(() => showUploadModal(preselectedDrive), 100);
+        setTimeout(() => showUploadModal(preselectedDrive, preselectedFolder), 100);
       });
     } else {
       toast(uploadError || 'Upload failed', 'error');
@@ -1507,7 +1654,8 @@ async function renderFiles(container) {
 
   document.getElementById('upload-file-btn')?.addEventListener('click', () => {
     const currentDrive = filePath.length > 0 ? filePath[0] : '';
-    showUploadModal(currentDrive);
+    const currentSubfolder = filePath.length > 1 ? filePath.slice(1).join('\\') : '';
+    showUploadModal(currentDrive, currentSubfolder);
   });
 
   document.getElementById('back-btn')?.addEventListener('click', () => { filePath.pop(); renderFiles(container); });

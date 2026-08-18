@@ -101,10 +101,11 @@ app.use(helmet({
   crossOriginResourcePolicy: false
 }));
 app.use(express.static(path.join(__dirname, 'public'), {
-  maxAge: '1d',
   setHeaders: (res, filePath) => {
     if (filePath.endsWith('.png') || filePath.endsWith('.jpg') || filePath.endsWith('.ico') || filePath.endsWith('.svg')) {
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    } else if (filePath.endsWith('.html') || filePath.endsWith('.js') || filePath.endsWith('.css')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     }
   }
 }));

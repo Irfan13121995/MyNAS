@@ -519,7 +519,105 @@ tbody td { padding: 14px 20px; font-size: 13px; color: var(--text-primary); }
 .passcode-eye-btn:hover { opacity: 1; background: rgba(255,255,255,0.15); }
 
 
-/* ── UPLOAD MODAL & PROGRESS ────────────────────────────────────────────────── */
+/* ── UPLOAD MODAL & DROPZONE ────────────────────────────────────────────────── */
+.upload-dropzone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius-lg);
+  padding: 24px 16px;
+  text-align: center;
+  background: rgba(15, 23, 42, 0.35);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  cursor: pointer;
+  margin-bottom: 16px;
+  position: relative;
+}
+.upload-dropzone:hover, .upload-dropzone.drag-over {
+  border-color: var(--accent);
+  background: var(--accent-glow);
+  box-shadow: 0 0 24px rgba(0, 212, 255, 0.25);
+  transform: scale(1.01);
+}
+.upload-dropzone-icon {
+  font-size: 40px;
+  margin-bottom: 8px;
+  display: inline-block;
+  transition: transform 0.2s;
+}
+.upload-dropzone:hover .upload-dropzone-icon {
+  transform: translateY(-4px);
+}
+.upload-dropzone-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+.upload-dropzone-sub {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 14px;
+}
+.upload-dropzone-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.upload-file-list {
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: rgba(7, 10, 15, 0.6);
+  margin-bottom: 16px;
+  padding: 6px;
+}
+.upload-file-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border-light);
+  gap: 8px;
+}
+.upload-file-item:last-child {
+  border-bottom: none;
+}
+.upload-file-item:hover {
+  background: var(--bg-card-hover);
+}
+.upload-file-item-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.upload-file-item-size {
+  color: var(--text-secondary);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.upload-file-item-remove {
+  color: var(--red);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+.upload-file-item-remove:hover {
+  opacity: 1;
+  background: var(--red-bg);
+}
+
 .upload-modal-progress { padding: 20px 10px; text-align: center; }
 .upload-anim-icon {
   font-size: 52px; margin-bottom: 14px; display: inline-block;
