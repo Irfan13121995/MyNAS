@@ -460,37 +460,140 @@ label { display: block; font-size: 11px; font-weight: 700; color: var(--text-sec
 .sidebar-logo-text { overflow: hidden; }
 .sidebar-logo-title { display: block; font-size: 17px; font-weight: 800; color: var(--text-primary); white-space: nowrap; letter-spacing: -0.02em; }
 .sidebar-logo-sub   { display: block; font-size: 11px; color: var(--accent); font-weight: 700; white-space: nowrap; letter-spacing: 0.04em; }
+.sidebar.collapsed .sidebar-logo {
+  padding: 18px 0;
+  justify-content: center;
+}
+.sidebar.collapsed .sidebar-logo img {
+  margin: 0 auto;
+}
 .sidebar.collapsed .sidebar-logo-text { display: none; }
 
-.sidebar-nav { flex: 1; padding: 18px 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.sidebar-nav {
+  flex: 1;
+  padding: 18px 14px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 .nav-item {
-  display: flex; align-items: center; gap: 14px; padding: 12px 18px;
-  border-radius: var(--radius-md); color: var(--text-secondary); font-size: 13px; font-weight: 600;
-  transition: var(--transition); white-space: nowrap; overflow: hidden;
-  border: 1px solid transparent;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  transition: var(--transition);
+  white-space: nowrap;
+  overflow: hidden;
+  border: 1.5px solid transparent;
 }
 .nav-item:hover {
-  background: var(--bg-card-hover); color: var(--text-primary);
-  border-color: rgba(255,255,255,0.15); transform: translateX(4px);
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+  border-color: rgba(255,255,255,0.15);
+  transform: translateX(4px);
   box-shadow: 0 4px 14px rgba(0,0,0,0.06);
 }
 .nav-item.active {
-  background: var(--accent-glow); color: var(--accent); font-weight: 700;
+  background: var(--accent-glow);
+  color: var(--accent);
+  font-weight: 700;
   border-color: var(--border-glow);
   box-shadow: 0 8px 24px rgba(0, 212, 255, 0.25), inset 0 1px 1.5px rgba(255,255,255,0.4);
 }
-.nav-icon { width: 22px; height: 22px; flex-shrink: 0; font-size: 18px; }
+.nav-icon {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  font-size: 18px;
+  display: block;
+}
+
+/* ── PERFECT SQUIRCLE CENTERING IN COLLAPSED SIDEBAR ── */
+.sidebar.collapsed .sidebar-nav {
+  padding: 18px 0;
+  align-items: center;
+  gap: 10px;
+}
+.sidebar.collapsed .nav-item {
+  width: 48px;
+  height: 48px;
+  min-width: 48px;
+  min-height: 48px;
+  max-width: 48px;
+  max-height: 48px;
+  padding: 0;
+  margin: 0 auto;
+  border-radius: 16px; /* Perfect Squircle */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0;
+  transform: none !important;
+}
+.sidebar.collapsed .nav-item:hover {
+  transform: scale(1.06) !important;
+}
+.sidebar.collapsed .nav-item.active {
+  border-radius: 16px;
+  box-shadow: 0 0 22px rgba(0, 212, 255, 0.45), inset 0 1.5px 1.5px rgba(255,255,255,0.5);
+}
+.sidebar.collapsed .nav-icon {
+  width: 22px;
+  height: 22px;
+  margin: 0 auto;
+}
 .sidebar.collapsed .nav-item span { display: none; }
 
 .sidebar-footer {
-  padding: 18px 18px 22px;
+  padding: 18px 14px 22px;
   border-top: 1px solid var(--border-light);
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
-.sidebar-server-info { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary); min-width: 0; font-weight: 600; }
+.sidebar-server-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  min-width: 0;
+  font-weight: 600;
+}
 .sidebar-server-info span { truncate; }
-.sidebar.collapsed .sidebar-footer { flex-direction: column; }
+
+.sidebar.collapsed .sidebar-footer {
+  flex-direction: column;
+  padding: 16px 0 20px;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
 .sidebar.collapsed #sidebar-ip { display: none; }
+.sidebar.collapsed #logout-btn {
+  width: 48px;
+  height: 48px;
+  min-width: 48px;
+  min-height: 48px;
+  max-width: 48px;
+  max-height: 48px;
+  padding: 0;
+  margin: 0 auto;
+  border-radius: 16px; /* Perfect Squircle */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sidebar.collapsed #logout-btn span { display: none; }
+.sidebar.collapsed #logout-btn .nav-icon {
+  margin: 0 auto;
+}
 
 /* ── 11. TOPBAR (FLOATING FROSTED GLASS HEADER) ────────────────────────────── */
 .topbar {
