@@ -390,10 +390,95 @@ label { display: block; font-size: 11px; font-weight: 700; color: var(--text-sec
 .drive-stat-item { display: flex; flex-direction: column; gap: 2px; }
 .drive-stat-value { font-size: 13px; font-weight: 700; color: var(--text-primary); }
 .drive-stat-label { font-size: 10px; color: var(--text-secondary); text-transform: uppercase; font-weight: 600; }
-.drive-gauge-wrap { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
-.drive-gauge-info { flex: 1; min-width: 180px; }
-.drive-gauge-title { font-size: 12px; font-weight: 700; color: var(--text-secondary); margin-bottom: 6px; }
+.drive-gauge-wrap { display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
+.drive-gauge-info { flex: 1; min-width: 220px; }
+.drive-gauge-title { font-size: 12px; font-weight: 700; color: var(--text-secondary); margin-bottom: 8px; }
 .drive-actions { display: flex; gap: 10px; margin-top: 6px; flex-wrap: wrap; }
+
+/* ── PROGRESS BAR (STORAGE USAGE) ─────────────────────────────────────────── */
+.progress-bar {
+  width: 100%;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  position: relative;
+  margin-bottom: 12px;
+}
+[data-theme='light'] .progress-bar {
+  background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(0, 0, 0, 0.08);
+}
+.progress-fill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(90deg, #00D4FF 0%, #6366F1 100%);
+  box-shadow: 0 0 14px rgba(0, 212, 255, 0.6);
+  transition: width 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.progress-fill.warn {
+  background: linear-gradient(90deg, #FDE047 0%, #F59E0B 50%, #EA580C 100%);
+  box-shadow: 0 0 14px rgba(245, 158, 11, 0.6);
+}
+.progress-fill.danger {
+  background: linear-gradient(90deg, #FB7185 0%, #F43F5E 50%, #BE123C 100%);
+  box-shadow: 0 0 14px rgba(244, 63, 94, 0.6);
+}
+
+/* ── CIRCULAR GAUGE (DRIVE USAGE RING) ────────────────────────────────────── */
+.gauge-container {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.gauge {
+  display: block;
+  transform: rotate(-90deg);
+}
+.gauge-bg {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.08);
+  stroke-width: 3.2;
+}
+[data-theme='light'] .gauge-bg {
+  stroke: rgba(0, 0, 0, 0.08);
+}
+.gauge-fill {
+  fill: none;
+  stroke: #00D4FF;
+  stroke-width: 3.2;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 8px rgba(0, 212, 255, 0.65));
+  transition: stroke-dasharray 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.gauge-fill.warn {
+  stroke: #F59E0B;
+  filter: drop-shadow(0 0 8px rgba(245, 158, 11, 0.65));
+}
+.gauge-fill.danger {
+  stroke: #F43F5E;
+  filter: drop-shadow(0 0 8px rgba(244, 63, 94, 0.65));
+}
+.gauge-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.gauge-pct {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+  font-family: 'Inter', sans-serif;
+  line-height: 1;
+}
 
 /* ── 9. ACTIVITY LOG ITEMS ──────────────────────────────────────────────────── */
 .activity-item {
