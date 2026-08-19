@@ -1537,7 +1537,7 @@ async function storage(container) {
             return `
             <div class="card">
               <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
-                <div style="font-size:36px">${d.isUsb?'🔌':d.isCustom?'🔗':'💽'}</div>
+                <div class="drive-icon">${d.isUsb?'🔌':d.isCustom?'🔗':'💽'}</div>
                 <div style="flex:1;min-width:200px">
                   <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap">
                     <span style="font-size:18px;font-weight:700">${d.name||d.letter}</span>
@@ -2026,7 +2026,7 @@ async function remote(container) {
       <div class="card" style="margin-bottom:20px">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px">
           <div style="display:flex;align-items:center;gap:16px">
-            <div style="font-size:40px">${isRunning?'🌐':'🔌'}</div>
+            <div class="stat-icon ${isRunning ? 'blue' : 'yellow'}" style="width:58px;height:58px;font-size:28px">${isRunning?'🌐':'🔌'}</div>
             <div>
               <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
                 <h3 style="font-size:18px;font-weight:700">${isRunning ? (tunnel.mode === 'named' ? 'Permanent Named Tunnel Active' : 'Quick Tunnel Active') : 'Tunnel Inactive'}</h3>
