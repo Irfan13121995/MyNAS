@@ -10,6 +10,7 @@ import LibraryScreen from './components/LibraryScreen';
 import ControlPanelScreen from './components/ControlPanelScreen';
 import BottomNav from './components/BottomNav';
 import AutoSyncModal from './components/AutoSyncModal';
+import BackupPanel from './components/BackupPanel';
 import FileViewerModal from './components/FileViewerModal';
 import { authenticateBiometric } from './services/biometricService';
 import { getSecureItem, setSecureItem, deleteSecureItem } from './services/secureStoreService';
@@ -94,6 +95,7 @@ function AppContent() {
 
   // Modals
   const [autoSyncVisible, setAutoSyncVisible] = useState(false);
+  const [backupPanelVisible, setBackupPanelVisible] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
   const [activeMediaList, setActiveMediaList] = useState([]);
 
@@ -112,6 +114,10 @@ function AppContent() {
       if (selectedFile) {
         setSelectedFile(null);
         setActiveMediaList([]);
+        return true;
+      }
+      if (backupPanelVisible) {
+        setBackupPanelVisible(false);
         return true;
       }
       if (autoSyncVisible) {
@@ -425,9 +431,9 @@ function AppContent() {
               onLogout={handleLogout}
               onNavigateModule={(modId) => {
                 if (modId === 'files') setActiveTab('storage');
-                if (modId === 'autosync') setAutoSyncVisible(true);
+                if (modId === 'autosync') setBackupPanelVisible(true);
               }}
-              onOpenAutoSync={() => setAutoSyncVisible(true)}
+              onOpenAutoSync={() => setBackupPanelVisible(true)}
             />
           )}
         </View>
@@ -440,6 +446,20 @@ function AppContent() {
             setActiveTab(tabKey);
           }}
         />
+
+        {/* Google Photos-Style Auto-Backup Center Modal */}
+        <Modal
+          visible={backupPanelVisible}
+          animationType="slide"
+          onRequestClose={() => setBackupPanelVisible(false)}
+        >
+          <BackupPanel
+            serverUrl={serverUrl}
+            token={token}
+            drives={drives}
+            onClose={() => setBackupPanelVisible(false)}
+          />
+        </Modal>
 
         {/* Gallery Auto-Sync Configuration Modal */}
         <AutoSyncModal
