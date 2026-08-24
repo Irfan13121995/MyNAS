@@ -630,7 +630,7 @@ function makeGauge(pct, size = 70) {
   const dash = (Math.min(pct, 100) / 100 * circ).toFixed(2);
   const cls = pct > 90 ? 'danger' : pct > 70 ? 'warn' : '';
   return `
-    <div class="gauge-container" style="width:${size}px;height:${size}px">
+    <div class="gauge-container ${cls}" style="width:${size}px;height:${size}px">
       <svg class="gauge" width="${size}" height="${size}" viewBox="0 0 36 36">
         <path class="gauge-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>
         <path class="gauge-fill ${cls}" stroke-dasharray="${dash},${circ}" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>

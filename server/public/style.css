@@ -433,10 +433,31 @@ label { display: block; font-size: 11px; font-weight: 700; color: var(--text-sec
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  border-radius: 50%;
 }
+.gauge-container::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(0, 212, 255, 0.35) 20%, rgba(0, 212, 255, 0.12) 55%, transparent 72%);
+  pointer-events: none;
+  filter: blur(5px);
+  z-index: 0;
+}
+.gauge-container.warn::before {
+  background: radial-gradient(circle, rgba(245, 158, 11, 0.38) 20%, rgba(245, 158, 11, 0.14) 55%, transparent 72%);
+}
+.gauge-container.danger::before {
+  background: radial-gradient(circle, rgba(244, 63, 94, 0.38) 20%, rgba(244, 63, 94, 0.14) 55%, transparent 72%);
+}
+
 .gauge {
   display: block;
   transform: rotate(-90deg);
+  overflow: visible;
+  position: relative;
+  z-index: 1;
 }
 .gauge-bg {
   fill: none;
@@ -451,16 +472,13 @@ label { display: block; font-size: 11px; font-weight: 700; color: var(--text-sec
   stroke: #00D4FF;
   stroke-width: 3.2;
   stroke-linecap: round;
-  filter: drop-shadow(0 0 8px rgba(0, 212, 255, 0.65));
   transition: stroke-dasharray 0.5s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .gauge-fill.warn {
   stroke: #F59E0B;
-  filter: drop-shadow(0 0 8px rgba(245, 158, 11, 0.65));
 }
 .gauge-fill.danger {
   stroke: #F43F5E;
-  filter: drop-shadow(0 0 8px rgba(244, 63, 94, 0.65));
 }
 .gauge-label {
   position: absolute;
