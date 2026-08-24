@@ -723,6 +723,252 @@ label { display: block; font-size: 11px; font-weight: 700; color: var(--text-sec
 }
 .passcode-eye-btn:hover { opacity: 1; background: rgba(255,255,255,0.15); }
 
+/* ── 11.5 LOGIN OVERLAY & AUTH CARD (DYNAMIC RESPONSIVE SCALING) ──────────── */
+.login-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  width: 100vw;
+  padding: clamp(16px, 4vw, 40px);
+  background-color: var(--bg-primary);
+  background-image: 
+    radial-gradient(circle at 50% 18%, rgba(0, 212, 255, 0.22) 0%, transparent 52%),
+    radial-gradient(circle at 82% 82%, rgba(99, 102, 241, 0.20) 0%, transparent 58%),
+    radial-gradient(circle at 18% 75%, rgba(192, 132, 252, 0.16) 0%, transparent 48%),
+    radial-gradient(circle at 75% 20%, rgba(16, 185, 129, 0.14) 0%, transparent 40%);
+  background-attachment: fixed;
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+
+[data-theme='light'] .login-overlay {
+  background-image: 
+    radial-gradient(circle at 50% 18%, rgba(2, 132, 199, 0.16) 0%, transparent 52%),
+    radial-gradient(circle at 82% 82%, rgba(99, 102, 241, 0.14) 0%, transparent 58%),
+    radial-gradient(circle at 18% 75%, rgba(192, 132, 252, 0.12) 0%, transparent 48%),
+    radial-gradient(circle at 75% 20%, rgba(5, 150, 105, 0.10) 0%, transparent 40%);
+}
+
+.login-card {
+  width: 100%;
+  max-width: 440px;
+  margin: auto;
+  background: var(--bg-card);
+  backdrop-filter: var(--glass-backdrop);
+  -webkit-backdrop-filter: var(--glass-backdrop);
+  border: 1.5px solid var(--border-glow);
+  border-radius: var(--radius-squircle-lg);
+  padding: clamp(24px, 4vw, 36px);
+  box-shadow: var(--glass-shadow-lg), 0 0 60px rgba(0, 212, 255, 0.22);
+  position: relative;
+  overflow: hidden;
+  animation: slideUp 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  box-sizing: border-box;
+}
+
+.login-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; height: 1.5px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.5), transparent);
+  pointer-events: none;
+}
+
+.login-logo {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.login-logo img {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(0, 212, 255, 0.4), inset 0 1px 1px rgba(255, 255, 255, 0.6);
+  border: 1.5px solid rgba(255, 255, 255, 0.3);
+}
+
+#auth-heading {
+  font-size: clamp(20px, 3.2vw, 24px);
+  font-weight: 800;
+  text-align: center;
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+  margin-bottom: 6px;
+}
+
+.login-subtitle {
+  font-size: 13px;
+  text-align: center;
+  color: var(--text-secondary);
+  margin-bottom: 22px;
+  line-height: 1.4;
+}
+
+/* Auth Tabs (Segmented Glass Switcher) */
+.auth-tabs {
+  display: flex;
+  background: rgba(0, 0, 0, 0.28);
+  padding: 4px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  margin-bottom: 22px;
+  gap: 4px;
+}
+
+[data-theme='light'] .auth-tabs {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.auth-tab {
+  flex: 1;
+  text-align: center;
+  padding: 9px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: var(--transition);
+  user-select: none;
+}
+
+.auth-tab:hover:not(.active) {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.auth-tab.active {
+  background: linear-gradient(135deg, var(--btn-primary-start) 0%, var(--btn-primary-end) 100%);
+  color: #FFFFFF;
+  box-shadow: 0 4px 14px rgba(0, 212, 255, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.5);
+}
+
+/* Auth Tab Content Switching */
+.auth-tab-content {
+  display: none;
+}
+
+.auth-tab-content.active {
+  display: block;
+  animation: fadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* PIN Input Row & Tactile Squircle Boxes */
+.pin-header-label {
+  display: block;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  margin-bottom: 14px;
+}
+
+.pin-input-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: clamp(6px, 1.8vw, 10px);
+  margin: 0 0 22px 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.pin-box {
+  flex: 1;
+  min-width: 0;
+  max-width: 56px;
+  height: clamp(48px, 12vw, 58px);
+  text-align: center;
+  font-size: clamp(20px, 4vw, 24px);
+  font-weight: 800;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text-primary);
+  background: var(--bg-input);
+  border: 1.5px solid var(--border);
+  border-radius: 14px;
+  transition: var(--transition);
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.04);
+  box-sizing: border-box;
+  padding: 0;
+}
+
+[data-theme='light'] .pin-box {
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.06), 0 2px 8px rgba(0, 0, 0, 0.02);
+}
+
+.pin-box:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 0 0 3px var(--accent-glow-strong), 0 0 20px rgba(0, 212, 255, 0.35);
+  transform: translateY(-2px) scale(1.04);
+}
+
+[data-theme='light'] .pin-box:focus {
+  background: #FFFFFF;
+}
+
+.pin-box.filled {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
+/* Login Error Alert */
+.login-error {
+  background: var(--red-bg);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: var(--red);
+  padding: 11px 16px;
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 18px;
+  text-align: center;
+  animation: fadeIn 0.2s ease;
+  line-height: 1.4;
+}
+
+/* Elegant Center Divider */
+.login-divider {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 20px 0;
+}
+
+.login-divider::before,
+.login-divider::after {
+  content: '';
+  flex: 1;
+  border-bottom: 1px solid var(--border);
+}
+
+.login-divider:not(:empty)::before {
+  margin-right: 14px;
+}
+
+.login-divider:not(:empty)::after {
+  margin-left: 14px;
+}
+
 /* ── 12. FLOATING SQUIRCLE MODALS ──────────────────────────────────────────── */
 .modal-backdrop {
   position: fixed; inset: 0; background: rgba(6, 9, 14, 0.75); backdrop-filter: blur(24px);
@@ -1100,6 +1346,27 @@ label { display: block; font-size: 11px; font-weight: 700; color: var(--text-sec
   .stat-card { padding: 16px; }
   .stat-value { font-size: 19px; }
   .modal { max-height: 95vh; border-radius: var(--radius-squircle); }
-  .pin-box { width: 44px; height: 52px; font-size: 22px; }
+  
+  /* Responsive Login Page Scaling on Mobile */
+  .login-overlay { padding: 16px 12px; }
+  .login-card { padding: 24px 16px; border-radius: var(--radius-squircle); }
+  .pin-input-row { gap: 6px; margin-bottom: 18px; }
+  .pin-box { height: 48px; font-size: 20px; border-radius: 10px; }
+  .login-logo img { width: 48px; height: 48px; border-radius: 12px; }
 }
+
+@media (max-width: 380px) {
+  .login-card { padding: 20px 12px; }
+  .pin-input-row { gap: 4px; margin-bottom: 16px; }
+  .pin-box { height: 42px; font-size: 18px; border-radius: 8px; }
+  #auth-heading { font-size: 18px; }
+  .login-subtitle { font-size: 12px; margin-bottom: 16px; }
+  .auth-tab { padding: 7px 8px; font-size: 11px; }
+}
+
+@media (min-width: 2000px) {
+  .login-card { max-width: 480px; padding: 42px 38px; }
+  .pin-box { height: 64px; font-size: 26px; }
+}
+
 
