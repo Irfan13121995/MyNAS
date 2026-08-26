@@ -587,6 +587,158 @@ app.delete('/api/drives/remove', authenticateToken, requireAdmin, checkReadWrite
   }
 });
 
+// ─── RAID STORAGE POOLING ENDPOINTS ──────────────────────────────────────────
+
+// Mocked physical block devices / available unassigned drives
+const MOCK_AVAILABLE_PHYSICAL_DISKS = [
+  {
+    id: 'sda',
+    name: 'Seagate IronWolf Pro 4TB',
+    path: '/dev/sda',
+    size: '4.0 TB',
+    sizeBytes: 4000787030016,
+    type: 'HDD',
+    interface: 'SATA III',
+    serial: 'W1F2A90X',
+    status: 'unassigned'
+  },
+  {
+    id: 'sdb',
+    name: 'Seagate IronWolf Pro 4TB',
+    path: '/dev/sdb',
+    size: '4.0 TB',
+    sizeBytes: 4000787030016,
+    type: 'HDD',
+    interface: 'SATA III',
+    serial: 'W1F2B41Z',
+    status: 'unassigned'
+  },
+  {
+    id: 'sdc',
+    name: 'Samsung 870 EVO 2TB',
+    path: '/dev/sdc',
+    size: '2.0 TB',
+    sizeBytes: 2000398934016,
+    type: 'SSD',
+    interface: 'SATA III',
+    serial: 'S5Y2NX0R',
+    status: 'unassigned'
+  },
+  {
+    id: 'nvme0n1',
+    name: 'WD Red SN700 NVMe 2TB',
+    path: '/dev/nvme0n1',
+    size: '2.0 TB',
+    sizeBytes: 2000398934016,
+    type: 'NVMe',
+    interface: 'PCIe 3.0 x4',
+    serial: '21453E801902',
+    status: 'unassigned'
+  }
+];
+
+// GET /api/disks/available - Returns unassigned physical drives
+app.get('/api/disks/available', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    return res.json({
+      success: true,
+      disks: MOCK_AVAILABLE_PHYSICAL_DISKS
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: 'Failed to query physical disks' });
+  }
+});
+
+// GET /api/raid/volumes - Returns all registered RAID volumes
+app.get('/api/raid/volumes', authenticateToken, async (req, res) => {
+  try {
+    const volumes = dbService.getAllVolumes();
+    return res.json({ success: true, volumes });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: 'Failed to retrieve RAID volumes' });
+  }
+});
+
+// POST /api/raid/create - Creates a RAID 1 Mirrored Array using two selected disks
+app.post('/api/raid/create', authenticateToken, requireAdmin, checkReadWrite, async (req, res) => {
+  try {
+    const { arrayName, diskPaths, filesystem = 'ext4' } = req.body;
+
+    // 1. Validation
+    if (!arrayName || typeof arrayName !== 'string' || arrayName.trim().length < 2) {
+      return res.status(400).json({ success: false, error: 'A valid array name is required (min 2 characters).' });
+    }
+
+    if (!Array.isArray(diskPaths) || diskPaths.length !== 2) {
+      return res.status(400).json({ success: false, error: 'RAID 1 requires exactly two (2) physical member disks.' });
+    }
+
+    const [diskPath1, diskPath2] = diskPaths;
+    const cleanArrayName = arrayName.trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+
+    // Retrieve disk metadata to calculate mirrored usable capacity (min of both drives)
+    const disk1 = MOCK_AVAILABLE_PHYSICAL_DISKS.find(d => d.path === diskPath1) || { sizeBytes: 4000787030016, size: '4.0 TB' };
+    const disk2 = MOCK_AVAILABLE_PHYSICAL_DISKS.find(d => d.path === diskPath2) || { sizeBytes: 4000787030016, size: '4.0 TB' };
+    
+    const usableBytes = Math.min(disk1.sizeBytes, disk2.sizeBytes);
+    const usableFormatted = (usableBytes / (1024 ** 4)).toFixed(1) + ' TB';
+    const mdDevice = '/dev/md0';
+    const mountPoint = `/mnt/storage/${cleanArrayName}`;
+
+    // --------------------------------------------------------------------------
+    // 2. SYSTEM SHELL EXECUTION (mdadm RAID 1 Creation Placeholder)
+    // --------------------------------------------------------------------------
+    /*
+      const { execSync } = require('child_process');
+
+      // STEP A: Zero superblocks on member drives
+      // execSync(`mdadm --zero-superblock --force ${diskPath1} ${diskPath2}`);
+
+      // STEP B: Create the RAID 1 array
+      // execSync(`mdadm --create ${mdDevice} --level=1 --raid-devices=2 ${diskPath1} ${diskPath2} --metadata=1.2 --run`);
+
+      // STEP C: Format filesystem (e.g. ext4 or btrfs)
+      // execSync(`mkfs.${filesystem} -F ${mdDevice}`);
+
+      // STEP D: Create mount point and mount volume
+      // execSync(`mkdir -p ${mountPoint} && mount ${mdDevice} ${mountPoint}`);
+
+      // STEP E: Save mdadm configuration
+      // execSync(`mdadm --detail --scan >> /etc/mdadm/mdadm.conf && update-initramfs -u`);
+    */
+
+    // Simulate creation processing time
+    await new Promise(resolve => setTimeout(resolve, 800));
+
+    // 3. Persist Volume to SQLite Database
+    const volumeRecord = dbService.createVolume({
+      id: 'vol_' + crypto.randomBytes(6).toString('hex'),
+      name: cleanArrayName,
+      raidLevel: 1,
+      memberDisks: [diskPath1, diskPath2],
+      usableCapacityBytes: usableBytes,
+      usableCapacityFormatted: usableFormatted,
+      filesystem,
+      mountPoint,
+      devicePath: mdDevice
+    });
+
+    logActivity('storage', `Created RAID 1 Array: ${cleanArrayName} (${diskPath1}, ${diskPath2})`, req.user?.username);
+
+    return res.status(201).json({
+      success: true,
+      message: `RAID 1 volume '${cleanArrayName}' created and registered successfully.`,
+      volume: volumeRecord
+    });
+  } catch (error) {
+    console.error('Error creating RAID 1 array:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to initialize RAID 1 array.'
+    });
+  }
+});
+
 // ─── 7. FILES ENDPOINTS ──────────────────────────────────────────────────────
 
 app.get('/api/files', authenticateToken, async (req, res) => {

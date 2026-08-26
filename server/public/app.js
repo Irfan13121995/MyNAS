@@ -1505,29 +1505,243 @@ async function showAddStorageModal() {
   });
 }
 
+// ─── RAID 1 SETUP MODAL (LIGHT GLASSMORPHISM) ──────────────────────────────────
+async function showRaidSetupModal() {
+  const r = await GET('/api/disks/available');
+  const availableDisks = r?.data?.disks || [];
+
+  let selectedDiskPaths = [];
+
+  const updateModalState = () => {
+    const countBadge = document.getElementById('raid-disk-count-badge');
+    const submitBtn = document.getElementById('raid-submit-btn');
+    const summaryCard = document.getElementById('raid-summary-card');
+    const usableVal = document.getElementById('raid-usable-val');
+    const nameInput = document.getElementById('raid-name-input');
+
+    if (countBadge) {
+      countBadge.textContent = `${selectedDiskPaths.length}/2 Drives Selected`;
+      countBadge.className = selectedDiskPaths.length === 2 ? 'badge badge-green' : 'badge badge-blue';
+    }
+
+    // Usable capacity in RAID 1 = smaller disk size
+    if (selectedDiskPaths.length === 2) {
+      const d1 = availableDisks.find(d => d.path === selectedDiskPaths[0]);
+      const d2 = availableDisks.find(d => d.path === selectedDiskPaths[1]);
+      if (d1 && d2) {
+        const minBytes = Math.min(d1.sizeBytes || 0, d2.sizeBytes || 0);
+        if (usableVal) usableVal.textContent = (minBytes / (1024 ** 4)).toFixed(1) + ' TB';
+        if (summaryCard) summaryCard.style.display = 'block';
+      }
+    } else {
+      if (summaryCard) summaryCard.style.display = 'none';
+    }
+
+    const isValid = selectedDiskPaths.length === 2 && nameInput && nameInput.value.trim().length >= 2;
+    if (submitBtn) {
+      submitBtn.disabled = !isValid;
+      submitBtn.style.opacity = isValid ? '1' : '0.5';
+      submitBtn.innerHTML = isValid 
+        ? '<span>🚀 Create & Initialize RAID 1</span>' 
+        : '<span>Select 2 Drives to Continue</span>';
+    }
+  };
+
+  const diskCardsHtml = availableDisks.length === 0 ? `
+    <div style="padding:24px; text-align:center; color:var(--text-secondary)">
+      <p>No unassigned physical drives detected.</p>
+    </div>` : availableDisks.map(d => `
+    <div class="raid-disk-card" data-path="${d.path}">
+      <div class="raid-disk-check" id="check-${d.id}"></div>
+      <div style="font-size:24px">${d.type === 'NVMe' ? '⚡' : d.type === 'SSD' ? '💽' : '💿'}</div>
+      <div style="flex:1; min-width:0">
+        <div style="display:flex; align-items:center; gap:8px">
+          <strong style="color:var(--text-primary); font-size:13px">${d.name}</strong>
+          <span class="badge" style="font-size:9px; padding:1px 6px">${d.type} • ${d.interface}</span>
+        </div>
+        <div style="font-size:11px; color:var(--text-secondary); margin-top:2px">
+          <code class="font-mono">${d.path}</code> · Serial: ${d.serial}
+        </div>
+      </div>
+      <div style="font-weight:800; font-size:13px; color:var(--text-primary); background:rgba(255,255,255,0.06); padding:4px 10px; border-radius:10px; border:1px solid var(--border)">
+        ${d.size}
+      </div>
+    </div>
+  `).join('');
+
+  const close = showModal({
+    title: '🛡️ Create RAID 1 Mirrored Array',
+    body: `
+      <p style="color:var(--text-secondary); font-size:13px; margin-bottom:18px">
+        Pair two physical drives to create a fault-tolerant storage volume with real-time 1:1 data redundancy.
+      </p>
+
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:18px">
+        <div>
+          <label for="raid-name-input">Array Volume Name</label>
+          <input id="raid-name-input" class="input" type="text" value="Storage_Mirror" placeholder="e.g. Storage_Mirror" required />
+        </div>
+        <div>
+          <label for="raid-fs-select">Filesystem</label>
+          <select id="raid-fs-select" class="select">
+            <option value="ext4" selected>ext4 (Standard & Stable)</option>
+            <option value="btrfs">Btrfs (Snapshots & Checksums)</option>
+            <option value="xfs">XFS (High Throughput)</option>
+          </select>
+        </div>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+        <label style="margin:0">Select Exactly Two (2) Member Drives</label>
+        <span id="raid-disk-count-badge" class="badge badge-blue">0/2 Drives Selected</span>
+      </div>
+
+      <div class="raid-disk-list" id="raid-disk-list">
+        ${diskCardsHtml}
+      </div>
+
+      <div id="raid-summary-card" class="raid-summary-box" style="display:none">
+        <div class="raid-summary-row">
+          <div>
+            <div class="raid-summary-label">Usable Mirrored Capacity</div>
+            <div id="raid-usable-val" class="raid-summary-val">—</div>
+          </div>
+          <div style="text-align:right">
+            <div class="raid-summary-label">Fault Tolerance</div>
+            <div class="raid-summary-val" style="color:var(--green); font-size:14px">1 Drive Redundancy (100% Mirrored)</div>
+          </div>
+        </div>
+        <p style="font-size:11px; color:var(--text-secondary); margin-top:8px; margin-bottom:0">
+          ℹ️ In RAID 1, data is written simultaneously to both drives. If one drive fails, your data remains fully safe.
+        </p>
+      </div>
+    `,
+    footer: `
+      <button class="btn btn-ghost" id="raid-cancel-btn">Cancel</button>
+      <button class="btn btn-primary" id="raid-submit-btn" disabled style="opacity:0.5">Select 2 Drives to Continue</button>
+    `
+  });
+
+  document.getElementById('raid-cancel-btn').addEventListener('click', close);
+
+  document.querySelectorAll('.raid-disk-card').forEach(card => {
+    card.addEventListener('click', () => {
+      const diskPath = card.dataset.path;
+      if (selectedDiskPaths.includes(diskPath)) {
+        selectedDiskPaths = selectedDiskPaths.filter(p => p !== diskPath);
+        card.classList.remove('selected');
+        card.querySelector('.raid-disk-check').textContent = '';
+      } else {
+        if (selectedDiskPaths.length >= 2) {
+          toast('RAID 1 requires exactly two (2) drives.', 'warning');
+          return;
+        }
+        selectedDiskPaths.push(diskPath);
+        card.classList.add('selected');
+        card.querySelector('.raid-disk-check').textContent = '✓';
+      }
+      updateModalState();
+    });
+  });
+
+  document.getElementById('raid-name-input')?.addEventListener('input', updateModalState);
+
+  document.getElementById('raid-submit-btn')?.addEventListener('click', async () => {
+    const arrayName = document.getElementById('raid-name-input').value.trim();
+    const filesystem = document.getElementById('raid-fs-select').value;
+    const btn = document.getElementById('raid-submit-btn');
+
+    if (selectedDiskPaths.length !== 2 || !arrayName) {
+      toast('Please select exactly 2 drives and enter an array name.', 'error');
+      return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner" style="width:16px;height:16px;margin-right:8px"></span> Building RAID 1 Array...';
+
+    const r = await POST('/api/raid/create', { arrayName, diskPaths: selectedDiskPaths, filesystem });
+    if (r?.ok) {
+      toast(`RAID 1 Volume "${arrayName}" created successfully!`, 'success');
+      close();
+      navigate('storage');
+    } else {
+      toast(r?.data?.error || 'Failed to create RAID 1 volume', 'error');
+      btn.disabled = false;
+      btn.innerHTML = '<span>🚀 Create & Initialize RAID 1</span>';
+    }
+  });
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // PAGE: STORAGE
 // ═════════════════════════════════════════════════════════════════════════════
 async function storage(container) {
-  const r = await GET('/api/drives');
-  const drives = r?.data || [];
+  const [rDrives, rRaid] = await Promise.all([
+    GET('/api/drives'),
+    GET('/api/raid/volumes')
+  ]);
+  const drives = rDrives?.data || [];
+  const raidVolumes = rRaid?.data?.volumes || [];
 
   container.innerHTML = `
     <div class="page">
       <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
-        <div><h2>Storage</h2><p>Manage drives registered with your Personal NAS</p></div>
+        <div><h2>Storage & Storage Pools</h2><p>Manage drives and RAID volumes registered with your Personal NAS</p></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-primary" id="upload-file-btn">📤 Upload File</button>
+          <button class="btn btn-primary" id="create-raid-btn">🛡️ Create RAID 1 Array</button>
           <button class="btn btn-ghost" id="add-storage-btn">+ Add Storage</button>
+          <button class="btn btn-ghost" id="upload-file-btn">📤 Upload File</button>
           <button class="btn btn-ghost" id="scan-drives-btn">🔍 Scan Drives</button>
         </div>
       </div>
+
+      <!-- RAID VOLUMES SECTION -->
+      ${raidVolumes.length > 0 ? `
+        <div style="margin-bottom:28px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+            <h3 style="font-size:16px;font-weight:800;color:var(--text-primary);display:flex;align-items:center;gap:8px">
+              🛡️ Active RAID Storage Pools <span class="badge badge-green">${raidVolumes.length} Active</span>
+            </h3>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(360px, 1fr));gap:16px">
+            ${raidVolumes.map(vol => `
+              <div class="card" style="border-color:var(--border-glow);background:linear-gradient(135deg,rgba(2,132,199,0.06) 0%,rgba(16,185,129,0.06) 100%)">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
+                  <div style="display:flex;align-items:center;gap:12px">
+                    <div style="font-size:26px;width:48px;height:48px;border-radius:14px;background:var(--accent-dim);display:flex;align-items:center;justify-content:center;border:1px solid var(--border-glow)">🛡️</div>
+                    <div>
+                      <h4 style="font-size:16px;font-weight:800;margin:0">${escapeHtml(vol.name)}</h4>
+                      <span class="badge badge-blue" style="font-size:10px;padding:1px 8px">${vol.raid_level} Mirror</span>
+                    </div>
+                  </div>
+                  <span class="badge badge-green">● Healthy</span>
+                </div>
+                <div style="font-size:12px;color:var(--text-secondary);display:flex;flex-direction:column;gap:6px;margin-bottom:14px">
+                  <div class="flex justify-between"><span>Usable Capacity:</span><strong style="color:var(--text-primary)">${vol.usable_capacity_formatted}</strong></div>
+                  <div class="flex justify-between"><span>Filesystem:</span><span class="font-mono">${vol.filesystem || 'ext4'}</span></div>
+                  <div class="flex justify-between"><span>Mount Point:</span><code class="font-mono" style="color:var(--accent)">${vol.mount_point || '/mnt/storage'}</code></div>
+                  <div class="flex justify-between"><span>Member Disks:</span><span class="font-mono">${(vol.member_disks || []).join(', ')}</span></div>
+                </div>
+                <div style="display:flex;gap:8px">
+                  <button class="btn btn-primary btn-sm" onclick="showUploadModal('${vol.mount_point || vol.name}')">📤 Upload</button>
+                  <button class="btn btn-ghost btn-sm" onclick="navigate('files', { drive: '${vol.mount_point || vol.name}' })">📂 Browse</button>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- STANDARD DISKS SECTION -->
+      <h3 style="font-size:16px;font-weight:800;color:var(--text-primary);margin-bottom:14px;display:flex;align-items:center;gap:8px">
+        💾 Registered Storage Drives
+      </h3>
 
       ${drives.length === 0 ? `
         <div class="card empty-state">
           <div class="icon">💿</div>
           <h3>No drives registered</h3>
-          <p>Click "Add Storage" to register drives with your NAS.</p>
+          <p>Click "Add Storage" or "Create RAID 1 Array" to initialize storage with your NAS.</p>
         </div>` : `
         <div style="display:flex;flex-direction:column;gap:16px" id="storage-list">
           ${drives.map(d => {
@@ -1567,9 +1781,10 @@ async function storage(container) {
       }
     </div>`;
 
-  document.getElementById('upload-file-btn').addEventListener('click', () => showUploadModal());
-  document.getElementById('add-storage-btn').addEventListener('click', showAddStorageModal);
-  document.getElementById('scan-drives-btn').addEventListener('click', () => { toast('Refreshing drives...','info'); navigate('storage'); });
+  document.getElementById('create-raid-btn')?.addEventListener('click', showRaidSetupModal);
+  document.getElementById('upload-file-btn')?.addEventListener('click', () => showUploadModal());
+  document.getElementById('add-storage-btn')?.addEventListener('click', showAddStorageModal);
+  document.getElementById('scan-drives-btn')?.addEventListener('click', () => { toast('Refreshing drives...','info'); navigate('storage'); });
 
   document.querySelectorAll('.upload-to-drive-btn').forEach(btn => {
     btn.addEventListener('click', () => showUploadModal(btn.dataset.path));

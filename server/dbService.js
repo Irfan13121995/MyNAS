@@ -49,6 +49,21 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_activity_logs_username ON activity_logs(username);
   CREATE INDEX IF NOT EXISTS idx_activity_logs_time ON activity_logs(time);
+
+  CREATE TABLE IF NOT EXISTS volumes (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    raid_level TEXT NOT NULL,
+    member_disks TEXT NOT NULL,
+    usable_capacity_bytes INTEGER NOT NULL,
+    usable_capacity_formatted TEXT NOT NULL,
+    filesystem TEXT DEFAULT 'ext4',
+    mount_point TEXT,
+    device_path TEXT,
+    status TEXT DEFAULT 'active',
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_volumes_name ON volumes(name);
 `);
 
 // Add permissions & status columns to users table if not exist
@@ -409,7 +424,90 @@ function getActivityLogs({ username, role, limit = 50 }) {
   }
 }
 
+/**
+ * Inserts a new RAID volume record into SQLite
+ */
+function createVolume({ id, name, raidLevel, memberDisks, usableCapacityBytes, usableCapacityFormatted, filesystem, mountPoint, devicePath }) {
+  try {
+    const stmt = db.prepare(`
+      INSERT INTO volumes (
+        id, name, raid_level, member_disks, 
+        usable_capacity_bytes, usable_capacity_formatted, 
+        filesystem, mount_point, device_path, status, created_at
+      ) VALUES (
+        @id, @name, @raidLevel, @memberDisks, 
+        @usableCapacityBytes, @usableCapacityFormatted, 
+        @filesystem, @mountPoint, @devicePath, 'active', @createdAt
+      )
+    `);
+
+    stmt.run({
+      id,
+      name,
+      raidLevel: typeof raidLevel === 'number' ? `RAID ${raidLevel}` : raidLevel,
+      memberDisks: JSON.stringify(memberDisks),
+      usableCapacityBytes,
+      usableCapacityFormatted,
+      filesystem: filesystem || 'ext4',
+      mountPoint: mountPoint || `/mnt/storage/${name}`,
+      devicePath: devicePath || '/dev/md0',
+      createdAt: new Date().toISOString()
+    });
+
+    return getVolumeById(id);
+  } catch (err) {
+    console.error('Failed to insert volume in SQLite:', err);
+    throw err;
+  }
+}
+
+/**
+ * Retrieves a volume by ID
+ */
+function getVolumeById(id) {
+  try {
+    const row = db.prepare('SELECT * FROM volumes WHERE id = ?').get(id);
+    if (row && row.member_disks) {
+      try { row.member_disks = JSON.parse(row.member_disks); } catch (e) {}
+    }
+    return row;
+  } catch (err) {
+    console.error('Failed to get volume by ID:', err);
+    return null;
+  }
+}
+
+/**
+ * Retrieves all registered RAID / storage volumes
+ */
+function getAllVolumes() {
+  try {
+    const rows = db.prepare('SELECT * FROM volumes ORDER BY created_at DESC').all();
+    return rows.map(r => {
+      let memberDisks = [];
+      try { memberDisks = JSON.parse(r.member_disks || '[]'); } catch (e) {}
+      return { ...r, member_disks: memberDisks };
+    });
+  } catch (err) {
+    console.error('Failed to get all volumes:', err);
+    return [];
+  }
+}
+
+/**
+ * Deletes a volume record from SQLite
+ */
+function deleteVolume(id) {
+  try {
+    return db.prepare('DELETE FROM volumes WHERE id = ?').run(id);
+  } catch (err) {
+    console.error('Failed to delete volume:', err);
+    return null;
+  }
+}
+
 module.exports = {
+  db,
   hasAnyUsers,
   getUserByUsername,
   getUserById,
@@ -425,5 +523,9 @@ module.exports = {
   getSyncSettings,
   saveSyncSettings,
   recordActivity,
-  getActivityLogs
+  getActivityLogs,
+  createVolume,
+  getVolumeById,
+  getAllVolumes,
+  deleteVolume
 };
