@@ -802,22 +802,45 @@ async function loadSystemInfo() {
 
 // ─── FILE & FOLDER UPLOAD MODAL ────────────────────────────────────────────────────────
 async function showUploadModal(preselectedDrive = '', preselectedFolder = '') {
-  const r = await GET('/api/drives');
-  const drives = r?.data || [];
+  const [rDrives, rRaid] = await Promise.all([
+    GET('/api/drives'),
+    GET('/api/raid/volumes')
+  ]);
+  const drives = rDrives?.data || [];
+  const raidVolumes = rRaid?.data?.volumes || [];
 
-  if (drives.length === 0) {
-    toast('No active drives available to upload files.', 'error');
+  if (drives.length === 0 && raidVolumes.length === 0) {
+    toast('No active drives or storage pools available to upload files.', 'error');
     return;
   }
 
-  // Auto clean drive and folder defaults
-  let defaultDrive = preselectedDrive || (drives.length > 0 ? drives[0].letter : '');
+  // Check if preselectedDrive corresponds to a RAID volume
+  let defaultDrive = preselectedDrive || (raidVolumes.length > 0 ? `raid:${raidVolumes[0].id}` : drives.length > 0 ? drives[0].letter : '');
   let defaultFolder = preselectedFolder || '';
 
-  const driveOptions = drives.map(d => `
-    <option value="${d.letter}" ${d.letter.toUpperCase().startsWith(defaultDrive.toUpperCase()) ? 'selected' : ''}>
-      ${d.name || d.letter} (${d.letter}) — ${formatBytes(d.freeSpace || 0)} free
-    </option>`).join('');
+  const raidOptions = raidVolumes.map(v => {
+    const isSelected = preselectedDrive && (
+      preselectedDrive === v.id || 
+      preselectedDrive === v.name || 
+      preselectedDrive === `raid:${v.id}` || 
+      preselectedDrive === `raid:${v.name}` ||
+      preselectedDrive.toLowerCase().includes(v.name.toLowerCase()) ||
+      (v.mount_point && preselectedDrive.toUpperCase().startsWith(v.mount_point.toUpperCase()))
+    );
+    return `<option value="raid:${v.id}" ${isSelected ? 'selected' : ''}>
+      🛡️ RAID 1 Mirror: ${escapeHtml(v.name)} (${(v.member_disks||[]).join(' + ')}) — ${escapeHtml(v.usable_capacity_formatted)}
+    </option>`;
+  }).join('');
+
+  const driveOptions = drives.map(d => {
+    const isSelected = !preselectedDrive.startsWith('raid:') && d.letter.toUpperCase().startsWith(defaultDrive.toUpperCase());
+    return `
+      <option value="${d.letter}" ${isSelected ? 'selected' : ''}>
+        ${escapeHtml(d.name || d.letter)} (${d.letter}) — ${formatBytes(d.freeSpace || 0)} free
+      </option>`;
+  }).join('');
+
+  const allTargetOptions = raidOptions ? `${raidOptions}<option disabled>──────────</option>${driveOptions}` : driveOptions;
 
   const modalHtml = `
     <div class="modal-backdrop" id="modal-backdrop">
@@ -830,8 +853,8 @@ async function showUploadModal(preselectedDrive = '', preselectedFolder = '') {
           <form id="upload-form">
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">
               <div>
-                <label for="upload-drive-select" style="font-weight:600; font-size:12px; margin-bottom:6px; display:block">Select Target Drive</label>
-                <select id="upload-drive-select" class="select">${driveOptions}</select>
+                <label for="upload-drive-select" style="font-weight:600; font-size:12px; margin-bottom:6px; display:block">Select Target Storage</label>
+                <select id="upload-drive-select" class="select">${allTargetOptions}</select>
               </div>
               <div>
                 <label for="upload-folder-input" style="font-weight:600; font-size:12px; margin-bottom:6px; display:block">Destination Subfolder (optional)</label>
@@ -1309,8 +1332,8 @@ async function dashboard(container) {
                   <div class="flex justify-between"><span>Member Disks:</span><span class="font-mono">${(vol.member_disks || []).join(', ')}</span></div>
                 </div>
                 <div style="display:flex;gap:8px">
-                  <button class="btn btn-primary btn-sm" onclick="showUploadModal('${vol.mount_point || vol.name}')">📤 Upload</button>
-                  <button class="btn btn-ghost btn-sm" onclick="navigate('files', { drive: '${vol.mount_point || vol.name}' })">📂 Browse</button>
+                  <button class="btn btn-primary btn-sm" onclick="showUploadModal('raid:${vol.id}')">📤 Upload</button>
+                  <button class="btn btn-ghost btn-sm" onclick="navigate('files', { drive: 'raid:${vol.id}' })">📂 Browse</button>
                 </div>
               </div>
             `).join('')}
@@ -1777,8 +1800,8 @@ async function storage(container) {
                   <div class="flex justify-between"><span>Member Disks:</span><span class="font-mono">${(vol.member_disks || []).join(', ')}</span></div>
                 </div>
                 <div style="display:flex;gap:8px">
-                  <button class="btn btn-primary btn-sm" onclick="showUploadModal('${vol.mount_point || vol.name}')">📤 Upload</button>
-                  <button class="btn btn-ghost btn-sm" onclick="navigate('files', { drive: '${vol.mount_point || vol.name}' })">📂 Browse</button>
+                  <button class="btn btn-primary btn-sm" onclick="showUploadModal('raid:${vol.id}')">📤 Upload</button>
+                  <button class="btn btn-ghost btn-sm" onclick="navigate('files', { drive: 'raid:${vol.id}' })">📂 Browse</button>
                 </div>
               </div>
             `).join('')}

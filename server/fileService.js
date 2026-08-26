@@ -2,6 +2,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const { getDrives } = require('./driveService');
 const driveConfig = require('./driveConfigService');
+const dbService = require('./dbService');
 
 const MEDIA_EXTENSIONS = new Set([
   // Images
@@ -15,7 +16,7 @@ const VIDEO_EXTENSIONS = new Set([
 ]);
 
 /**
- * Validates a path to prevent directory traversal and verify it resides on an active drive.
+ * Validates a path to prevent directory traversal and verify it resides on an active drive or RAID pool.
  */
 async function validatePath(targetPath) {
   if (!targetPath) {
@@ -27,7 +28,27 @@ async function validatePath(targetPath) {
     throw new Error('Access Denied: Malformed path string detected');
   }
 
-  let formatted = targetPath;
+  let formatted = targetPath.trim();
+
+  // Handle RAID volume references (e.g. 'raid:vol_...', 'raid:myNAS', or volume name)
+  if (formatted.startsWith('raid:')) {
+    const volIdOrName = formatted.replace(/^raid:/, '').trim();
+    const volumes = dbService.getAllVolumes();
+    const raidVol = volumes.find(v => v.id === volIdOrName || v.name === volIdOrName);
+    if (raidVol && Array.isArray(raidVol.member_disks) && raidVol.member_disks.length > 0) {
+      const primaryDisk = raidVol.member_disks[0].replace(/[\/\\]+$/, '');
+      formatted = path.join(primaryDisk, raidVol.name);
+    }
+  } else {
+    // Check if path matches a RAID volume mount point or name
+    const volumes = dbService.getAllVolumes();
+    const raidVol = volumes.find(v => v.name === formatted || (v.mount_point && v.mount_point.toUpperCase() === formatted.toUpperCase()));
+    if (raidVol && Array.isArray(raidVol.member_disks) && raidVol.member_disks.length > 0) {
+      const primaryDisk = raidVol.member_disks[0].replace(/[\/\\]+$/, '');
+      formatted = path.join(primaryDisk, raidVol.name);
+    }
+  }
+
   if (/^[a-zA-Z]:$/.test(formatted)) {
     formatted += '\\';
   }
@@ -44,7 +65,7 @@ async function validatePath(targetPath) {
   const targetDrive = resolvedPath.substring(0, 2).toUpperCase();
   
   if (!driveLetters.includes(targetDrive)) {
-    throw new Error('Access Denied: Path resides on an invalid or disconnected drive');
+    throw new Error(`Access Denied: Drive "${targetDrive}" is not an active storage drive.`);
   }
   
   return resolvedPath;

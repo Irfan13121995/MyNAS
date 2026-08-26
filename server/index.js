@@ -704,6 +704,7 @@ app.get('/api/files', authenticateToken, async (req, res) => {
     if (!targetPath) {
       const drives = await getDrives();
       const allowedPaths = driveConfig.getAllowedPaths();
+      const raidVolumes = dbService.getAllVolumes();
 
       let filteredDrives = drives;
       if (allowedPaths !== null) {
@@ -716,6 +717,18 @@ app.get('/api/files', authenticateToken, async (req, res) => {
         filteredDrives = filteredDrives.filter(d => isPathAllowed(d.letter, req.user.allowedDisks));
       }
 
+      const raidDirectories = raidVolumes.map(v => ({
+        name: `🛡️ ${v.name} (RAID 1 Mirror)`,
+        path: `raid:${v.id}`,
+        isDirectory: true,
+        size: v.usable_capacity_bytes,
+        freeSpace: v.usable_capacity_bytes,
+        modifiedAt: new Date(v.created_at || Date.now()),
+        ext: '',
+        isDrive: true,
+        isRaid: true
+      }));
+
       const driveDirectories = filteredDrives.map(d => ({
         name: d.letter,
         path: d.letter + path.sep,
@@ -727,7 +740,29 @@ app.get('/api/files', authenticateToken, async (req, res) => {
         isDrive: true,
         isUsb: d.isUsb
       }));
-      return res.json(driveDirectories);
+
+      return res.json([...raidDirectories, ...driveDirectories]);
+    }
+
+    // Check if target is a RAID volume
+    let raidVol = null;
+    const volumes = dbService.getAllVolumes();
+    if (targetPath.startsWith('raid:')) {
+      const volKey = targetPath.replace(/^raid:/, '').trim();
+      raidVol = volumes.find(v => v.id === volKey || v.name === volKey);
+    } else {
+      raidVol = volumes.find(v => v.name === targetPath || (v.mount_point && v.mount_point.toUpperCase() === targetPath.toUpperCase()));
+    }
+
+    if (raidVol && Array.isArray(raidVol.member_disks) && raidVol.member_disks.length > 0) {
+      const cleanPrimary = raidVol.member_disks[0].replace(/[\/\\]+$/, '');
+      const raidDir = path.join(cleanPrimary + '\\', raidVol.name);
+      await safeEnsureDir(raidDir);
+
+      const files = await listFiles(raidDir);
+      logActivity('browse', `Browsed RAID 1: ${raidVol.name}`, req.user?.username);
+      const results = files.map(f => ({ ...f, path: path.join(raidDir, f.name) }));
+      return res.json(results);
     }
 
     // Clean double-colon or malformed drive path parameters (e.g. D::\ -> D:\)
@@ -839,7 +874,23 @@ app.get('/api/stream', authenticateToken, async (req, res) => {
   }
 });
 
-// ─── 9. UPLOAD ENDPOINT ──────────────────────────────────────────────────────
+// ─── 9. UPLOAD & RAID 1 MIRRORING ENDPOINTS ─────────────────────────────────
+
+async function safeEnsureDir(dirPath) {
+  if (!dirPath) return;
+  const normalized = path.normalize(dirPath).replace(/[\/\\]+$/, '');
+  // Skip Windows drive roots (e.g. C:, I:, K:, C:\, I:\, K:\)
+  if (/^[a-zA-Z]:?$/.test(normalized)) {
+    return;
+  }
+  try {
+    await fs.promises.mkdir(dirPath, { recursive: true });
+  } catch (err) {
+    if (err.code !== 'EEXIST' && err.code !== 'EPERM') {
+      throw err;
+    }
+  }
+}
 
 app.post('/api/upload', authenticateToken, checkReadWrite, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
@@ -850,36 +901,93 @@ app.post('/api/upload', authenticateToken, checkReadWrite, upload.single('file')
     return res.status(400).json({ error: 'Destination path query is required' });
   }
 
-  if (!isPathAllowed(destinationDir, req.user?.allowedDisks)) {
-    try { await fs.promises.unlink(req.file.path); } catch {}
-    return res.status(403).json({ error: 'Access Denied: You do not have permission to upload to this drive or directory.' });
+  // Check if target is a RAID volume
+  let raidVol = null;
+  const volumes = dbService.getAllVolumes();
+  if (destinationDir.startsWith('raid:')) {
+    const volKey = destinationDir.replace(/^raid:/, '').trim();
+    raidVol = volumes.find(v => v.id === volKey || v.name === volKey);
+  } else {
+    raidVol = volumes.find(v => v.name === destinationDir || (v.mount_point && v.mount_point.toUpperCase() === destinationDir.toUpperCase()));
   }
 
   try {
-    const validatedDir = await validatePath(destinationDir);
-    await fs.promises.mkdir(validatedDir, { recursive: true });
-
     let relativePath = req.query.relativePath || req.headers['x-relative-path'] || '';
     let finalPath;
-    if (relativePath) {
-      const cleanRelPath = relativePath.replace(/\\/g, '/').split('/').filter(p => p !== '' && p !== '..').join(path.sep);
-      finalPath = path.join(validatedDir, cleanRelPath);
+
+    if (raidVol && Array.isArray(raidVol.member_disks) && raidVol.member_disks.length > 0) {
+      // ── RAID 1 MIRRORED UPLOAD ──
+      // Write to primary member disk and automatically mirror to all other member disks
+      const memberPaths = [];
+      for (const disk of raidVol.member_disks) {
+        const cleanDisk = disk.replace(/[\/\\]+$/, '');
+        let targetDir = path.join(cleanDisk + '\\', raidVol.name);
+        await safeEnsureDir(targetDir);
+
+        let targetFile;
+        if (relativePath) {
+          const cleanRel = relativePath.replace(/\\/g, '/').split('/').filter(p => p !== '' && p !== '..').join(path.sep);
+          targetFile = path.join(targetDir, cleanRel);
+        } else {
+          targetFile = path.join(targetDir, req.file.originalname);
+        }
+        await safeEnsureDir(path.dirname(targetFile));
+        memberPaths.push(targetFile);
+      }
+
+      // Move uploaded file to primary member disk
+      const primaryPath = memberPaths[0];
+      try {
+        await fs.promises.rename(req.file.path, primaryPath);
+      } catch (renameErr) {
+        if (renameErr.code === 'EXDEV') {
+          await fs.promises.copyFile(req.file.path, primaryPath);
+          await fs.promises.unlink(req.file.path);
+        } else throw renameErr;
+      }
+
+      // Mirror file to all remaining member disks (e.g. Disk 2 / K:)
+      for (let i = 1; i < memberPaths.length; i++) {
+        try {
+          await fs.promises.copyFile(primaryPath, memberPaths[i]);
+        } catch (mirrorErr) {
+          console.warn(`RAID 1 Mirror sync error on member disk ${raidVol.member_disks[i]}:`, mirrorErr.message);
+        }
+      }
+
+      finalPath = primaryPath;
+      logActivity('upload', `Uploaded to RAID 1 [${raidVol.name}]: ${relativePath || req.file.originalname}`, req.user?.username);
     } else {
-      finalPath = path.join(validatedDir, req.file.originalname);
+      // ── STANDARD DISK UPLOAD ──
+      if (!isPathAllowed(destinationDir, req.user?.allowedDisks)) {
+        try { await fs.promises.unlink(req.file.path); } catch {}
+        return res.status(403).json({ error: 'Access Denied: You do not have permission to upload to this drive or directory.' });
+      }
+
+      const validatedDir = await validatePath(destinationDir);
+      await safeEnsureDir(validatedDir);
+
+      if (relativePath) {
+        const cleanRelPath = relativePath.replace(/\\/g, '/').split('/').filter(p => p !== '' && p !== '..').join(path.sep);
+        finalPath = path.join(validatedDir, cleanRelPath);
+      } else {
+        finalPath = path.join(validatedDir, req.file.originalname);
+      }
+
+      await safeEnsureDir(path.dirname(finalPath));
+
+      try {
+        await fs.promises.rename(req.file.path, finalPath);
+      } catch (renameErr) {
+        if (renameErr.code === 'EXDEV') {
+          await fs.promises.copyFile(req.file.path, finalPath);
+          await fs.promises.unlink(req.file.path);
+        } else throw renameErr;
+      }
+
+      logActivity('upload', `Uploaded: ${relativePath || req.file.originalname}`, req.user?.username);
     }
 
-    await fs.promises.mkdir(path.dirname(finalPath), { recursive: true });
-
-    try {
-      await fs.promises.rename(req.file.path, finalPath);
-    } catch (renameErr) {
-      if (renameErr.code === 'EXDEV') {
-        await fs.promises.copyFile(req.file.path, finalPath);
-        await fs.promises.unlink(req.file.path);
-      } else throw renameErr;
-    }
-
-    logActivity('upload', `Uploaded: ${relativePath || req.file.originalname}`, req.user?.username);
     res.json({ success: true, path: finalPath });
   } catch (err) {
     try { await fs.promises.unlink(req.file.path); } catch {}
@@ -903,41 +1011,94 @@ app.post('/api/upload/chunk', authenticateToken, checkReadWrite, upload.single('
     return res.status(400).json({ error: 'Missing fileId or destination parameter' });
   }
 
-  if (!isPathAllowed(destinationDir, req.user?.allowedDisks)) {
-    try { await fs.promises.unlink(req.file.path); } catch {}
-    return res.status(403).json({ error: 'Access Denied: You do not have permission to upload to this drive or directory.' });
+  // Check if destination is a RAID volume
+  let raidVol = null;
+  const volumes = dbService.getAllVolumes();
+  if (destinationDir.startsWith('raid:')) {
+    const volKey = destinationDir.replace(/^raid:/, '').trim();
+    raidVol = volumes.find(v => v.id === volKey || v.name === volKey);
+  } else {
+    raidVol = volumes.find(v => v.name === destinationDir || (v.mount_point && v.mount_point.toUpperCase() === destinationDir.toUpperCase()));
   }
 
   const chunkDir = path.join(__dirname, 'temp_uploads', 'chunks', fileId.replace(/[^a-zA-Z0-9_-]/g, ''));
 
   try {
-    await fs.promises.mkdir(chunkDir, { recursive: true });
+    await safeEnsureDir(chunkDir);
     const chunkPath = path.join(chunkDir, `chunk_${chunkIndex}`);
     await fs.promises.rename(req.file.path, chunkPath);
 
     // Check if all chunks have been received
     const files = await fs.promises.readdir(chunkDir);
     if (files.length >= totalChunks) {
-      const validatedDir = await validatePath(destinationDir);
-      await fs.promises.mkdir(validatedDir, { recursive: true });
-      const finalPath = path.join(validatedDir, originalName);
+      let finalPath;
 
-      // Concatenate all chunks in order
-      const writeStream = fs.createWriteStream(finalPath);
-      for (let i = 0; i < totalChunks; i++) {
-        const partPath = path.join(chunkDir, `chunk_${i}`);
-        if (fs.existsSync(partPath)) {
-          const buffer = await fs.promises.readFile(partPath);
-          writeStream.write(buffer);
-          await fs.promises.unlink(partPath).catch(() => {});
+      if (raidVol && Array.isArray(raidVol.member_disks) && raidVol.member_disks.length > 0) {
+        const memberPaths = [];
+        for (const disk of raidVol.member_disks) {
+          const cleanDisk = disk.replace(/[\/\\]+$/, '');
+          const targetDir = path.join(cleanDisk + '\\', raidVol.name);
+          await safeEnsureDir(targetDir);
+          memberPaths.push(path.join(targetDir, originalName));
         }
+
+        const primaryPath = memberPaths[0];
+        const writeStream = fs.createWriteStream(primaryPath);
+        for (let i = 0; i < totalChunks; i++) {
+          const partPath = path.join(chunkDir, `chunk_${i}`);
+          if (fs.existsSync(partPath)) {
+            const buffer = await fs.promises.readFile(partPath);
+            writeStream.write(buffer);
+            await fs.promises.unlink(partPath).catch(() => {});
+          }
+        }
+        await new Promise((resolve, reject) => {
+          writeStream.on('finish', resolve);
+          writeStream.on('error', reject);
+          writeStream.end();
+        });
+
+        // Mirror chunked file to all secondary member disks
+        for (let i = 1; i < memberPaths.length; i++) {
+          try {
+            await fs.promises.copyFile(primaryPath, memberPaths[i]);
+          } catch (mErr) {
+            console.warn(`RAID 1 Mirror chunk copy error:`, mErr.message);
+          }
+        }
+
+        finalPath = primaryPath;
+        logActivity('upload', `Uploaded (chunked) to RAID 1 [${raidVol.name}]: ${originalName}`, req.user?.username);
+      } else {
+        if (!isPathAllowed(destinationDir, req.user?.allowedDisks)) {
+          return res.status(403).json({ error: 'Access Denied: You do not have permission to upload to this drive or directory.' });
+        }
+
+        const validatedDir = await validatePath(destinationDir);
+        await safeEnsureDir(validatedDir);
+        finalPath = path.join(validatedDir, originalName);
+
+        const writeStream = fs.createWriteStream(finalPath);
+        for (let i = 0; i < totalChunks; i++) {
+          const partPath = path.join(chunkDir, `chunk_${i}`);
+          if (fs.existsSync(partPath)) {
+            const buffer = await fs.promises.readFile(partPath);
+            writeStream.write(buffer);
+            await fs.promises.unlink(partPath).catch(() => {});
+          }
+        }
+        await new Promise((resolve, reject) => {
+          writeStream.on('finish', resolve);
+          writeStream.on('error', reject);
+          writeStream.end();
+        });
+
+        logActivity('upload', `Uploaded (chunked): ${originalName}`, req.user?.username);
       }
-      writeStream.end();
 
       // Clean up chunk directory
       await fs.promises.rmdir(chunkDir).catch(() => {});
 
-      logActivity('upload', `Uploaded (chunked): ${originalName}`, req.user?.username);
       return res.json({ success: true, completed: true, path: finalPath });
     }
 
