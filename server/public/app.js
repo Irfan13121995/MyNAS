@@ -1578,11 +1578,13 @@ async function showRaidSetupModal() {
 
     // Usable capacity in RAID 1 = smaller disk size
     if (selectedDiskPaths.length === 2) {
-      const d1 = availableDisks.find(d => d.path === selectedDiskPaths[0]);
-      const d2 = availableDisks.find(d => d.path === selectedDiskPaths[1]);
+      const d1 = availableDisks.find(d => d.path === selectedDiskPaths[0] || d.id === selectedDiskPaths[0]);
+      const d2 = availableDisks.find(d => d.path === selectedDiskPaths[1] || d.id === selectedDiskPaths[1]);
       if (d1 && d2) {
         const minBytes = Math.min(d1.sizeBytes || 0, d2.sizeBytes || 0);
-        if (usableVal) usableVal.textContent = (minBytes / (1024 ** 4)).toFixed(1) + ' TB';
+        if (usableVal) {
+          usableVal.textContent = d1.size && d2.size && (d1.size === d2.size) ? d1.size : formatBytes(minBytes);
+        }
         if (summaryCard) summaryCard.style.display = 'block';
       }
     } else {
@@ -1605,18 +1607,18 @@ async function showRaidSetupModal() {
     </div>` : availableDisks.map(d => `
     <div class="raid-disk-card" data-path="${d.path}">
       <div class="raid-disk-check" id="check-${d.id}"></div>
-      <div style="font-size:24px">${d.type === 'NVMe' ? '⚡' : d.type === 'SSD' ? '💽' : '💿'}</div>
+      <div style="font-size:24px">${d.type === 'NVMe' ? '⚡' : d.type === 'SSD' ? '💽' : d.type === 'USB' ? '🔌' : '💿'}</div>
       <div style="flex:1; min-width:0">
         <div style="display:flex; align-items:center; gap:8px">
-          <strong style="color:var(--text-primary); font-size:13px">${d.name}</strong>
-          <span class="badge" style="font-size:9px; padding:1px 6px">${d.type} • ${d.interface}</span>
+          <strong style="color:var(--text-primary); font-size:13px">${escapeHtml(d.name)}</strong>
+          <span class="badge" style="font-size:9px; padding:1px 6px">${escapeHtml(d.type)} • ${escapeHtml(d.interface)}</span>
         </div>
         <div style="font-size:11px; color:var(--text-secondary); margin-top:2px">
-          <code class="font-mono">${d.path}</code> · Serial: ${d.serial}
+          <code class="font-mono">${escapeHtml(d.path)}</code> · Serial: ${escapeHtml(d.serial)}
         </div>
       </div>
       <div style="font-weight:800; font-size:13px; color:var(--text-primary); background:rgba(255,255,255,0.06); padding:4px 10px; border-radius:10px; border:1px solid var(--border)">
-        ${d.size}
+        ${escapeHtml(d.size)}
       </div>
     </div>
   `).join('');
