@@ -1217,14 +1217,15 @@ async function showUploadModal(preselectedDrive = '', preselectedFolder = '') {
 // PAGE: DASHBOARD
 // ═════════════════════════════════════════════════════════════════════════════
 async function dashboard(container) {
-  const [drivesR, systemR, activityR, tunnelR] = await Promise.all([
-    GET('/api/drives'), GET('/api/system'), GET('/api/activity'), GET('/api/tunnel/status')
+  const [drivesR, systemR, activityR, tunnelR, raidR] = await Promise.all([
+    GET('/api/drives'), GET('/api/system'), GET('/api/activity'), GET('/api/tunnel/status'), GET('/api/raid/volumes')
   ]);
 
   const drives = drivesR?.data || [];
   const sys = systemR?.data || {};
   const activity = activityR?.data || [];
   const tunnel = tunnelR?.data || {};
+  const raidVolumes = raidR?.data?.volumes || [];
 
   let currentUserInfo = {};
   try { currentUserInfo = JSON.parse(localStorage.getItem('nas_user_info') || '{}'); } catch(e) {}
@@ -1243,8 +1244,9 @@ async function dashboard(container) {
           <p>Overview of your Personal NAS system</p>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-primary" id="upload-file-btn">📤 Upload File</button>
+          <button class="btn btn-primary" id="dash-create-raid-btn">🛡️ Create RAID 1</button>
           <button class="btn btn-ghost" id="add-storage-btn">+ Add Storage</button>
+          <button class="btn btn-ghost" id="upload-file-btn">📤 Upload File</button>
           <button class="btn btn-ghost" id="refresh-dash-btn">↻ Refresh</button>
         </div>
       </div>
@@ -1281,6 +1283,41 @@ async function dashboard(container) {
         </div>
       </div>
 
+      <!-- RAID Storage Pools (If active) -->
+      ${raidVolumes.length > 0 ? `
+        <div style="margin-bottom:24px">
+          <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+            <div class="section-title">🛡️ Active RAID Storage Pools</div>
+            <span class="badge badge-green">${raidVolumes.length} Mirrored</span>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(360px, 1fr));gap:14px">
+            ${raidVolumes.map(vol => `
+              <div class="card" style="border-color:var(--border-glow);background:linear-gradient(135deg,rgba(2,132,199,0.08) 0%,rgba(16,185,129,0.08) 100%)">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
+                  <div style="display:flex;align-items:center;gap:12px">
+                    <div style="font-size:24px;width:44px;height:44px;border-radius:12px;background:var(--accent-dim);display:flex;align-items:center;justify-content:center;border:1px solid var(--border-glow)">🛡️</div>
+                    <div>
+                      <h4 style="font-size:15px;font-weight:800;margin:0">${escapeHtml(vol.name)}</h4>
+                      <span class="badge badge-blue" style="font-size:10px;padding:1px 6px">${vol.raid_level} Mirror</span>
+                    </div>
+                  </div>
+                  <span class="badge badge-green">● Healthy</span>
+                </div>
+                <div style="font-size:12px;color:var(--text-secondary);display:flex;flex-direction:column;gap:5px;margin-bottom:12px">
+                  <div class="flex justify-between"><span>Usable Capacity:</span><strong style="color:var(--text-primary)">${vol.usable_capacity_formatted}</strong></div>
+                  <div class="flex justify-between"><span>Mount Point:</span><code class="font-mono" style="color:var(--accent)">${vol.mount_point || '/mnt/storage'}</code></div>
+                  <div class="flex justify-between"><span>Member Disks:</span><span class="font-mono">${(vol.member_disks || []).join(', ')}</span></div>
+                </div>
+                <div style="display:flex;gap:8px">
+                  <button class="btn btn-primary btn-sm" onclick="showUploadModal('${vol.mount_point || vol.name}')">📤 Upload</button>
+                  <button class="btn btn-ghost btn-sm" onclick="navigate('files', { drive: '${vol.mount_point || vol.name}' })">📂 Browse</button>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
+
       <!-- Drives + Activity Grid -->
       <div class="dash-main-grid" style="margin-bottom:20px">
         <!-- Drive Cards -->
@@ -1293,7 +1330,7 @@ async function dashboard(container) {
               <div class="card empty-state">
                 <div class="icon">💿</div>
                 <h3>No drives registered</h3>
-                <p>Click "Add Storage" to add a drive to your NAS.</p>
+                <p>Click "Add Storage" or "Create RAID 1" to add storage to your NAS.</p>
               </div>` :
               drives.map(d => renderDriveCard(d)).join('')
             }
@@ -1365,6 +1402,7 @@ async function dashboard(container) {
     </div>`;
 
   // Events
+  document.getElementById('dash-create-raid-btn')?.addEventListener('click', showRaidSetupModal);
   document.getElementById('upload-file-btn').addEventListener('click', () => showUploadModal());
   document.getElementById('add-storage-btn').addEventListener('click', showAddStorageModal);
   document.getElementById('refresh-dash-btn').addEventListener('click', () => navigate('dashboard'));
@@ -1459,7 +1497,16 @@ async function showAddStorageModal() {
   const close = showModal({
     title: '+ Add Storage',
     body: `
-      <p style="color:var(--text-secondary);font-size:13px;margin-bottom:16px">Select a drive to add to your NAS, or enter a custom path (e.g., a network share).</p>
+      <!-- RAID Shortcut Banner -->
+      <div style="background:linear-gradient(135deg,rgba(2,132,199,0.12) 0%,rgba(99,102,241,0.12) 100%);border:1.5px solid var(--border-glow);border-radius:var(--radius-squircle);padding:14px 18px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <div>
+          <strong style="color:var(--text-primary);font-size:13px;display:flex;align-items:center;gap:6px">🛡️ Redundant Storage Array</strong>
+          <p style="font-size:11px;color:var(--text-secondary);margin:2px 0 0 0">Pair 2 physical disks for automatic 1:1 mirroring and fault tolerance.</p>
+        </div>
+        <button type="button" class="btn btn-sm btn-primary" id="modal-open-raid-btn">Create RAID 1 Array →</button>
+      </div>
+
+      <p style="color:var(--text-secondary);font-size:13px;margin-bottom:14px">Or select a single drive to add to your NAS, or enter a custom path (e.g., a network share).</p>
       ${available.length > 0 ? `<div id="drive-select-list" style="margin-bottom:20px">${driveItems}</div>` : ''}
       <hr class="divider"/>
       <div style="margin-bottom:4px">
@@ -1471,6 +1518,11 @@ async function showAddStorageModal() {
     footer: `
       <button class="btn btn-ghost" id="modal-cancel-btn">Cancel</button>
       <button class="btn btn-primary" id="modal-add-btn">Add to NAS</button>`
+  });
+
+  document.getElementById('modal-open-raid-btn')?.addEventListener('click', () => {
+    close();
+    showRaidSetupModal();
   });
 
   document.querySelectorAll('.drive-select-item:not(.registered)').forEach(el => {
