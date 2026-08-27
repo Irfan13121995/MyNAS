@@ -79,8 +79,7 @@
       ],
       "expo-task-manager",
       "expo-background-fetch",
-      "expo-image",
-      "expo-sqlite"
+      "expo-image"
     ],
     "extra": {
       "eas": {
