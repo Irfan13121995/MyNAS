@@ -1924,22 +1924,162 @@ function confirmDeleteDialog({ title, count, itemNames = [], onConfirm }) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// PAGE: FILES (BROWSER + MULTI-SELECTION + DELETION)
+// PAGE: WINDOWS 11 FILE EXPLORER
 // ═════════════════════════════════════════════════════════════════════════════
-let filePath = [];
-let selectedFilesSet = new Set(); // Set of full paths
 
+// Explorer State Engine
+let filePath = [];
+let explorerHistory = [[]];
+let explorerHistoryIdx = 0;
+let explorerViewMode = 'large-icons'; // 'large-icons' | 'medium-icons' | 'details'
+let explorerSortBy = 'date';          // 'name' | 'date' | 'type' | 'size'
+let explorerSortDir = 'desc';         // 'asc' | 'desc'
+let explorerGroupBy = 'date';         // 'date' | 'none'
+let explorerCollapsedGroups = new Set();
+let selectedExplorerPaths = new Set();
+let showDetailsPane = false;
+let explorerSearchFilter = '';
+let activePopoverMenu = null;
+
+// ── Windows 11 File Icon Engine ──────────────────────────────────────────────
+function getWindows11Icon(f) {
+  if (f.isDirectory) {
+    if (f.isRaid) {
+      return `<svg width="48" height="48" viewBox="0 0 48 48" fill="none"><path d="M24 4L7 11.5V23C7 33.5 14.3 43.2 24 46C33.7 43.2 41 33.5 41 23V11.5L24 4Z" fill="url(#raidG)"></path><path d="M24 16V34M17 25H31" stroke="#fff" stroke-width="3.5" stroke-linecap="round"></path><defs><linearGradient id="raidG" x1="7" y1="4" x2="41" y2="46" gradientUnits="userSpaceOnUse"><stop stop-color="#0284C7"/><stop offset="1" stop-color="#10B981"/></linearGradient></defs></svg>`;
+    }
+    if (f.isDrive) {
+      return `<svg width="48" height="48" viewBox="0 0 48 48" fill="none"><rect x="6" y="10" width="36" height="28" rx="5" fill="#3B82F6"></rect><rect x="6" y="27" width="36" height="11" rx="2" fill="#1E293B"></rect><circle cx="36" cy="32.5" r="2.5" fill="#10B981"></circle><circle cx="29" cy="32.5" r="2.5" fill="#0284C7"></circle><rect x="12" y="31.5" width="10" height="2" rx="1" fill="#64748B"></rect></svg>`;
+    }
+    // Modern 3D Windows 11 Yellow Folder
+    return `<svg width="48" height="48" viewBox="0 0 48 48" fill="none"><path d="M6 12C6 9.79 7.79 8 10 8H19L23 13H38C40.21 13 42 14.79 42 17V36C42 38.21 40.21 40 38 40H10C7.79 40 6 38.21 6 36V12Z" fill="#F59E0B"></path><path d="M6 17C6 14.79 7.79 13 10 13H38C40.21 13 42 14.79 42 17V36C42 38.21 40.21 40 38 40H10C7.79 40 6 38.21 6 36V17Z" fill="#FBBF24"></path><path d="M6 21H42V36C42 38.21 40.21 40 38 40H10C7.79 40 6 38.21 6 36V21Z" fill="#FCD34D" fill-opacity="0.9"></path></svg>`;
+  }
+
+  const ext = (f.name.split('.').pop() || '').toLowerCase();
+
+  // Image Thumbnail Preview
+  if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'svg'].includes(ext)) {
+    const thumbUrl = `/api/thumbnail?path=${encodeURIComponent(f.path)}&token=${Auth.getToken()}`;
+    return `<img class="explorer-thumb-img" src="${thumbUrl}" alt="${escapeHtml(f.name)}" loading="lazy" onerror="this.onerror=null;this.parentElement.innerHTML='🖼️';"/>`;
+  }
+
+  // Video Thumbnail Preview
+  if (['mp4', 'mkv', 'mov', 'avi', 'webm', 'wmv'].includes(ext)) {
+    const streamUrl = `/api/stream?path=${encodeURIComponent(f.path)}&token=${Auth.getToken()}`;
+    return `
+      <div style="position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center;border-radius:6px;overflow:hidden;background:#0F172A">
+        <video src="${streamUrl}#t=0.5" preload="metadata" muted style="width:100%;height:100%;object-fit:cover"></video>
+        <div style="position:absolute;width:24px;height:24px;border-radius:50%;background:rgba(0,0,0,0.65);color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px">▶</div>
+      </div>`;
+  }
+
+  // Windows 11 Red PDF Badge
+  if (ext === 'pdf') {
+    return `<svg width="48" height="48" viewBox="0 0 48 48" fill="none"><path d="M10 6C10 4.34 11.34 3 13 3H29L38 12V42C38 43.66 36.66 45 35 45H13C11.34 45 10 43.66 10 42V6Z" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"></path><path d="M29 3V12H38" fill="#E2E8F0"></path><rect x="6" y="20" width="36" height="15" rx="3" fill="#EF4444"></rect><text x="24" y="31" fill="#fff" font-size="9" font-weight="900" text-anchor="middle" font-family="system-ui, sans-serif">PDF</text></svg>`;
+  }
+
+  // Windows 11 Yellow Zip/Archive Folder
+  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) {
+    return `<svg width="48" height="48" viewBox="0 0 48 48" fill="none"><path d="M8 8C8 6.34 9.34 5 11 5H21L25 9H37C38.66 9 40 10.34 40 12V40C40 41.66 38.66 43 37 43H11C9.34 43 8 41.66 8 40V8Z" fill="#EAB308"></path><rect x="22" y="11" width="4" height="28" fill="#CBD5E1"></rect><rect x="22" y="14" width="4" height="2" fill="#475569"></rect><rect x="22" y="18" width="4" height="2" fill="#475569"></rect><rect x="22" y="22" width="4" height="2" fill="#475569"></rect><rect x="22" y="26" width="4" height="2" fill="#475569"></rect><rect x="21" y="30" width="6" height="8" rx="2" fill="#1E293B"></rect></svg>`;
+  }
+
+  // Windows 11 Executable/App Installer
+  if (['exe', 'msi', 'bat', 'cmd', 'apk'].includes(ext)) {
+    return `<svg width="48" height="48" viewBox="0 0 48 48" fill="none"><rect x="8" y="8" width="32" height="32" rx="8" fill="url(#exeG)"></rect><path d="M18 16L30 24L18 32V16Z" fill="#fff"></path><defs><linearGradient id="exeG" x1="8" y1="8" x2="40" y2="40" gradientUnits="userSpaceOnUse"><stop stop-color="#6366F1"/><stop offset="1" stop-color="#0284C7"/></linearGradient></defs></svg>`;
+  }
+
+  // Code / Developer Files
+  if (['js', 'ts', 'py', 'json', 'html', 'css', 'md', 'sql', 'cpp', 'c', 'cs', 'java'].includes(ext)) {
+    return `<svg width="48" height="48" viewBox="0 0 48 48" fill="none"><path d="M10 6C10 4.34 11.34 3 13 3H29L38 12V42C38 43.66 36.66 45 35 45H13C11.34 45 10 43.66 10 42V6Z" fill="#0F172A" stroke="#334155" stroke-width="1.5"></path><path d="M29 3V12H38" fill="#1E293B"></path><path d="M19 21L15 25L19 29M29 21L33 25L29 29M26 19L22 31" stroke="#38BDF8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>`;
+  }
+
+  // Word / Document
+  if (['doc', 'docx', 'txt', 'rtf'].includes(ext)) {
+    return `<svg width="48" height="48" viewBox="0 0 48 48" fill="none"><path d="M10 6C10 4.34 11.34 3 13 3H29L38 12V42C38 43.66 36.66 45 35 45H13C11.34 45 10 43.66 10 42V6Z" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"></path><path d="M29 3V12H38" fill="#E2E8F0"></path><rect x="6" y="20" width="36" height="15" rx="3" fill="#2563EB"></rect><text x="24" y="31" fill="#fff" font-size="8.5" font-weight="900" text-anchor="middle" font-family="system-ui, sans-serif">DOC</text></svg>`;
+  }
+
+  // Excel / Spreadsheet
+  if (['xls', 'xlsx', 'csv'].includes(ext)) {
+    return `<svg width="48" height="48" viewBox="0 0 48 48" fill="none"><path d="M10 6C10 4.34 11.34 3 13 3H29L38 12V42C38 43.66 36.66 45 35 45H13C11.34 45 10 43.66 10 42V6Z" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"></path><path d="M29 3V12H38" fill="#E2E8F0"></path><rect x="6" y="20" width="36" height="15" rx="3" fill="#16A34A"></rect><text x="24" y="31" fill="#fff" font-size="8.5" font-weight="900" text-anchor="middle" font-family="system-ui, sans-serif">XLS</text></svg>`;
+  }
+
+  // Music / Audio
+  if (['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a'].includes(ext)) {
+    return `<svg width="48" height="48" viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="18" fill="url(#audioG)"></circle><circle cx="24" cy="24" r="6" fill="#1E1B4B"></circle><path d="M22 18V28M22 28A3 3 0 1 1 19 25H22" stroke="#fff" stroke-width="2"></path><defs><linearGradient id="audioG" x1="6" y1="6" x2="42" y2="42" gradientUnits="userSpaceOnUse"><stop stop-color="#A855F7"/><stop offset="1" stop-color="#6366F1"/></linearGradient></defs></svg>`;
+  }
+
+  // Generic File
+  return `<svg width="48" height="48" viewBox="0 0 48 48" fill="none"><path d="M10 6C10 4.34 11.34 3 13 3H29L38 12V42C38 43.66 36.66 45 35 45H13C11.34 45 10 43.66 10 42V6Z" fill="#F8FAFC" stroke="#94A3B8" stroke-width="1.5"></path><path d="M29 3V12H38" fill="#E2E8F0"></path><line x1="16" y1="20" x2="32" y2="20" stroke="#94A3B8" stroke-width="2" stroke-linecap="round"></line><line x1="16" y1="26" x2="32" y2="26" stroke="#94A3B8" stroke-width="2" stroke-linecap="round"></line><line x1="16" y1="32" x2="26" y2="32" stroke="#94A3B8" stroke-width="2" stroke-linecap="round"></line></svg>`;
+}
+
+// ── Date Grouping Calculator ─────────────────────────────────────────────────
+function groupItemsByDate(items) {
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfYesterday = startOfToday - 86400000;
+  const startOfThisWeek = startOfToday - (now.getDay() * 86400000);
+  const startOfLastWeek = startOfThisWeek - 7 * 86400000;
+  const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime();
+  const startOfThisYear = new Date(now.getFullYear(), 0, 1).getTime();
+
+  const groups = {
+    'Today': [],
+    'Yesterday': [],
+    'Earlier this week': [],
+    'Last week': [],
+    'Earlier this month': [],
+    'Last month': [],
+    'Earlier this year': [],
+    'A long time ago': []
+  };
+
+  items.forEach(item => {
+    const mTime = item.modifiedAt ? new Date(item.modifiedAt).getTime() : 0;
+    if (mTime >= startOfToday) {
+      groups['Today'].push(item);
+    } else if (mTime >= startOfYesterday) {
+      groups['Yesterday'].push(item);
+    } else if (mTime >= startOfThisWeek) {
+      groups['Earlier this week'].push(item);
+    } else if (mTime >= startOfLastWeek) {
+      groups['Last week'].push(item);
+    } else if (mTime >= startOfThisMonth) {
+      groups['Earlier this month'].push(item);
+    } else if (mTime >= startOfLastMonth) {
+      groups['Last month'].push(item);
+    } else if (mTime >= startOfThisYear) {
+      groups['Earlier this year'].push(item);
+    } else {
+      groups['A long time ago'].push(item);
+    }
+  });
+
+  const result = [];
+  for (const [name, list] of Object.entries(groups)) {
+    if (list.length > 0) {
+      result.push({ name, items: list });
+    }
+  }
+  return result;
+}
+
+// ── Primary Entry Point ──────────────────────────────────────────────────────
 async function files(container, params) {
   if (params && params.drive) {
     const cleanDrive = params.drive.replace(/[\/\\]+$/, '');
     filePath = [cleanDrive];
+    explorerHistory = [[cleanDrive]];
+    explorerHistoryIdx = 0;
   } else if (!params || !params.preservePath) {
     filePath = [];
+    explorerHistory = [[]];
+    explorerHistoryIdx = 0;
   }
-  selectedFilesSet.clear();
+  selectedExplorerPaths.clear();
   await renderFiles(container);
 }
 
+// ── Windows 11 Explorer Renderer ─────────────────────────────────────────────
 async function renderFiles(container) {
   let pathStr = filePath.join('\\');
   if (/^[a-zA-Z]:$/.test(pathStr)) {
@@ -1947,132 +2087,742 @@ async function renderFiles(container) {
   }
   const endpoint = pathStr ? `/api/files?path=${encodeURIComponent(pathStr)}` : '/api/files';
   const r = await GET(endpoint);
-  const items = r?.data || [];
+  let rawItems = r?.data || [];
+
+  // Filter with Search query if present
+  let items = rawItems;
+  if (explorerSearchFilter.trim()) {
+    const q = explorerSearchFilter.trim().toLowerCase();
+    items = items.filter(f => f.name.toLowerCase().includes(q));
+  }
+
+  // Sort items
+  items.sort((a, b) => {
+    // Keep directories on top
+    if (a.isDirectory && !b.isDirectory) return -1;
+    if (!a.isDirectory && b.isDirectory) return 1;
+
+    let valA, valB;
+    if (explorerSortBy === 'date') {
+      valA = a.modifiedAt ? new Date(a.modifiedAt).getTime() : 0;
+      valB = b.modifiedAt ? new Date(b.modifiedAt).getTime() : 0;
+    } else if (explorerSortBy === 'size') {
+      valA = a.size || 0;
+      valB = b.size || 0;
+    } else if (explorerSortBy === 'type') {
+      valA = (a.name.split('.').pop() || '').toLowerCase();
+      valB = (b.name.split('.').pop() || '').toLowerCase();
+    } else {
+      valA = a.name.toLowerCase();
+      valB = b.name.toLowerCase();
+    }
+
+    if (valA < valB) return explorerSortDir === 'asc' ? -1 : 1;
+    if (valA > valB) return explorerSortDir === 'asc' ? 1 : -1;
+    return 0;
+  });
 
   const isAtRoot = filePath.length === 0;
+  const currentFolderName = filePath.length > 0 ? (filePath[filePath.length - 1].startsWith('raid:') ? '🛡️ ' + filePath[filePath.length - 1].replace(/^raid:/, '') : filePath[filePath.length - 1]) : 'This PC';
 
-  const breadcrumbs = [
-    `<span class="breadcrumb-item ${filePath.length===0?'active':''}" data-idx="-1">NAS Root</span>`,
+  // Fetch drives for left navigation pane
+  const drivesR = await GET('/api/drives');
+  const drives = drivesR?.data || [];
+
+  const volumesR = await GET('/api/volumes').catch(() => ({ data: [] }));
+  const raidVolumes = volumesR?.data || [];
+
+  // Breadcrumbs Bar
+  const breadcrumbSegments = [
+    `<span class="explorer-address-crumb" data-idx="-1">🏠 This PC</span>`,
     ...filePath.map((seg, i) => `
-      <span class="breadcrumb-sep">›</span>
-      <span class="breadcrumb-item ${i===filePath.length-1?'active':''}" data-idx="${i}">${seg.startsWith('raid:') ? '🛡️ ' + seg.replace(/^raid:/, '') : seg}</span>`)
+      <span class="explorer-address-sep">›</span>
+      <span class="explorer-address-crumb" data-idx="${i}">${seg.startsWith('raid:') ? '🛡️ ' + seg.replace(/^raid:/, '') : seg}</span>`)
   ].join('');
 
-  const rows = items.map(f => {
-    const ext = f.name.split('.').pop();
-    const icon = fileIcon(ext, f.isDirectory);
-    const itemPath = f.path || f.name;
-    const isSelected = selectedFilesSet.has(itemPath);
-    const isDeletable = !isAtRoot;
+  // Calculate selected statistics
+  const selectedItems = items.filter(f => selectedExplorerPaths.has(f.path || f.name));
+  const selectedSize = selectedItems.reduce((acc, f) => acc + (f.size || 0), 0);
 
-    return `
-      <tr class="file-row ${isSelected ? 'selected' : ''}" data-name="${escapeHtml(f.name)}" data-path="${escapeHtml(itemPath)}" data-isdir="${f.isDirectory}" data-ext="${ext}">
-        ${isDeletable ? `
-          <td style="width:38px;text-align:center" class="file-check-td" onclick="event.stopPropagation()">
-            <input type="checkbox" class="file-row-check" data-path="${escapeHtml(itemPath)}" data-name="${escapeHtml(f.name)}" ${isSelected ? 'checked' : ''}/>
-          </td>` : ''}
-        <td><span style="margin-right:8px">${icon}</span>${escapeHtml(f.name)}</td>
-        <td>${f.isDirectory ? (f.isDrive ? (f.isRaid ? 'RAID Pool' : 'Drive') : 'Folder') : ext.toUpperCase()}</td>
-        <td>${f.isDirectory ? '—' : formatBytes(f.size)}</td>
-        <td>${f.modifiedAt ? new Date(f.modifiedAt).toLocaleDateString() : '—'}</td>
-        <td style="text-align:right;white-space:nowrap" onclick="event.stopPropagation()">
-          ${!f.isDirectory ? `<a class="btn btn-ghost btn-sm" href="/api/stream?path=${encodeURIComponent(itemPath)}&token=${Auth.getToken()}" target="_blank" title="Open / Download">⬇</a>` : ''}
-          ${isDeletable ? `<button class="btn btn-ghost btn-sm btn-row-delete" data-path="${escapeHtml(itemPath)}" data-name="${escapeHtml(f.name)}" title="Delete item">🗑️</button>` : ''}
-        </td>
-      </tr>`;
-  }).join('');
+  // Build Left Navigation Sidebar Tree
+  const quickAccessItems = [
+    { label: 'Home', icon: '🏠', path: [] },
+    { label: 'Gallery', icon: '🖼️', action: () => navigate('gallery') },
+    { label: 'Desktop', icon: '💻', drive: 'C:\\Users\\irfan\\Desktop' },
+    { label: 'Downloads', icon: '📥', drive: 'C:\\Users\\irfan\\Downloads' },
+    { label: 'Documents', icon: '📄', drive: 'C:\\Users\\irfan\\Documents' },
+    { label: 'Pictures', icon: '📷', drive: 'C:\\Users\\irfan\\Pictures' },
+    { label: 'Videos', icon: '🎬', drive: 'C:\\Users\\irfan\\Videos' },
+  ];
 
-  const batchBarHtml = !isAtRoot ? `
-    <div id="file-batch-bar" class="selection-toolbar" style="${selectedFilesSet.size > 0 ? '' : 'display:none'}">
-      <span class="selection-count">Selected: <strong>${selectedFilesSet.size}</strong> item(s)</span>
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-danger btn-sm" id="batch-delete-files-btn">🗑️ Delete Selected (${selectedFilesSet.size})</button>
-        <button class="btn btn-ghost btn-sm" id="batch-clear-files-btn">✕ Clear Selection</button>
-      </div>
-    </div>` : '';
+  const quickAccessHtml = quickAccessItems.map(item => `
+    <div class="explorer-tree-item ${item.path && isAtRoot ? 'active' : ''}" data-tree-type="${item.action ? 'action' : 'folder'}" data-path="${item.drive || ''}">
+      <span class="tree-icon">${item.icon}</span>
+      <span class="tree-label">${item.label}</span>
+    </div>
+  `).join('');
 
-  container.innerHTML = `
-    <div class="page">
-      <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
-        <div><h2>Files</h2><p>Browse, access, upload, and manage files on your Personal NAS</p></div>
-        <button class="btn btn-primary" id="upload-file-btn">📤 Upload File Here</button>
-      </div>
-      <div class="browser-toolbar">
-        ${filePath.length > 0 ? `<button class="btn btn-ghost btn-sm" id="back-btn">‹ Back</button>` : ''}
-        <div class="breadcrumb">${breadcrumbs}</div>
-        <input type="text" class="input search-input" id="file-search" placeholder="Filter files..."/>
-      </div>
-      ${batchBarHtml}
-      ${items.length === 0 ? `<div class="card empty-state"><div class="icon">📂</div><h3>Empty folder</h3><p>This directory is empty.</p></div>` : `
-      <div class="table-wrap">
-        <table>
+  const raidTreeHtml = raidVolumes.map(v => `
+    <div class="explorer-tree-item ${filePath[0] === 'raid:' + v.id || filePath[0] === v.name ? 'active' : ''}" data-tree-type="raid" data-raid-id="raid:${v.id}">
+      <span class="tree-icon">🛡️</span>
+      <span class="tree-label">${v.name} (RAID 1)</span>
+    </div>
+  `).join('');
+
+  const driveTreeHtml = drives.map(d => `
+    <div class="explorer-tree-item ${filePath[0] === d.letter ? 'active' : ''}" data-tree-type="drive" data-drive="${d.letter}">
+      <span class="tree-icon">💽</span>
+      <span class="tree-label">${d.letter} ${d.name ? `(${d.name})` : ''}</span>
+    </div>
+  `).join('');
+
+  // Render Main Content (Grid or Details)
+  let mainContentHtml = '';
+
+  if (items.length === 0) {
+    mainContentHtml = `
+      <div class="card empty-state" style="margin-top:30px">
+        <div class="icon">📂</div>
+        <h3>This folder is empty</h3>
+        <p>Drop files here or click "Upload" from the top command bar.</p>
+      </div>`;
+  } else if (explorerViewMode === 'details') {
+    // Details Table View
+    const tableRows = items.map(f => {
+      const ext = f.name.split('.').pop() || '';
+      const itemPath = f.path || f.name;
+      const isSelected = selectedExplorerPaths.has(itemPath);
+      const iconHtml = getWindows11Icon(f);
+
+      return `
+        <tr class="explorer-table-row ${isSelected ? 'selected' : ''}" data-path="${escapeHtml(itemPath)}" data-name="${escapeHtml(f.name)}" data-isdir="${f.isDirectory}">
+          <td style="width:36px;text-align:center" onclick="event.stopPropagation()">
+            <input type="checkbox" class="file-row-check" data-path="${escapeHtml(itemPath)}" ${isSelected ? 'checked' : ''}/>
+          </td>
+          <td style="display:flex;align-items:center;gap:8px">
+            <div style="width:22px;height:22px;display:flex;align-items:center;justify-content:center">${iconHtml}</div>
+            <span>${escapeHtml(f.name)}</span>
+          </td>
+          <td>${f.modifiedAt ? new Date(f.modifiedAt).toLocaleString() : '—'}</td>
+          <td>${f.isDirectory ? (f.isDrive ? (f.isRaid ? 'RAID Pool' : 'Drive') : 'File folder') : (ext.toUpperCase() + ' File')}</td>
+          <td>${f.isDirectory ? '—' : formatBytes(f.size)}</td>
+        </tr>`;
+    }).join('');
+
+    mainContentHtml = `
+      <div class="explorer-table-wrap">
+        <table class="explorer-details-table">
           <thead>
             <tr>
-              ${!isAtRoot ? `<th style="width:38px;text-align:center"><input type="checkbox" id="file-select-all" class="file-select-all" title="Select / Deselect All"/></th>` : ''}
-              <th>Name</th>
-              <th>Type</th>
-              <th>Size</th>
-              <th>Modified</th>
-              <th style="text-align:right">Actions</th>
+              <th style="width:36px;text-align:center"><input type="checkbox" id="explorer-master-check"/></th>
+              <th data-sort="name">Name ${explorerSortBy==='name' ? (explorerSortDir==='asc'?'▲':'▼') : ''}</th>
+              <th data-sort="date">Date modified ${explorerSortBy==='date' ? (explorerSortDir==='asc'?'▲':'▼') : ''}</th>
+              <th data-sort="type">Type ${explorerSortBy==='type' ? (explorerSortDir==='asc'?'▲':'▼') : ''}</th>
+              <th data-sort="size">Size ${explorerSortBy==='size' ? (explorerSortDir==='asc'?'▲':'▼') : ''}</th>
             </tr>
           </thead>
-          <tbody id="file-tbody">${rows}</tbody>
+          <tbody>${tableRows}</tbody>
         </table>
-      </div>`}
+      </div>`;
+  } else {
+    // Large or Medium Icon Grid View with Date Grouping
+    if (explorerGroupBy === 'date' && !isAtRoot) {
+      const groups = groupItemsByDate(items);
+      mainContentHtml = groups.map(g => {
+        const isCollapsed = explorerCollapsedGroups.has(g.name);
+        const cardsHtml = g.items.map(f => renderExplorerCard(f)).join('');
+
+        return `
+          <div class="explorer-group-section">
+            <div class="explorer-group-header ${isCollapsed ? 'collapsed' : ''}" data-group-name="${g.name}">
+              <span class="group-chevron">▼</span>
+              <span>${g.name}</span>
+              <span class="explorer-group-count">(${g.items.length})</span>
+            </div>
+            <div class="explorer-grid ${explorerViewMode}" style="${isCollapsed ? 'display:none' : ''}">
+              ${cardsHtml}
+            </div>
+          </div>`;
+      }).join('');
+    } else {
+      const cardsHtml = items.map(f => renderExplorerCard(f)).join('');
+      mainContentHtml = `<div class="explorer-grid ${explorerViewMode}">${cardsHtml}</div>`;
+    }
+  }
+
+  // Right Details Pane Preview
+  let detailsPaneHtml = '';
+  if (showDetailsPane) {
+    if (selectedItems.length === 1) {
+      const sel = selectedItems[0];
+      const ext = sel.name.split('.').pop() || '';
+      const iconHtml = getWindows11Icon(sel);
+      detailsPaneHtml = `
+        <div class="explorer-details-pane">
+          <div class="explorer-preview-box">${iconHtml}</div>
+          <div class="explorer-details-meta">
+            <h4 style="margin:0;font-size:14px;font-weight:700;word-break:break-all">${escapeHtml(sel.name)}</h4>
+            <div class="explorer-meta-row">
+              <span class="explorer-meta-label">Item Type:</span>
+              <span class="explorer-meta-value">${sel.isDirectory ? 'File folder' : ext.toUpperCase() + ' File'}</span>
+            </div>
+            <div class="explorer-meta-row">
+              <span class="explorer-meta-label">File Size:</span>
+              <span class="explorer-meta-value">${sel.isDirectory ? '—' : formatBytes(sel.size)}</span>
+            </div>
+            <div class="explorer-meta-row">
+              <span class="explorer-meta-label">Date Modified:</span>
+              <span class="explorer-meta-value">${sel.modifiedAt ? new Date(sel.modifiedAt).toLocaleString() : '—'}</span>
+            </div>
+            <div class="explorer-meta-row">
+              <span class="explorer-meta-label">File Location:</span>
+              <span class="explorer-meta-value">${escapeHtml(sel.path || '')}</span>
+            </div>
+          </div>
+          <div class="explorer-details-actions">
+            ${!sel.isDirectory ? `<a class="btn btn-primary btn-sm" href="/api/stream?path=${encodeURIComponent(sel.path)}&token=${Auth.getToken()}" target="_blank">⬇ Download</a>` : ''}
+            ${!isAtRoot ? `<button class="btn btn-ghost btn-sm" id="details-rename-btn">✏️ Rename</button>` : ''}
+            ${!isAtRoot ? `<button class="btn btn-danger btn-sm" id="details-delete-btn">🗑️ Delete</button>` : ''}
+          </div>
+        </div>`;
+    } else if (selectedItems.length > 1) {
+      detailsPaneHtml = `
+        <div class="explorer-details-pane">
+          <div class="explorer-preview-box"><div style="font-size:40px">📦</div></div>
+          <div class="explorer-details-meta">
+            <h4 style="margin:0;font-size:14px;font-weight:700">${selectedItems.length} items selected</h4>
+            <div class="explorer-meta-row">
+              <span class="explorer-meta-label">Total Size:</span>
+              <span class="explorer-meta-value">${formatBytes(selectedSize)}</span>
+            </div>
+          </div>
+          <div class="explorer-details-actions">
+            <button class="btn btn-primary btn-sm" id="details-batch-zip-btn">📦 Download as ZIP</button>
+            <button class="btn btn-danger btn-sm" id="details-batch-delete-btn">🗑️ Delete All (${selectedItems.length})</button>
+          </div>
+        </div>`;
+    } else {
+      detailsPaneHtml = `
+        <div class="explorer-details-pane" style="align-items:center;justify-content:center;text-align:center">
+          <div style="font-size:36px;margin-bottom:8px">📄</div>
+          <p style="color:var(--text-muted);font-size:12.5px">Select a file or folder to view its properties.</p>
+        </div>`;
+    }
+  }
+
+  // Assemble Windows 11 Explorer Component
+  container.innerHTML = `
+    <div class="page" style="padding:0">
+      <div class="explorer-wrapper">
+        
+        <!-- 1. Tabs Header -->
+        <div class="explorer-tabs-bar">
+          <div class="explorer-tab">
+            <span>📁</span>
+            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(currentFolderName)}</span>
+          </div>
+          <div class="explorer-tab-add" title="Open Storage Overview" onclick="navigate('storage')">+</div>
+        </div>
+
+        <!-- 2. Navigation & Address Bar -->
+        <div class="explorer-nav-bar">
+          <button class="explorer-nav-btn" id="explorer-back-btn" title="Back (Alt+Left)" ${explorerHistoryIdx <= 0 ? 'disabled' : ''}>←</button>
+          <button class="explorer-nav-btn" id="explorer-fwd-btn" title="Forward (Alt+Right)" ${explorerHistoryIdx >= explorerHistory.length - 1 ? 'disabled' : ''}>→</button>
+          <button class="explorer-nav-btn" id="explorer-up-btn" title="Up to Parent Folder (Alt+Up)" ${isAtRoot ? 'disabled' : ''}>↑</button>
+          <button class="explorer-nav-btn" id="explorer-refresh-btn" title="Refresh (F5)">↻</button>
+
+          <div class="explorer-address-bar">${breadcrumbSegments}</div>
+
+          <div class="explorer-search-wrap">
+            <input type="text" class="explorer-search-input" id="explorer-search-box" value="${escapeHtml(explorerSearchFilter)}" placeholder="Search ${escapeHtml(currentFolderName)}..."/>
+            <span class="explorer-search-icon">🔍</span>
+          </div>
+        </div>
+
+        <!-- 3. Windows 11 Command Bar (Ribbon) -->
+        <div class="explorer-command-bar">
+          <div class="explorer-cmd-dropdown">
+            <button class="explorer-cmd-btn btn-primary" id="cmd-new-btn">
+              <span class="cmd-icon">➕</span>
+              <span>New</span>
+              <span style="font-size:9px">▼</span>
+            </button>
+            <div class="explorer-menu-popover" id="popover-new-menu" style="display:none">
+              <div class="explorer-menu-item" id="menu-new-folder"><span>📁</span><span>New Folder</span></div>
+              <div class="explorer-menu-divider"></div>
+              <div class="explorer-menu-item" id="menu-upload-file"><span>📤</span><span>Upload File</span></div>
+            </div>
+          </div>
+
+          <div class="explorer-cmd-sep"></div>
+
+          <button class="explorer-cmd-btn" id="cmd-rename-btn" ${selectedItems.length !== 1 || isAtRoot ? 'disabled' : ''} title="Rename selected item">
+            <span class="cmd-icon">✏️</span>
+            <span>Rename</span>
+          </button>
+
+          <button class="explorer-cmd-btn" id="cmd-download-btn" ${selectedItems.length === 0 ? 'disabled' : ''} title="Download selected file(s)">
+            <span class="cmd-icon">⬇</span>
+            <span>Download</span>
+          </button>
+
+          <button class="explorer-cmd-btn" id="cmd-delete-btn" ${selectedItems.length === 0 || isAtRoot ? 'disabled' : ''} style="color:var(--red)" title="Delete selected items">
+            <span class="cmd-icon">🗑️</span>
+            <span>Delete</span>
+          </button>
+
+          <div class="explorer-cmd-sep"></div>
+
+          <!-- Sort Menu Dropdown -->
+          <div class="explorer-cmd-dropdown">
+            <button class="explorer-cmd-btn" id="cmd-sort-btn">
+              <span class="cmd-icon">⇅</span>
+              <span>Sort</span>
+              <span style="font-size:9px">▼</span>
+            </button>
+            <div class="explorer-menu-popover" id="popover-sort-menu" style="display:none">
+              <div class="explorer-menu-item ${explorerSortBy==='name'?'active':''}" data-sort="name"><span class="menu-check">${explorerSortBy==='name'?'✓':''}</span><span>Name</span></div>
+              <div class="explorer-menu-item ${explorerSortBy==='date'?'active':''}" data-sort="date"><span class="menu-check">${explorerSortBy==='date'?'✓':''}</span><span>Date modified</span></div>
+              <div class="explorer-menu-item ${explorerSortBy==='type'?'active':''}" data-sort="type"><span class="menu-check">${explorerSortBy==='type'?'✓':''}</span><span>Type</span></div>
+              <div class="explorer-menu-item ${explorerSortBy==='size'?'active':''}" data-sort="size"><span class="menu-check">${explorerSortBy==='size'?'✓':''}</span><span>Size</span></div>
+              <div class="explorer-menu-divider"></div>
+              <div class="explorer-menu-item ${explorerSortDir==='asc'?'active':''}" data-sortdir="asc"><span class="menu-check">${explorerSortDir==='asc'?'✓':''}</span><span>Ascending</span></div>
+              <div class="explorer-menu-item ${explorerSortDir==='desc'?'active':''}" data-sortdir="desc"><span class="menu-check">${explorerSortDir==='desc'?'✓':''}</span><span>Descending</span></div>
+              <div class="explorer-menu-divider"></div>
+              <div class="explorer-menu-item ${explorerGroupBy==='date'?'active':''}" id="toggle-group-date"><span class="menu-check">${explorerGroupBy==='date'?'✓':''}</span><span>Group by Date</span></div>
+            </div>
+          </div>
+
+          <!-- View Menu Dropdown -->
+          <div class="explorer-cmd-dropdown">
+            <button class="explorer-cmd-btn" id="cmd-view-btn">
+              <span class="cmd-icon">☷</span>
+              <span>View</span>
+              <span style="font-size:9px">▼</span>
+            </button>
+            <div class="explorer-menu-popover" id="popover-view-menu" style="display:none">
+              <div class="explorer-menu-item ${explorerViewMode==='large-icons'?'active':''}" data-view="large-icons"><span class="menu-check">${explorerViewMode==='large-icons'?'✓':''}</span><span>Large icons</span></div>
+              <div class="explorer-menu-item ${explorerViewMode==='medium-icons'?'active':''}" data-view="medium-icons"><span class="menu-check">${explorerViewMode==='medium-icons'?'✓':''}</span><span>Medium icons</span></div>
+              <div class="explorer-menu-item ${explorerViewMode==='details'?'active':''}" data-view="details"><span class="menu-check">${explorerViewMode==='details'?'✓':''}</span><span>Details</span></div>
+            </div>
+          </div>
+
+          <div style="margin-left:auto;display:flex;align-items:center;gap:6px">
+            <button class="explorer-cmd-btn ${showDetailsPane ? 'active' : ''}" id="cmd-details-pane-btn" title="Toggle Details pane">
+              <span class="cmd-icon">📋</span>
+              <span>Details</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 4. Explorer Body (Sidebar + Content + Details) -->
+        <div class="explorer-body">
+          <div class="explorer-sidebar">
+            <div class="explorer-nav-section-title">Quick access</div>
+            ${quickAccessHtml}
+
+            <div class="explorer-nav-section-title" style="margin-top:10px">This PC</div>
+            ${raidTreeHtml}
+            ${driveTreeHtml}
+          </div>
+
+          <div class="explorer-main-view" id="explorer-main-view">
+            ${mainContentHtml}
+          </div>
+
+          ${detailsPaneHtml}
+        </div>
+
+        <!-- 5. Status Bar -->
+        <div class="explorer-status-bar">
+          <div class="explorer-status-left">
+            <span>${items.length} item${items.length !== 1 ? 's' : ''}</span>
+            ${selectedItems.length > 0 ? `<span>• <strong>${selectedItems.length}</strong> item${selectedItems.length > 1 ? 's' : ''} selected (${formatBytes(selectedSize)})</span>` : ''}
+          </div>
+          <div class="explorer-status-right">
+            <button class="explorer-view-btn ${explorerViewMode === 'large-icons' ? 'active' : ''}" data-view="large-icons" title="Large icons">☷</button>
+            <button class="explorer-view-btn ${explorerViewMode === 'details' ? 'active' : ''}" data-view="details" title="Details list">☰</button>
+          </div>
+        </div>
+
+      </div>
     </div>`;
 
-  // Update Batch Toolbar State
-  const updateFileBatchBar = () => {
-    const bar = document.getElementById('file-batch-bar');
-    if (!bar) return;
-    if (selectedFilesSet.size > 0) {
-      bar.style.display = 'flex';
-      const countEl = bar.querySelector('.selection-count');
-      const delBtn = document.getElementById('batch-delete-files-btn');
-      if (countEl) countEl.innerHTML = `Selected: <strong>${selectedFilesSet.size}</strong> item(s)`;
-      if (delBtn) delBtn.textContent = `🗑️ Delete Selected (${selectedFilesSet.size})`;
-    } else {
-      bar.style.display = 'none';
-    }
+  bindExplorerEvents(container, items, isAtRoot);
+}
 
-    // Update master select-all checkbox
-    const selectAll = document.getElementById('file-select-all');
-    if (selectAll) {
-      const allCheckboxes = document.querySelectorAll('.file-row-check');
-      selectAll.checked = allCheckboxes.length > 0 && Array.from(allCheckboxes).every(cb => cb.checked);
+// ── Render Individual File/Folder Card ───────────────────────────────────────
+function renderExplorerCard(f) {
+  const itemPath = f.path || f.name;
+  const isSelected = selectedExplorerPaths.has(itemPath);
+  const iconHtml = getWindows11Icon(f);
+
+  return `
+    <div class="explorer-item-card ${isSelected ? 'selected' : ''}" data-path="${escapeHtml(itemPath)}" data-name="${escapeHtml(f.name)}" data-isdir="${f.isDirectory}">
+      <div class="explorer-card-check ${isSelected ? 'checked' : ''}" data-path="${escapeHtml(itemPath)}" title="Select item">✓</div>
+      <div class="explorer-item-thumb">
+        <div class="explorer-thumb-icon">${iconHtml}</div>
+      </div>
+      <div class="explorer-item-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</div>
+    </div>`;
+}
+
+// ── Bind All Windows 11 Explorer Interactive Handlers ───────────────────────
+function bindExplorerEvents(container, items, isAtRoot) {
+  // 1. Navigation Buttons
+  document.getElementById('explorer-back-btn')?.addEventListener('click', () => {
+    if (explorerHistoryIdx > 0) {
+      explorerHistoryIdx--;
+      filePath = [...explorerHistory[explorerHistoryIdx]];
+      selectedExplorerPaths.clear();
+      renderFiles(container);
     }
+  });
+
+  document.getElementById('explorer-fwd-btn')?.addEventListener('click', () => {
+    if (explorerHistoryIdx < explorerHistory.length - 1) {
+      explorerHistoryIdx++;
+      filePath = [...explorerHistory[explorerHistoryIdx]];
+      selectedExplorerPaths.clear();
+      renderFiles(container);
+    }
+  });
+
+  document.getElementById('explorer-up-btn')?.addEventListener('click', () => {
+    if (filePath.length > 0) {
+      filePath.pop();
+      explorerHistory.push([...filePath]);
+      explorerHistoryIdx = explorerHistory.length - 1;
+      selectedExplorerPaths.clear();
+      renderFiles(container);
+    }
+  });
+
+  document.getElementById('explorer-refresh-btn')?.addEventListener('click', () => {
+    renderFiles(container);
+  });
+
+  // 2. Breadcrumb Navigation
+  document.querySelectorAll('.explorer-address-crumb').forEach(el => {
+    el.addEventListener('click', () => {
+      const idx = parseInt(el.dataset.idx, 10);
+      if (idx === -1) {
+        filePath = [];
+      } else {
+        filePath = filePath.slice(0, idx + 1);
+      }
+      explorerHistory.push([...filePath]);
+      explorerHistoryIdx = explorerHistory.length - 1;
+      selectedExplorerPaths.clear();
+      renderFiles(container);
+    });
+  });
+
+  // 3. Search Filter Input
+  document.getElementById('explorer-search-box')?.addEventListener('input', (e) => {
+    explorerSearchFilter = e.target.value;
+    renderFiles(container);
+  });
+
+  // 4. Command Bar Menus (New, Sort, View)
+  const closeAllPopovers = () => {
+    document.querySelectorAll('.explorer-menu-popover').forEach(p => p.style.display = 'none');
   };
 
-  // Bind Select All checkbox
-  document.getElementById('file-select-all')?.addEventListener('change', (e) => {
-    const isChecked = e.target.checked;
-    document.querySelectorAll('.file-row-check').forEach(cb => {
-      cb.checked = isChecked;
-      const p = cb.dataset.path;
-      if (isChecked) selectedFilesSet.add(p);
-      else selectedFilesSet.delete(p);
-      const row = cb.closest('.file-row');
-      if (row) row.classList.toggle('selected', isChecked);
-    });
-    updateFileBatchBar();
+  document.getElementById('cmd-new-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const menu = document.getElementById('popover-new-menu');
+    const isVis = menu.style.display === 'block';
+    closeAllPopovers();
+    if (!isVis) menu.style.display = 'block';
   });
 
-  // Bind Row Checkboxes
-  document.querySelectorAll('.file-row-check').forEach(cb => {
-    cb.addEventListener('change', (e) => {
-      const p = cb.dataset.path;
-      if (cb.checked) selectedFilesSet.add(p);
-      else selectedFilesSet.delete(p);
-      const row = cb.closest('.file-row');
-      if (row) row.classList.toggle('selected', cb.checked);
-      updateFileBatchBar();
+  document.getElementById('cmd-sort-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const menu = document.getElementById('popover-sort-menu');
+    const isVis = menu.style.display === 'block';
+    closeAllPopovers();
+    if (!isVis) menu.style.display = 'block';
+  });
+
+  document.getElementById('cmd-view-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const menu = document.getElementById('popover-view-menu');
+    const isVis = menu.style.display === 'block';
+    closeAllPopovers();
+    if (!isVis) menu.style.display = 'block';
+  });
+
+  document.addEventListener('click', closeAllPopovers);
+
+  // New Menu Items
+  document.getElementById('menu-new-folder')?.addEventListener('click', () => {
+    closeAllPopovers();
+    if (isAtRoot) {
+      toast('Please select a storage drive or RAID pool first to create a folder.', 'info');
+      return;
+    }
+    const currentFolder = filePath.join('\\');
+    showModal({
+      title: '📁 Create New Folder',
+      body: `
+        <div class="form-group">
+          <label>Folder Name:</label>
+          <input type="text" class="input" id="new-folder-name-input" placeholder="New Folder" autofocus/>
+        </div>`,
+      footer: `
+        <button class="btn btn-ghost" id="new-folder-cancel">Cancel</button>
+        <button class="btn btn-primary" id="new-folder-submit">Create Folder</button>`
+    });
+
+    document.getElementById('new-folder-submit')?.addEventListener('click', async () => {
+      const name = document.getElementById('new-folder-name-input').value.trim();
+      if (!name) return;
+      const target = currentFolder ? `${currentFolder}\\${name}` : name;
+      const res = await POST('/api/files/mkdir', { path: target });
+      if (res?.ok) {
+        toast(`Folder "${name}" created!`, 'success');
+        document.getElementById('modal-close-btn')?.click();
+        renderFiles(container);
+      } else {
+        toast(res?.data?.error || 'Failed to create folder', 'error');
+      }
     });
   });
 
-  // Bind Batch Delete Button
-  document.getElementById('batch-delete-files-btn')?.addEventListener('click', () => {
-    if (selectedFilesSet.size === 0) return;
-    const pathsArray = Array.from(selectedFilesSet);
+  document.getElementById('menu-upload-file')?.addEventListener('click', () => {
+    closeAllPopovers();
+    const currentDrive = filePath.length > 0 ? filePath[0] : '';
+    const currentSubfolder = filePath.length > 1 ? filePath.slice(1).join('\\') : '';
+    showUploadModal(currentDrive, currentSubfolder);
+  });
+
+  // Sort Menu Actions
+  document.querySelectorAll('#popover-sort-menu [data-sort]').forEach(el => {
+    el.addEventListener('click', () => {
+      explorerSortBy = el.dataset.sort;
+      renderFiles(container);
+    });
+  });
+
+  document.querySelectorAll('#popover-sort-menu [data-sortdir]').forEach(el => {
+    el.addEventListener('click', () => {
+      explorerSortDir = el.dataset.sortdir;
+      renderFiles(container);
+    });
+  });
+
+  document.getElementById('toggle-group-date')?.addEventListener('click', () => {
+    explorerGroupBy = explorerGroupBy === 'date' ? 'none' : 'date';
+    renderFiles(container);
+  });
+
+  // View Mode Switchers
+  document.querySelectorAll('[data-view]').forEach(el => {
+    el.addEventListener('click', () => {
+      explorerViewMode = el.dataset.view;
+      renderFiles(container);
+    });
+  });
+
+  // Details Pane Toggle
+  document.getElementById('cmd-details-pane-btn')?.addEventListener('click', () => {
+    showDetailsPane = !showDetailsPane;
+    renderFiles(container);
+  });
+
+  // 5. Left Navigation Sidebar Items
+  document.querySelectorAll('.explorer-tree-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const type = item.dataset.treeType;
+      if (type === 'raid') {
+        const raidId = item.dataset.raidId;
+        filePath = [raidId];
+        explorerHistory.push([...filePath]);
+        explorerHistoryIdx = explorerHistory.length - 1;
+        selectedExplorerPaths.clear();
+        renderFiles(container);
+      } else if (type === 'drive') {
+        const driveLetter = item.dataset.drive;
+        filePath = [driveLetter];
+        explorerHistory.push([...filePath]);
+        explorerHistoryIdx = explorerHistory.length - 1;
+        selectedExplorerPaths.clear();
+        renderFiles(container);
+      } else if (type === 'folder') {
+        const target = item.dataset.path;
+        if (!target) {
+          filePath = [];
+        } else {
+          filePath = [target];
+        }
+        explorerHistory.push([...filePath]);
+        explorerHistoryIdx = explorerHistory.length - 1;
+        selectedExplorerPaths.clear();
+        renderFiles(container);
+      }
+    });
+  });
+
+  // 6. Group Header Collapse Toggle
+  document.querySelectorAll('.explorer-group-header').forEach(header => {
+    header.addEventListener('click', () => {
+      const groupName = header.dataset.groupName;
+      if (explorerCollapsedGroups.has(groupName)) {
+        explorerCollapsedGroups.delete(groupName);
+      } else {
+        explorerCollapsedGroups.add(groupName);
+      }
+      renderFiles(container);
+    });
+  });
+
+  // 7. Item Selection & Double Click (Grid & Table Rows)
+  const toggleItemSelection = (path, e) => {
+    if (e) e.stopPropagation();
+    if (e && (e.ctrlKey || e.metaKey)) {
+      if (selectedExplorerPaths.has(path)) selectedExplorerPaths.delete(path);
+      else selectedExplorerPaths.add(path);
+    } else {
+      if (selectedExplorerPaths.has(path) && selectedExplorerPaths.size === 1) {
+        selectedExplorerPaths.clear();
+      } else {
+        selectedExplorerPaths.clear();
+        selectedExplorerPaths.add(path);
+      }
+    }
+    renderFiles(container);
+  };
+
+  document.querySelectorAll('.explorer-item-card, .explorer-table-row').forEach(el => {
+    const p = el.dataset.path;
+    const name = el.dataset.name;
+    const isDir = el.dataset.isdir === 'true';
+
+    // Checkbox Click
+    el.querySelector('.explorer-card-check, .file-row-check')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (selectedExplorerPaths.has(p)) selectedExplorerPaths.delete(p);
+      else selectedExplorerPaths.add(p);
+      renderFiles(container);
+    });
+
+    // Single Click Select
+    el.addEventListener('click', (e) => {
+      toggleItemSelection(p, e);
+    });
+
+    // Double Click Open
+    el.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      if (isDir) {
+        filePath.push(name);
+        explorerHistory.push([...filePath]);
+        explorerHistoryIdx = explorerHistory.length - 1;
+        selectedExplorerPaths.clear();
+        renderFiles(container);
+      } else {
+        // Open lightbox preview / viewer
+        const ext = name.split('.').pop().toLowerCase();
+        const streamUrl = `/api/stream?path=${encodeURIComponent(p)}&token=${Auth.getToken()}`;
+        const isVid = ['mp4', 'mkv', 'mov', 'webm', 'avi'].includes(ext);
+        const isImg = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg', 'bmp'].includes(ext);
+
+        if (isVid || isImg) {
+          showModal({
+            title: `${isVid ? '🎬' : '🖼️'} ${name}`,
+            body: `
+              <div class="lightbox-body">
+                ${isVid
+                  ? `<video class="lightbox-media" src="${streamUrl}" controls autoPlay></video>`
+                  : `<img class="lightbox-media" src="${streamUrl}" alt="${escapeHtml(name)}"/>`
+                }
+              </div>`,
+            footer: `<a class="btn btn-primary" href="${streamUrl}" target="_blank">⬇ Download Original</a>`
+          });
+        } else {
+          window.open(streamUrl, '_blank');
+        }
+      }
+    });
+  });
+
+  // Master Select All in Table View
+  document.getElementById('explorer-master-check')?.addEventListener('change', (e) => {
+    if (e.target.checked) {
+      items.forEach(f => selectedExplorerPaths.add(f.path || f.name));
+    } else {
+      selectedExplorerPaths.clear();
+    }
+    renderFiles(container);
+  });
+
+  // 8. Command Bar Action Buttons
+  document.getElementById('cmd-rename-btn')?.addEventListener('click', () => {
+    if (selectedExplorerPaths.size !== 1) return;
+    const oldPath = Array.from(selectedExplorerPaths)[0];
+    const oldName = oldPath.split(/[\\\/]/).pop();
+
+    showModal({
+      title: '✏️ Rename Item',
+      body: `
+        <div class="form-group">
+          <label>New Name:</label>
+          <input type="text" class="input" id="rename-input" value="${escapeHtml(oldName)}" autofocus/>
+        </div>`,
+      footer: `
+        <button class="btn btn-ghost" id="rename-cancel">Cancel</button>
+        <button class="btn btn-primary" id="rename-submit">Rename</button>`
+    });
+
+    document.getElementById('rename-submit')?.addEventListener('click', async () => {
+      const newName = document.getElementById('rename-input').value.trim();
+      if (!newName || newName === oldName) return;
+
+      const res = await POST('/api/files/rename', { oldPath, newName });
+      if (res?.ok) {
+        toast(`Renamed to "${newName}"!`, 'success');
+        document.getElementById('modal-close-btn')?.click();
+        selectedExplorerPaths.clear();
+        renderFiles(container);
+      } else {
+        toast(res?.data?.error || 'Failed to rename item', 'error');
+      }
+    });
+  });
+
+  document.getElementById('cmd-download-btn')?.addEventListener('click', async () => {
+    if (selectedExplorerPaths.size === 1) {
+      const p = Array.from(selectedExplorerPaths)[0];
+      const streamUrl = `/api/stream?path=${encodeURIComponent(p)}&token=${Auth.getToken()}`;
+      window.open(streamUrl, '_blank');
+    } else if (selectedExplorerPaths.size > 1) {
+      const paths = Array.from(selectedExplorerPaths);
+      toast('Preparing ZIP download...', 'info');
+      const res = await fetch('/api/files/batch-zip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${Auth.getToken()}` },
+        body: JSON.stringify({ paths })
+      });
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'nas_selection.zip';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        toast('Download started!', 'success');
+      } else {
+        toast('Failed to generate ZIP download', 'error');
+      }
+    }
+  });
+
+  document.getElementById('cmd-delete-btn')?.addEventListener('click', () => {
+    if (selectedExplorerPaths.size === 0) return;
+    const pathsArray = Array.from(selectedExplorerPaths);
     const names = pathsArray.map(p => p.split(/[\\\/]/).pop());
 
     confirmDeleteDialog({
@@ -2082,87 +2832,30 @@ async function renderFiles(container) {
         const res = await POST('/api/files/delete', { paths: pathsArray });
         if (res?.ok) {
           toast(`Successfully deleted ${res.data.deletedCount} item(s)!`, 'success');
-          selectedFilesSet.clear();
-          await renderFiles(container);
+          selectedExplorerPaths.clear();
+          renderFiles(container);
         } else {
-          toast(res?.data?.error || 'Failed to delete items', 'error');
+          toast(res?.data?.error || 'Failed to delete item(s)', 'error');
         }
       }
     });
   });
 
-  // Bind Clear Selection Button
-  document.getElementById('batch-clear-files-btn')?.addEventListener('click', () => {
-    selectedFilesSet.clear();
-    document.querySelectorAll('.file-row-check').forEach(cb => { cb.checked = false; });
-    document.querySelectorAll('.file-row').forEach(r => r.classList.remove('selected'));
-    updateFileBatchBar();
+  // Details Pane Buttons (Rename, Delete, Batch Zip)
+  document.getElementById('details-rename-btn')?.addEventListener('click', () => {
+    document.getElementById('cmd-rename-btn')?.click();
   });
 
-  // Bind Single Row Delete Button
-  document.querySelectorAll('.btn-row-delete').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const p = btn.dataset.path;
-      const name = btn.dataset.name;
-
-      confirmDeleteDialog({
-        count: 1,
-        itemNames: [name],
-        onConfirm: async () => {
-          const res = await POST('/api/files/delete', { path: p });
-          if (res?.ok) {
-            toast(`"${name}" deleted permanently!`, 'success');
-            selectedFilesSet.delete(p);
-            await renderFiles(container);
-          } else {
-            toast(res?.data?.error || 'Failed to delete file', 'error');
-          }
-        }
-      });
-    });
+  document.getElementById('details-delete-btn')?.addEventListener('click', () => {
+    document.getElementById('cmd-delete-btn')?.click();
   });
 
-  document.getElementById('upload-file-btn')?.addEventListener('click', () => {
-    const currentDrive = filePath.length > 0 ? filePath[0] : '';
-    const currentSubfolder = filePath.length > 1 ? filePath.slice(1).join('\\') : '';
-    showUploadModal(currentDrive, currentSubfolder);
+  document.getElementById('details-batch-delete-btn')?.addEventListener('click', () => {
+    document.getElementById('cmd-delete-btn')?.click();
   });
 
-  document.getElementById('back-btn')?.addEventListener('click', () => { 
-    filePath.pop(); 
-    selectedFilesSet.clear();
-    renderFiles(container); 
-  });
-
-  document.querySelectorAll('.breadcrumb-item').forEach(el => {
-    el.addEventListener('click', () => {
-      const idx = parseInt(el.dataset.idx);
-      if (idx === -1) { filePath = []; }
-      else { filePath = filePath.slice(0, idx + 1); }
-      selectedFilesSet.clear();
-      renderFiles(container);
-    });
-  });
-
-  document.querySelectorAll('.file-row').forEach(row => {
-    row.addEventListener('click', (e) => {
-      if (e.target.tagName === 'A' || e.target.tagName === 'INPUT' || e.target.closest('.btn-row-delete') || e.target.closest('.file-check-td')) return;
-      const isDir = row.dataset.isdir === 'true';
-      const name = row.dataset.name;
-      if (isDir) { 
-        filePath.push(name); 
-        selectedFilesSet.clear();
-        renderFiles(container); 
-      }
-    });
-  });
-
-  document.getElementById('file-search')?.addEventListener('input', (e) => {
-    const q = e.target.value.toLowerCase();
-    document.querySelectorAll('.file-row').forEach(row => {
-      row.style.display = row.dataset.name.toLowerCase().includes(q) ? '' : 'none';
-    });
+  document.getElementById('details-batch-zip-btn')?.addEventListener('click', () => {
+    document.getElementById('cmd-download-btn')?.click();
   });
 }
 

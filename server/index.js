@@ -1309,60 +1309,75 @@ app.delete('/api/trash/purge', authenticateToken, checkReadWrite, (req, res) => 
   }
 });
 
-app.post('/api/files/delete', authenticateToken, checkReadWrite, (req, res) => {
-  const targetPath = req.body.path;
-  if (!targetPath) return res.status(400).json({ error: 'Path is required' });
-  if (!isPathAllowed(targetPath, req.user?.allowedDisks)) {
-    return res.status(403).json({ error: 'Access Denied: You do not have permission to delete files on this drive.' });
+// ─── 7.3. RENAME FILE OR FOLDER ENDPOINT ────────────────────────────────────
+
+app.post('/api/files/rename', authenticateToken, checkReadWrite, async (req, res) => {
+  const { oldPath, newName } = req.body || {};
+  if (!oldPath || !newName) {
+    return res.status(400).json({ error: 'oldPath and newName are required' });
   }
+
+  // Sanitize newName (prevent path traversal characters)
+  const cleanNewName = path.basename(newName.trim());
+  if (!cleanNewName || cleanNewName.includes('..') || cleanNewName.includes('/') || cleanNewName.includes('\\')) {
+    return res.status(400).json({ error: 'Invalid name provided' });
+  }
+
+  if (!isPathAllowed(oldPath, req.user?.allowedDisks)) {
+    return res.status(403).json({ error: 'Access Denied: You do not have permission to rename items on this drive.' });
+  }
+
   try {
-    const item = trashService.moveToTrash(targetPath);
-    logActivity('trash', `Moved to trash: ${item.fileName}`, req.user?.username);
-    res.json({ success: true, item });
+    const allVolumes = dbService.getAllVolumes();
+    let normOld = path.normalize(oldPath.trim()).replace(/[\/\\]+$/, '');
+    let finalPath = '';
+
+    // Check if target is inside a RAID volume
+    let foundRaid = false;
+    for (const vol of allVolumes) {
+      if (!Array.isArray(vol.member_disks) || vol.member_disks.length === 0) continue;
+      for (const disk of vol.member_disks) {
+        const cleanDisk = disk.replace(/[\/\\]+$/, '');
+        const volRoot = path.join(cleanDisk + '\\', vol.name);
+        if (normOld.toLowerCase() === volRoot.toLowerCase() || normOld.toLowerCase().startsWith(volRoot.toLowerCase() + '\\')) {
+          foundRaid = true;
+          const relWithinVol = normOld.slice(volRoot.length).replace(/^[\\\/]+/, '');
+          const parentRel = path.dirname(relWithinVol) === '.' ? '' : path.dirname(relWithinVol);
+
+          // Rename across all member disks
+          for (let i = 0; i < vol.member_disks.length; i++) {
+            const d = vol.member_disks[i].replace(/[\/\\]+$/, '');
+            const memberOld = path.join(d + '\\', vol.name, relWithinVol);
+            const memberNew = path.join(d + '\\', vol.name, parentRel, cleanNewName);
+            if (fs.existsSync(memberOld)) {
+              await fs.promises.rename(memberOld, memberNew);
+            }
+            if (i === 0) finalPath = memberNew;
+          }
+          break;
+        }
+      }
+      if (foundRaid) break;
+    }
+
+    if (!foundRaid) {
+      const validatedOld = await validatePath(oldPath);
+      const parentDir = path.dirname(validatedOld);
+      const validatedNew = path.join(parentDir, cleanNewName);
+      await fs.promises.rename(validatedOld, validatedNew);
+      finalPath = validatedNew;
+    }
+
+    logActivity('files', `Renamed "${path.basename(oldPath)}" to "${cleanNewName}"`, req.user?.username);
+    res.json({ success: true, oldPath, newPath: finalPath, name: cleanNewName });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Rename error:', err);
+    res.status(500).json({ error: `Failed to rename item: ${err.message}` });
   }
 });
 
-app.post('/api/files/batch-zip', authenticateToken, async (req, res) => {
-  const { paths } = req.body;
-  if (!paths || !Array.isArray(paths) || paths.length === 0) {
-    return res.status(400).json({ error: 'Paths array is required' });
-  }
+// ─── 7.4. CREATE NEW FOLDER ENDPOINT ─────────────────────────────────────────
 
-  // Validate every path before archiving
-  try {
-    for (const p of paths) {
-      if (!isPathAllowed(p, req.user?.allowedDisks)) {
-        return res.status(403).json({ error: `Access Denied: Unauthorized drive in batch zip (${p})` });
-      }
-      await validatePath(p);
-    }
-  } catch (err) {
-    return res.status(403).json({ error: err.message });
-  }
-
-  res.attachment('nas_archive.zip');
-  const archive = archiver('zip', { zlib: { level: 6 } });
-  archive.on('error', (err) => { console.error('Archiver error:', err); if (!res.headersSent) res.status(500).json({ error: err.message }); });
-  archive.pipe(res);
-
-  for (const p of paths) {
-    try {
-      const stat = await fs.promises.stat(p);
-      if (stat.isFile()) {
-        archive.file(p, { name: path.basename(p) });
-      } else if (stat.isDirectory()) {
-        archive.directory(p, path.basename(p));
-      }
-    } catch (err) {
-      // Ignore if not exists
-    }
-  }
-  archive.finalize();
-});
-
-// Create new directory on server
 app.post('/api/files/mkdir', authenticateToken, checkReadWrite, async (req, res) => {
   const { path: targetPath } = req.body || {};
   if (!targetPath) return res.status(400).json({ error: 'Path is required' });
@@ -1372,14 +1387,42 @@ app.post('/api/files/mkdir', authenticateToken, checkReadWrite, async (req, res)
   }
 
   try {
-    const validatedDir = await validatePath(targetPath);
-    const fsSync = require('fs');
-    if (fsSync.existsSync(validatedDir)) {
-      return res.json({ success: true, exists: true, path: validatedDir });
+    const allVolumes = dbService.getAllVolumes();
+    let normTarget = path.normalize(targetPath.trim());
+    let finalPath = normTarget;
+
+    // Check if target is inside a RAID volume
+    let foundRaid = false;
+    for (const vol of allVolumes) {
+      if (!Array.isArray(vol.member_disks) || vol.member_disks.length === 0) continue;
+      for (const disk of vol.member_disks) {
+        const cleanDisk = disk.replace(/[\/\\]+$/, '');
+        const volRoot = path.join(cleanDisk + '\\', vol.name);
+        if (normTarget.toLowerCase() === volRoot.toLowerCase() || normTarget.toLowerCase().startsWith(volRoot.toLowerCase() + '\\')) {
+          foundRaid = true;
+          const relWithinVol = normTarget.slice(volRoot.length).replace(/^[\\\/]+/, '');
+
+          // Create across all member disks
+          for (let i = 0; i < vol.member_disks.length; i++) {
+            const d = vol.member_disks[i].replace(/[\/\\]+$/, '');
+            const memberDir = path.join(d + '\\', vol.name, relWithinVol);
+            await safeEnsureDir(memberDir);
+            if (i === 0) finalPath = memberDir;
+          }
+          break;
+        }
+      }
+      if (foundRaid) break;
     }
-    await fs.promises.mkdir(validatedDir, { recursive: true });
-    logActivity('files', `Created folder: ${validatedDir}`, req.user?.username);
-    res.json({ success: true, created: true, path: validatedDir });
+
+    if (!foundRaid) {
+      const validatedDir = await validatePath(targetPath);
+      await safeEnsureDir(validatedDir);
+      finalPath = validatedDir;
+    }
+
+    logActivity('files', `Created folder: ${path.basename(finalPath)}`, req.user?.username);
+    res.json({ success: true, created: true, path: finalPath });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
