@@ -746,21 +746,24 @@ app.get('/api/files', authenticateToken, async (req, res) => {
 
     // Check if target is a RAID volume
     let raidVol = null;
+    let raidSubfolder = '';
     const volumes = dbService.getAllVolumes();
     if (targetPath.startsWith('raid:')) {
-      const volKey = targetPath.replace(/^raid:/, '').trim();
-      raidVol = volumes.find(v => v.id === volKey || v.name === volKey);
+      const parts = targetPath.replace(/^raid:/, '').split(/[\\\/]/).filter(Boolean);
+      const volKey = parts[0] || '';
+      raidSubfolder = parts.slice(1).join(path.sep);
+      raidVol = volumes.find(v => v.id === volKey || v.name.toLowerCase() === volKey.toLowerCase());
     } else {
-      raidVol = volumes.find(v => v.name === targetPath || (v.mount_point && v.mount_point.toUpperCase() === targetPath.toUpperCase()));
+      raidVol = volumes.find(v => v.name.toLowerCase() === targetPath.toLowerCase() || (v.mount_point && v.mount_point.toUpperCase() === targetPath.toUpperCase()));
     }
 
     if (raidVol && Array.isArray(raidVol.member_disks) && raidVol.member_disks.length > 0) {
       const cleanPrimary = raidVol.member_disks[0].replace(/[\/\\]+$/, '');
-      const raidDir = path.join(cleanPrimary + '\\', raidVol.name);
+      const raidDir = path.join(cleanPrimary + '\\', raidVol.name, raidSubfolder);
       await safeEnsureDir(raidDir);
 
       const files = await listFiles(raidDir);
-      logActivity('browse', `Browsed RAID 1: ${raidVol.name}`, req.user?.username);
+      logActivity('browse', `Browsed RAID 1: ${raidVol.name}${raidSubfolder ? ' / ' + raidSubfolder : ''}`, req.user?.username);
       const results = files.map(f => ({ ...f, path: path.join(raidDir, f.name) }));
       return res.json(results);
     }
@@ -903,12 +906,15 @@ app.post('/api/upload', authenticateToken, checkReadWrite, upload.single('file')
 
   // Check if target is a RAID volume
   let raidVol = null;
+  let raidSubfolder = '';
   const volumes = dbService.getAllVolumes();
   if (destinationDir.startsWith('raid:')) {
-    const volKey = destinationDir.replace(/^raid:/, '').trim();
-    raidVol = volumes.find(v => v.id === volKey || v.name === volKey);
+    const parts = destinationDir.replace(/^raid:/, '').split(/[\\\/]/).filter(Boolean);
+    const volKey = parts[0] || '';
+    raidSubfolder = parts.slice(1).join(path.sep);
+    raidVol = volumes.find(v => v.id === volKey || v.name.toLowerCase() === volKey.toLowerCase());
   } else {
-    raidVol = volumes.find(v => v.name === destinationDir || (v.mount_point && v.mount_point.toUpperCase() === destinationDir.toUpperCase()));
+    raidVol = volumes.find(v => v.name.toLowerCase() === destinationDir.toLowerCase() || (v.mount_point && v.mount_point.toUpperCase() === destinationDir.toUpperCase()));
   }
 
   try {
@@ -921,7 +927,7 @@ app.post('/api/upload', authenticateToken, checkReadWrite, upload.single('file')
       const memberPaths = [];
       for (const disk of raidVol.member_disks) {
         const cleanDisk = disk.replace(/[\/\\]+$/, '');
-        let targetDir = path.join(cleanDisk + '\\', raidVol.name);
+        let targetDir = path.join(cleanDisk + '\\', raidVol.name, raidSubfolder);
         await safeEnsureDir(targetDir);
 
         let targetFile;
@@ -1013,12 +1019,15 @@ app.post('/api/upload/chunk', authenticateToken, checkReadWrite, upload.single('
 
   // Check if destination is a RAID volume
   let raidVol = null;
+  let raidSubfolder = '';
   const volumes = dbService.getAllVolumes();
   if (destinationDir.startsWith('raid:')) {
-    const volKey = destinationDir.replace(/^raid:/, '').trim();
-    raidVol = volumes.find(v => v.id === volKey || v.name === volKey);
+    const parts = destinationDir.replace(/^raid:/, '').split(/[\\\/]/).filter(Boolean);
+    const volKey = parts[0] || '';
+    raidSubfolder = parts.slice(1).join(path.sep);
+    raidVol = volumes.find(v => v.id === volKey || v.name.toLowerCase() === volKey.toLowerCase());
   } else {
-    raidVol = volumes.find(v => v.name === destinationDir || (v.mount_point && v.mount_point.toUpperCase() === destinationDir.toUpperCase()));
+    raidVol = volumes.find(v => v.name.toLowerCase() === destinationDir.toLowerCase() || (v.mount_point && v.mount_point.toUpperCase() === destinationDir.toUpperCase()));
   }
 
   const chunkDir = path.join(__dirname, 'temp_uploads', 'chunks', fileId.replace(/[^a-zA-Z0-9_-]/g, ''));
@@ -1037,7 +1046,7 @@ app.post('/api/upload/chunk', authenticateToken, checkReadWrite, upload.single('
         const memberPaths = [];
         for (const disk of raidVol.member_disks) {
           const cleanDisk = disk.replace(/[\/\\]+$/, '');
-          const targetDir = path.join(cleanDisk + '\\', raidVol.name);
+          const targetDir = path.join(cleanDisk + '\\', raidVol.name, raidSubfolder);
           await safeEnsureDir(targetDir);
           memberPaths.push(path.join(targetDir, originalName));
         }

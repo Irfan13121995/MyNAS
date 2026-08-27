@@ -30,22 +30,24 @@ async function validatePath(targetPath) {
 
   let formatted = targetPath.trim();
 
-  // Handle RAID volume references (e.g. 'raid:vol_...', 'raid:myNAS', or volume name)
+  // Handle RAID volume references (e.g. 'raid:vol_...', 'raid:myNAS', or volume name with subfolder)
   if (formatted.startsWith('raid:')) {
-    const volIdOrName = formatted.replace(/^raid:/, '').trim();
+    const parts = formatted.replace(/^raid:/, '').split(/[\\\/]/).filter(Boolean);
+    const volKey = parts[0] || '';
+    const subfolder = parts.slice(1).join(path.sep);
     const volumes = dbService.getAllVolumes();
-    const raidVol = volumes.find(v => v.id === volIdOrName || v.name === volIdOrName);
+    const raidVol = volumes.find(v => v.id === volKey || v.name.toLowerCase() === volKey.toLowerCase());
     if (raidVol && Array.isArray(raidVol.member_disks) && raidVol.member_disks.length > 0) {
       const primaryDisk = raidVol.member_disks[0].replace(/[\/\\]+$/, '');
-      formatted = path.join(primaryDisk, raidVol.name);
+      formatted = path.join(primaryDisk + '\\', raidVol.name, subfolder);
     }
   } else {
     // Check if path matches a RAID volume mount point or name
     const volumes = dbService.getAllVolumes();
-    const raidVol = volumes.find(v => v.name === formatted || (v.mount_point && v.mount_point.toUpperCase() === formatted.toUpperCase()));
+    const raidVol = volumes.find(v => v.name.toLowerCase() === formatted.toLowerCase() || (v.mount_point && v.mount_point.toUpperCase() === formatted.toUpperCase()));
     if (raidVol && Array.isArray(raidVol.member_disks) && raidVol.member_disks.length > 0) {
       const primaryDisk = raidVol.member_disks[0].replace(/[\/\\]+$/, '');
-      formatted = path.join(primaryDisk, raidVol.name);
+      formatted = path.join(primaryDisk + '\\', raidVol.name);
     }
   }
 

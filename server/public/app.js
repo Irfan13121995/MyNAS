@@ -1075,8 +1075,14 @@ async function showUploadModal(preselectedDrive = '', preselectedFolder = '') {
     }
 
     let destination = driveLetter;
-    if (!destination.endsWith('\\') && !destination.endsWith('/')) destination += '\\';
-    if (subfolder) destination += subfolder;
+    if (destination.startsWith('raid:')) {
+      if (subfolder) {
+        destination = `${destination.replace(/[\\\/]+$/, '')}/${subfolder.replace(/^[\\\/]+|[\\\/]+$/g, '')}`;
+      }
+    } else {
+      if (!destination.endsWith('\\') && !destination.endsWith('/')) destination += '\\';
+      if (subfolder) destination += subfolder;
+    }
 
     const totalSize = stagedFiles.reduce((sum, f) => sum + f.file.size, 0);
 
