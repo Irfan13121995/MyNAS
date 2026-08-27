@@ -1884,10 +1884,50 @@ async function storage(container) {
   });
 }
 
+// ─── REUSABLE DELETE CONFIRMATION MODAL ───────────────────────────────────────
+function confirmDeleteDialog({ title, count, itemNames = [], onConfirm }) {
+  const previewList = (itemNames || []).slice(0, 6).map(n => `<li style="font-size:12px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:3px">📄 ${escapeHtml(n)}</li>`).join('');
+  const extraCount = (itemNames || []).length > 6 ? `<li style="font-size:11px;color:var(--text-muted);font-weight:600">+ ${(itemNames.length - 6)} more item(s)</li>` : '';
+
+  const close = showModal({
+    title: title || '⚠️ Confirm Permanent Deletion',
+    body: `
+      <div style="text-align:center;margin-bottom:16px">
+        <div style="font-size:38px;margin-bottom:8px">🗑️</div>
+        <h4 style="color:var(--red);margin:0;font-size:16px">Permanently Delete ${count === 1 ? 'this item' : `${count} items`}?</h4>
+        <p style="color:var(--text-secondary);font-size:13px;margin-top:6px">
+          This action will permanently remove the selected file(s) or folder(s) from your storage pool. This cannot be undone.
+        </p>
+      </div>
+      ${itemNames && itemNames.length > 0 ? `
+        <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:16px;max-height:150px;overflow-y:auto">
+          <ul style="margin:0;padding-left:14px;list-style:none">${previewList}${extraCount}</ul>
+        </div>
+      ` : ''}
+    `,
+    footer: `
+      <button class="btn btn-ghost" id="confirm-cancel-btn">Cancel</button>
+      <button class="btn btn-danger" id="confirm-delete-btn">🗑️ Delete Permanently</button>
+    `
+  });
+
+  document.getElementById('confirm-cancel-btn')?.addEventListener('click', close);
+  document.getElementById('confirm-delete-btn')?.addEventListener('click', async () => {
+    const btn = document.getElementById('confirm-delete-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Deleting...'; }
+    try {
+      await onConfirm();
+    } finally {
+      close();
+    }
+  });
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
-// PAGE: FILES
+// PAGE: FILES (BROWSER + MULTI-SELECTION + DELETION)
 // ═════════════════════════════════════════════════════════════════════════════
 let filePath = [];
+let selectedFilesSet = new Set(); // Set of full paths
 
 async function files(container, params) {
   if (params && params.drive) {
@@ -1896,6 +1936,7 @@ async function files(container, params) {
   } else if (!params || !params.preservePath) {
     filePath = [];
   }
+  selectedFilesSet.clear();
   await renderFiles(container);
 }
 
@@ -1908,47 +1949,179 @@ async function renderFiles(container) {
   const r = await GET(endpoint);
   const items = r?.data || [];
 
+  const isAtRoot = filePath.length === 0;
+
   const breadcrumbs = [
     `<span class="breadcrumb-item ${filePath.length===0?'active':''}" data-idx="-1">NAS Root</span>`,
     ...filePath.map((seg, i) => `
       <span class="breadcrumb-sep">›</span>
-      <span class="breadcrumb-item ${i===filePath.length-1?'active':''}" data-idx="${i}">${seg}</span>`)
+      <span class="breadcrumb-item ${i===filePath.length-1?'active':''}" data-idx="${i}">${seg.startsWith('raid:') ? '🛡️ ' + seg.replace(/^raid:/, '') : seg}</span>`)
   ].join('');
 
   const rows = items.map(f => {
     const ext = f.name.split('.').pop();
     const icon = fileIcon(ext, f.isDirectory);
+    const itemPath = f.path || f.name;
+    const isSelected = selectedFilesSet.has(itemPath);
+    const isDeletable = !isAtRoot;
+
     return `
-      <tr class="file-row" data-name="${f.name}" data-path="${f.path||''}" data-isdir="${f.isDirectory}" data-ext="${ext}">
-        <td><span style="margin-right:8px">${icon}</span>${f.name}</td>
-        <td>${f.isDirectory ? (f.isDrive ? 'Drive' : 'Folder') : ext.toUpperCase()}</td>
+      <tr class="file-row ${isSelected ? 'selected' : ''}" data-name="${escapeHtml(f.name)}" data-path="${escapeHtml(itemPath)}" data-isdir="${f.isDirectory}" data-ext="${ext}">
+        ${isDeletable ? `
+          <td style="width:38px;text-align:center" class="file-check-td" onclick="event.stopPropagation()">
+            <input type="checkbox" class="file-row-check" data-path="${escapeHtml(itemPath)}" data-name="${escapeHtml(f.name)}" ${isSelected ? 'checked' : ''}/>
+          </td>` : ''}
+        <td><span style="margin-right:8px">${icon}</span>${escapeHtml(f.name)}</td>
+        <td>${f.isDirectory ? (f.isDrive ? (f.isRaid ? 'RAID Pool' : 'Drive') : 'Folder') : ext.toUpperCase()}</td>
         <td>${f.isDirectory ? '—' : formatBytes(f.size)}</td>
         <td>${f.modifiedAt ? new Date(f.modifiedAt).toLocaleDateString() : '—'}</td>
-        <td>
-          ${!f.isDirectory ? `<a class="btn btn-ghost btn-sm" href="/api/stream?path=${encodeURIComponent(f.path||'')}&token=${Auth.getToken()}" target="_blank" title="Open / Download">⬇</a>` : ''}
+        <td style="text-align:right;white-space:nowrap" onclick="event.stopPropagation()">
+          ${!f.isDirectory ? `<a class="btn btn-ghost btn-sm" href="/api/stream?path=${encodeURIComponent(itemPath)}&token=${Auth.getToken()}" target="_blank" title="Open / Download">⬇</a>` : ''}
+          ${isDeletable ? `<button class="btn btn-ghost btn-sm btn-row-delete" data-path="${escapeHtml(itemPath)}" data-name="${escapeHtml(f.name)}" title="Delete item">🗑️</button>` : ''}
         </td>
       </tr>`;
   }).join('');
 
+  const batchBarHtml = !isAtRoot ? `
+    <div id="file-batch-bar" class="selection-toolbar" style="${selectedFilesSet.size > 0 ? '' : 'display:none'}">
+      <span class="selection-count">Selected: <strong>${selectedFilesSet.size}</strong> item(s)</span>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-danger btn-sm" id="batch-delete-files-btn">🗑️ Delete Selected (${selectedFilesSet.size})</button>
+        <button class="btn btn-ghost btn-sm" id="batch-clear-files-btn">✕ Clear Selection</button>
+      </div>
+    </div>` : '';
+
   container.innerHTML = `
     <div class="page">
       <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
-        <div><h2>Files</h2><p>Browse and access files on your NAS</p></div>
+        <div><h2>Files</h2><p>Browse, access, upload, and manage files on your Personal NAS</p></div>
         <button class="btn btn-primary" id="upload-file-btn">📤 Upload File Here</button>
       </div>
       <div class="browser-toolbar">
         ${filePath.length > 0 ? `<button class="btn btn-ghost btn-sm" id="back-btn">‹ Back</button>` : ''}
         <div class="breadcrumb">${breadcrumbs}</div>
-        <input type="text" class="input search-input" id="file-search" placeholder="Filter..."/>
+        <input type="text" class="input search-input" id="file-search" placeholder="Filter files..."/>
       </div>
+      ${batchBarHtml}
       ${items.length === 0 ? `<div class="card empty-state"><div class="icon">📂</div><h3>Empty folder</h3><p>This directory is empty.</p></div>` : `
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Name</th><th>Type</th><th>Size</th><th>Modified</th><th></th></tr></thead>
+          <thead>
+            <tr>
+              ${!isAtRoot ? `<th style="width:38px;text-align:center"><input type="checkbox" id="file-select-all" class="file-select-all" title="Select / Deselect All"/></th>` : ''}
+              <th>Name</th>
+              <th>Type</th>
+              <th>Size</th>
+              <th>Modified</th>
+              <th style="text-align:right">Actions</th>
+            </tr>
+          </thead>
           <tbody id="file-tbody">${rows}</tbody>
         </table>
       </div>`}
     </div>`;
+
+  // Update Batch Toolbar State
+  const updateFileBatchBar = () => {
+    const bar = document.getElementById('file-batch-bar');
+    if (!bar) return;
+    if (selectedFilesSet.size > 0) {
+      bar.style.display = 'flex';
+      const countEl = bar.querySelector('.selection-count');
+      const delBtn = document.getElementById('batch-delete-files-btn');
+      if (countEl) countEl.innerHTML = `Selected: <strong>${selectedFilesSet.size}</strong> item(s)`;
+      if (delBtn) delBtn.textContent = `🗑️ Delete Selected (${selectedFilesSet.size})`;
+    } else {
+      bar.style.display = 'none';
+    }
+
+    // Update master select-all checkbox
+    const selectAll = document.getElementById('file-select-all');
+    if (selectAll) {
+      const allCheckboxes = document.querySelectorAll('.file-row-check');
+      selectAll.checked = allCheckboxes.length > 0 && Array.from(allCheckboxes).every(cb => cb.checked);
+    }
+  };
+
+  // Bind Select All checkbox
+  document.getElementById('file-select-all')?.addEventListener('change', (e) => {
+    const isChecked = e.target.checked;
+    document.querySelectorAll('.file-row-check').forEach(cb => {
+      cb.checked = isChecked;
+      const p = cb.dataset.path;
+      if (isChecked) selectedFilesSet.add(p);
+      else selectedFilesSet.delete(p);
+      const row = cb.closest('.file-row');
+      if (row) row.classList.toggle('selected', isChecked);
+    });
+    updateFileBatchBar();
+  });
+
+  // Bind Row Checkboxes
+  document.querySelectorAll('.file-row-check').forEach(cb => {
+    cb.addEventListener('change', (e) => {
+      const p = cb.dataset.path;
+      if (cb.checked) selectedFilesSet.add(p);
+      else selectedFilesSet.delete(p);
+      const row = cb.closest('.file-row');
+      if (row) row.classList.toggle('selected', cb.checked);
+      updateFileBatchBar();
+    });
+  });
+
+  // Bind Batch Delete Button
+  document.getElementById('batch-delete-files-btn')?.addEventListener('click', () => {
+    if (selectedFilesSet.size === 0) return;
+    const pathsArray = Array.from(selectedFilesSet);
+    const names = pathsArray.map(p => p.split(/[\\\/]/).pop());
+
+    confirmDeleteDialog({
+      count: pathsArray.length,
+      itemNames: names,
+      onConfirm: async () => {
+        const res = await POST('/api/files/delete', { paths: pathsArray });
+        if (res?.ok) {
+          toast(`Successfully deleted ${res.data.deletedCount} item(s)!`, 'success');
+          selectedFilesSet.clear();
+          await renderFiles(container);
+        } else {
+          toast(res?.data?.error || 'Failed to delete items', 'error');
+        }
+      }
+    });
+  });
+
+  // Bind Clear Selection Button
+  document.getElementById('batch-clear-files-btn')?.addEventListener('click', () => {
+    selectedFilesSet.clear();
+    document.querySelectorAll('.file-row-check').forEach(cb => { cb.checked = false; });
+    document.querySelectorAll('.file-row').forEach(r => r.classList.remove('selected'));
+    updateFileBatchBar();
+  });
+
+  // Bind Single Row Delete Button
+  document.querySelectorAll('.btn-row-delete').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const p = btn.dataset.path;
+      const name = btn.dataset.name;
+
+      confirmDeleteDialog({
+        count: 1,
+        itemNames: [name],
+        onConfirm: async () => {
+          const res = await POST('/api/files/delete', { path: p });
+          if (res?.ok) {
+            toast(`"${name}" deleted permanently!`, 'success');
+            selectedFilesSet.delete(p);
+            await renderFiles(container);
+          } else {
+            toast(res?.data?.error || 'Failed to delete file', 'error');
+          }
+        }
+      });
+    });
+  });
 
   document.getElementById('upload-file-btn')?.addEventListener('click', () => {
     const currentDrive = filePath.length > 0 ? filePath[0] : '';
@@ -1956,23 +2129,32 @@ async function renderFiles(container) {
     showUploadModal(currentDrive, currentSubfolder);
   });
 
-  document.getElementById('back-btn')?.addEventListener('click', () => { filePath.pop(); renderFiles(container); });
+  document.getElementById('back-btn')?.addEventListener('click', () => { 
+    filePath.pop(); 
+    selectedFilesSet.clear();
+    renderFiles(container); 
+  });
 
   document.querySelectorAll('.breadcrumb-item').forEach(el => {
     el.addEventListener('click', () => {
       const idx = parseInt(el.dataset.idx);
       if (idx === -1) { filePath = []; }
       else { filePath = filePath.slice(0, idx + 1); }
+      selectedFilesSet.clear();
       renderFiles(container);
     });
   });
 
   document.querySelectorAll('.file-row').forEach(row => {
     row.addEventListener('click', (e) => {
-      if (e.target.tagName === 'A') return;
+      if (e.target.tagName === 'A' || e.target.tagName === 'INPUT' || e.target.closest('.btn-row-delete') || e.target.closest('.file-check-td')) return;
       const isDir = row.dataset.isdir === 'true';
       const name = row.dataset.name;
-      if (isDir) { filePath.push(name); renderFiles(container); }
+      if (isDir) { 
+        filePath.push(name); 
+        selectedFilesSet.clear();
+        renderFiles(container); 
+      }
     });
   });
 
@@ -1985,12 +2167,14 @@ async function renderFiles(container) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// PAGE: GALLERY
+// PAGE: GALLERY (MEDIA + MULTI-SELECTION + DELETION)
 // ═════════════════════════════════════════════════════════════════════════════
 let selectedGalleryDrive = 'ALL';
 let selectedMediaType = 'ALL';
 let currentGalleryPage = 1;
 const galleryPageLimit = 500;
+let isGallerySelectMode = false;
+let selectedGalleryPaths = new Set(); // Set of media paths
 
 function toggleFolderMinimize(headerEl) {
   const block = headerEl.closest('.gallery-folder-block');
@@ -2026,9 +2210,9 @@ async function gallery(container) {
       <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
         <div>
           <h2>Media Gallery</h2>
-          <p>Photos and videos across all your registered NAS disks (Max 500 items per page)</p>
+          <p>Photos and videos across all your registered NAS disks</p>
         </div>
-        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
           <!-- Photos & Videos Filter Pills -->
           <div class="gallery-type-pills" style="display:flex;gap:6px">
             <button class="btn btn-sm ${selectedMediaType==='ALL'?'btn-primary':'btn-ghost'}" data-type="ALL">🖼️🎬 All</button>
@@ -2040,6 +2224,10 @@ async function gallery(container) {
             <label style="margin:0;font-size:13px;color:var(--text-secondary)">Disk:</label>
             <select id="gallery-drive-filter" class="select" style="width:150px">${driveOptions}</select>
           </div>
+
+          <button class="btn btn-sm ${isGallerySelectMode ? 'btn-primary' : 'btn-ghost'}" id="toggle-select-mode-btn">
+            ${isGallerySelectMode ? '✓ Selection Mode Active' : '☑️ Select Mode'}
+          </button>
           <button class="btn btn-ghost" id="refresh-gallery-btn">↻ Refresh</button>
         </div>
       </div>
@@ -2047,7 +2235,30 @@ async function gallery(container) {
       <div id="gallery-content">
         <div class="page-loading"><div class="spinner large"></div><p>Scanning media files...</p></div>
       </div>
+
+      <!-- Floating Batch Selection Toolbar -->
+      <div id="gallery-floating-bar" class="selection-toolbar floating-bottom" style="${selectedGalleryPaths.size > 0 ? '' : 'display:none'}">
+        <span class="selection-count">Selected: <strong>${selectedGalleryPaths.size}</strong> item(s)</span>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-ghost btn-sm" id="gallery-select-all-btn">Select All Visible</button>
+          <button class="btn btn-danger btn-sm" id="gallery-batch-delete-btn">🗑️ Delete (${selectedGalleryPaths.size})</button>
+          <button class="btn btn-ghost btn-sm" id="gallery-clear-selection-btn">✕ Deselect</button>
+        </div>
+      </div>
     </div>`;
+
+  document.getElementById('toggle-select-mode-btn')?.addEventListener('click', () => {
+    isGallerySelectMode = !isGallerySelectMode;
+    const btn = document.getElementById('toggle-select-mode-btn');
+    if (btn) {
+      btn.className = `btn btn-sm ${isGallerySelectMode ? 'btn-primary' : 'btn-ghost'}`;
+      btn.textContent = isGallerySelectMode ? '✓ Selection Mode Active' : '☑️ Select Mode';
+    }
+    const galleryContent = document.getElementById('gallery-content');
+    if (galleryContent) {
+      galleryContent.classList.toggle('gallery-select-active', isGallerySelectMode);
+    }
+  });
 
   document.querySelectorAll('.gallery-type-pills button').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -2057,6 +2268,7 @@ async function gallery(container) {
       btn.className = 'btn btn-sm btn-primary';
       selectedMediaType = btn.dataset.type;
       currentGalleryPage = 1;
+      selectedGalleryPaths.clear();
       loadGalleryMedia();
     });
   });
@@ -2064,6 +2276,7 @@ async function gallery(container) {
   document.getElementById('gallery-drive-filter').addEventListener('change', (e) => {
     selectedGalleryDrive = e.target.value;
     currentGalleryPage = 1;
+    selectedGalleryPaths.clear();
     loadGalleryMedia();
   });
 
@@ -2071,10 +2284,67 @@ async function gallery(container) {
     toast('Scanning NAS drives for photos & videos in background...', 'info');
     await POST('/api/gallery/rescan');
     currentGalleryPage = 1;
+    selectedGalleryPaths.clear();
     loadGalleryMedia();
   });
 
+  // Floating Action Toolbar buttons
+  document.getElementById('gallery-clear-selection-btn')?.addEventListener('click', () => {
+    selectedGalleryPaths.clear();
+    document.querySelectorAll('.gallery-card').forEach(c => c.classList.remove('selected'));
+    document.querySelectorAll('.gallery-card-check').forEach(ck => ck.classList.remove('checked'));
+    updateGalleryFloatingBar();
+  });
+
+  document.getElementById('gallery-select-all-btn')?.addEventListener('click', () => {
+    document.querySelectorAll('.gallery-card').forEach(c => {
+      const p = c.dataset.path;
+      if (p) {
+        selectedGalleryPaths.add(p);
+        c.classList.add('selected');
+        c.querySelector('.gallery-card-check')?.classList.add('checked');
+      }
+    });
+    updateGalleryFloatingBar();
+  });
+
+  document.getElementById('gallery-batch-delete-btn')?.addEventListener('click', () => {
+    if (selectedGalleryPaths.size === 0) return;
+    const pathsArray = Array.from(selectedGalleryPaths);
+    const names = pathsArray.map(p => p.split(/[\\\/]/).pop());
+
+    confirmDeleteDialog({
+      title: '🗑️ Delete Selected Media',
+      count: pathsArray.length,
+      itemNames: names,
+      onConfirm: async () => {
+        const res = await POST('/api/files/delete', { paths: pathsArray });
+        if (res?.ok) {
+          toast(`Successfully deleted ${res.data.deletedCount} media file(s)!`, 'success');
+          selectedGalleryPaths.clear();
+          await loadGalleryMedia();
+        } else {
+          toast(res?.data?.error || 'Failed to delete media', 'error');
+        }
+      }
+    });
+  });
+
   await loadGalleryMedia();
+}
+
+function updateGalleryFloatingBar() {
+  const bar = document.getElementById('gallery-floating-bar');
+  if (!bar) return;
+  if (selectedGalleryPaths.size > 0) {
+    bar.style.display = 'flex';
+    const countEl = bar.querySelector('.selection-count');
+    const delBtn = document.getElementById('gallery-batch-delete-btn');
+    if (countEl) countEl.innerHTML = `Selected: <strong>${selectedGalleryPaths.size}</strong> item(s)`;
+    if (delBtn) delBtn.textContent = `🗑️ Delete (${selectedGalleryPaths.size})`;
+  } else {
+    bar.style.display = 'none';
+  }
 }
 
 async function loadGalleryMedia(targetPage = null) {
@@ -2146,16 +2416,18 @@ async function loadGalleryMedia(targetPage = null) {
       const itemsCards = items.map(m => {
         const streamUrl = `/api/stream?path=${encodeURIComponent(m.path)}&token=${Auth.getToken()}`;
         const thumbUrl = `/api/thumbnail?path=${encodeURIComponent(m.path)}&token=${Auth.getToken()}`;
+        const isSelected = selectedGalleryPaths.has(m.path);
         return `
-          <div class="gallery-card" data-path="${m.path}" data-name="${m.name}" data-isvideo="${m.isVideo}" data-streamurl="${streamUrl}">
+          <div class="gallery-card ${isSelected ? 'selected' : ''}" data-path="${escapeHtml(m.path)}" data-name="${escapeHtml(m.name)}" data-isvideo="${m.isVideo}" data-streamurl="${streamUrl}">
+            <div class="gallery-card-check ${isSelected ? 'checked' : ''}" data-path="${escapeHtml(m.path)}" title="Select / Deselect item">✓</div>
             <div class="gallery-media-thumb">
               ${m.isVideo
                 ? `<video src="${streamUrl}#t=0.5" preload="metadata" muted></video><div class="gallery-video-icon">▶</div>`
-                : `<img src="${thumbUrl}" alt="${m.name}" loading="lazy"/>`
+                : `<img src="${thumbUrl}" alt="${escapeHtml(m.name)}" loading="lazy"/>`
               }
             </div>
             <div class="gallery-card-info">
-              <div class="gallery-card-title" title="${m.name}">${m.name}</div>
+              <div class="gallery-card-title" title="${escapeHtml(m.name)}">${escapeHtml(m.name)}</div>
               <div class="gallery-card-meta">
                 <span class="badge ${m.isVideo?'badge-purple':'badge-blue'}">${m.ext.toUpperCase()}</span>
                 <span>${formatBytes(m.size)}</span>
@@ -2168,7 +2440,7 @@ async function loadGalleryMedia(targetPage = null) {
         <div class="gallery-folder-block">
           <div class="gallery-folder-header" onclick="toggleFolderMinimize(this)">
             <span>📁</span>
-            <span class="font-mono">${folder}</span>
+            <span class="font-mono">${escapeHtml(folder)}</span>
             <span class="badge badge-blue" style="font-size:10px">${items.length} item${items.length>1?'s':''}</span>
             <button class="gallery-folder-toggle-btn" title="Minimize / Expand photos">
               <span class="toggle-icon">▼</span>
@@ -2196,25 +2468,74 @@ async function loadGalleryMedia(targetPage = null) {
     ${paginationHtml}
   `;
 
+  if (isGallerySelectMode) {
+    contentEl.classList.add('gallery-select-active');
+  }
+
   bindPaginationButtons(page, totalPages);
+  updateGalleryFloatingBar();
 
-  // Add click handler for media lightbox
+  // Handle Checkbox / Card Selection and Lightbox clicks
   document.querySelectorAll('.gallery-card').forEach(card => {
-    card.addEventListener('click', () => {
-      const name = card.dataset.name;
-      const isVideo = card.dataset.isvideo === 'true';
-      const streamUrl = card.dataset.streamurl;
+    const p = card.dataset.path;
+    const name = card.dataset.name;
+    const isVideo = card.dataset.isvideo === 'true';
+    const streamUrl = card.dataset.streamurl;
+    const checkEl = card.querySelector('.gallery-card-check');
 
-      showModal({
+    const toggleSelection = (e) => {
+      if (e) e.stopPropagation();
+      if (selectedGalleryPaths.has(p)) {
+        selectedGalleryPaths.delete(p);
+        card.classList.remove('selected');
+        checkEl?.classList.remove('checked');
+      } else {
+        selectedGalleryPaths.add(p);
+        card.classList.add('selected');
+        checkEl?.classList.add('checked');
+      }
+      updateGalleryFloatingBar();
+    };
+
+    checkEl?.addEventListener('click', toggleSelection);
+
+    card.addEventListener('click', (e) => {
+      if (isGallerySelectMode || selectedGalleryPaths.size > 0) {
+        toggleSelection(e);
+        return;
+      }
+
+      // Normal Mode: Open Fullscreen Lightbox with Delete option
+      const close = showModal({
         title: `${isVideo ? '🎬' : '🖼️'} ${name}`,
         body: `
           <div class="lightbox-body">
             ${isVideo
               ? `<video class="lightbox-media" src="${streamUrl}" controls autoPlay></video>`
-              : `<img class="lightbox-media" src="${streamUrl}" alt="${name}"/>`
+              : `<img class="lightbox-media" src="${streamUrl}" alt="${escapeHtml(name)}"/>`
             }
           </div>`,
-        footer: `<a class="btn btn-primary" href="${streamUrl}" target="_blank">⬇ Download Original</a>`
+        footer: `
+          <button class="btn btn-danger btn-sm" id="lightbox-delete-media-btn">🗑️ Delete Media</button>
+          <a class="btn btn-primary btn-sm" href="${streamUrl}" target="_blank">⬇ Download Original</a>`
+      });
+
+      document.getElementById('lightbox-delete-media-btn')?.addEventListener('click', () => {
+        close();
+        confirmDeleteDialog({
+          count: 1,
+          itemNames: [name],
+          onConfirm: async () => {
+            const res = await POST('/api/files/delete', { path: p });
+            if (res?.ok) {
+              toast(`"${name}" deleted!`, 'success');
+              selectedGalleryPaths.delete(p);
+              await loadGalleryMedia();
+            } else {
+              toast(res?.data?.error || 'Failed to delete item', 'error');
+            }
+          }
+        });
       });
     });
   });

@@ -1489,9 +1489,154 @@ label { display: block; font-size: 11px; font-weight: 700; color: var(--text-sec
   .auth-tab { padding: 7px 8px; font-size: 11px; }
 }
 
-@media (min-width: 2000px) {
-  .login-card { max-width: 480px; padding: 42px 38px; }
-  .pin-box { height: 64px; font-size: 26px; }
+/* ── 18. BATCH SELECTION & DELETION UI ────────────────────────────────────── */
+.btn-danger {
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  color: #ffffff !important;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  box-shadow: 0 4px 14px rgba(239, 68, 68, 0.3);
 }
+
+.btn-danger:hover:not(:disabled) {
+  background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+  box-shadow: 0 6px 20px rgba(239, 68, 68, 0.45);
+  transform: translateY(-1px);
+}
+
+.btn-danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.selection-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 18px;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1.5px solid var(--border-glow);
+  border-radius: var(--radius-squircle);
+  backdrop-filter: var(--glass-backdrop);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  margin-bottom: 14px;
+  animation: fadeIn 0.2s ease-out;
+}
+
+[data-theme='light'] .selection-toolbar {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(2, 132, 199, 0.3);
+  box-shadow: 0 10px 30px rgba(2, 132, 199, 0.12);
+}
+
+.selection-toolbar.floating-bottom {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  min-width: 320px;
+  max-width: 90vw;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
+}
+
+.selection-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.file-row-check, .file-select-all {
+  width: 17px;
+  height: 17px;
+  border-radius: 5px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.file-row.selected {
+  background: var(--accent-dim) !important;
+}
+
+[data-theme='light'] .file-row.selected {
+  background: rgba(2, 132, 199, 0.08) !important;
+}
+
+.btn-row-delete {
+  color: #ef4444;
+  border-radius: 6px;
+  padding: 4px 8px;
+  transition: var(--transition);
+}
+
+.btn-row-delete:hover {
+  background: rgba(239, 68, 68, 0.15);
+  color: #dc2626;
+}
+
+/* Gallery Card Selection */
+.gallery-card {
+  position: relative;
+  transition: var(--transition);
+}
+
+.gallery-card.selected {
+  outline: 2px solid var(--accent);
+  box-shadow: 0 0 18px var(--accent-glow);
+  transform: translateY(-2px);
+}
+
+.gallery-card-check {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.65);
+  border: 2px solid rgba(255, 255, 255, 0.6);
+  color: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 800;
+  z-index: 10;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  transition: all 0.15s ease;
+  opacity: 0;
+}
+
+.gallery-card:hover .gallery-card-check,
+.gallery-select-active .gallery-card-check,
+.gallery-card.selected .gallery-card-check {
+  opacity: 1;
+}
+
+.gallery-card-check.checked {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+  box-shadow: 0 0 10px var(--accent);
+  opacity: 1;
+}
+
+[data-theme='light'] .gallery-card-check {
+  background: rgba(255, 255, 255, 0.7);
+  border-color: rgba(0, 0, 0, 0.4);
+}
+
+[data-theme='light'] .gallery-card-check.checked {
+  background: #0284c7;
+  border-color: #0284c7;
+  color: #ffffff;
+}
+
 
 

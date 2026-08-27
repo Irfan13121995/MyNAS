@@ -374,10 +374,127 @@ async function searchFiles(query, targetDrive = null) {
   return results;
 }
 
+/**
+ * Removes specified file/folder paths from media gallery memory & disk cache.
+ */
+async function removeMediaItemsFromCache(pathsToRemove) {
+  if (!Array.isArray(pathsToRemove) || pathsToRemove.length === 0) return;
+  const normalizedTargets = pathsToRemove.map(p => path.normalize(p).toLowerCase());
+
+  const initialCount = globalMediaList.length;
+  globalMediaList = globalMediaList.filter(item => {
+    const itemPath = path.normalize(item.path || '').toLowerCase();
+    // Filter out if item matches deleted path or was inside deleted folder
+    return !normalizedTargets.some(target => itemPath === target || itemPath.startsWith(target + path.sep));
+  });
+
+  if (globalMediaList.length !== initialCount) {
+    await saveMediaCacheToDisk(globalMediaList);
+  }
+}
+
+/**
+ * Deletes one or multiple files or folders from the filesystem,
+ * automatically maintaining RAID 1 mirror consistency across member disks.
+ */
+async function deleteFilesAndFolders(inputPaths) {
+  const targetPaths = Array.isArray(inputPaths) ? inputPaths : [inputPaths];
+  const results = { deleted: [], failed: [] };
+  const allVolumes = dbService.getAllVolumes();
+
+  for (const rawPath of targetPaths) {
+    if (!rawPath || typeof rawPath !== 'string') continue;
+    const cleanPath = rawPath.trim();
+
+    // 1. Safety Guard: Never delete drive root (e.g. C:\, I:\, K:, K:\) or core system roots
+    const cleanNoSlash = cleanPath.replace(/[\/\\]+$/, '');
+    const norm = path.normalize(cleanPath).replace(/[\/\\]+$/, '');
+    if (/^[a-zA-Z]:\.?$/.test(cleanNoSlash) || /^[a-zA-Z]:\.?$/.test(norm)) {
+      results.failed.push({ path: cleanPath, error: 'Cannot delete drive root' });
+      continue;
+    }
+    const lowerNorm = norm.toLowerCase();
+    if (lowerNorm.endsWith(':\\windows') || lowerNorm.endsWith(':\\program files') || lowerNorm.endsWith(':\\program files (x86)')) {
+      results.failed.push({ path: cleanPath, error: 'Cannot delete protected system directory' });
+      continue;
+    }
+
+    // 2. Identify RAID volume mirroring
+    const pathsToDelete = [];
+
+    if (cleanPath.startsWith('raid:')) {
+      const parts = cleanPath.replace(/^raid:/, '').split(/[\\\/]/).filter(Boolean);
+      const volKey = parts[0] || '';
+      const subpath = parts.slice(1).join(path.sep);
+      const raidVol = allVolumes.find(v => v.id === volKey || v.name.toLowerCase() === volKey.toLowerCase());
+      if (raidVol && Array.isArray(raidVol.member_disks)) {
+        for (const disk of raidVol.member_disks) {
+          const cleanDisk = disk.replace(/[\/\\]+$/, '');
+          pathsToDelete.push(path.join(cleanDisk + '\\', raidVol.name, subpath));
+        }
+      }
+    } else {
+      // Check if standard path resides within a RAID volume folder on a member disk (e.g. I:\myNAS\sub\file)
+      let foundRaid = false;
+      for (const vol of allVolumes) {
+        if (!Array.isArray(vol.member_disks) || vol.member_disks.length === 0) continue;
+        for (const disk of vol.member_disks) {
+          const cleanDisk = disk.replace(/[\/\\]+$/, '');
+          const volRoot = path.join(cleanDisk + '\\', vol.name);
+          if (norm.toLowerCase() === volRoot.toLowerCase() || norm.toLowerCase().startsWith(volRoot.toLowerCase() + '\\')) {
+            foundRaid = true;
+            const relWithinVol = norm.slice(volRoot.length).replace(/^[\\\/]+/, '');
+            // Delete across all member disks in the array
+            for (const d of vol.member_disks) {
+              const dClean = d.replace(/[\/\\]+$/, '');
+              pathsToDelete.push(path.join(dClean + '\\', vol.name, relWithinVol));
+            }
+            break;
+          }
+        }
+        if (foundRaid) break;
+      }
+      if (!foundRaid) {
+        pathsToDelete.push(norm);
+      }
+    }
+
+    // 3. Perform Deletion
+    let anyDeleted = false;
+    for (const p of pathsToDelete) {
+      try {
+        const stats = await fs.stat(p).catch(() => null);
+        if (stats) {
+          if (stats.isDirectory()) {
+            await fs.rm(p, { recursive: true, force: true });
+          } else {
+            await fs.unlink(p);
+          }
+          anyDeleted = true;
+        }
+      } catch (err) {
+        console.warn(`Error deleting ${p}:`, err.message);
+      }
+    }
+
+    if (anyDeleted) {
+      results.deleted.push(cleanPath);
+      // Remove from media cache
+      await removeMediaItemsFromCache(pathsToDelete);
+    } else {
+      results.failed.push({ path: cleanPath, error: 'File or directory not found or already deleted' });
+    }
+  }
+
+  return results;
+}
+
 module.exports = {
   validatePath,
   listFiles,
   getMediaGallery,
   rescanMediaGallery,
-  searchFiles
+  searchFiles,
+  deleteFilesAndFolders,
+  removeMediaItemsFromCache
 };

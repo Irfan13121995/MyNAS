@@ -46,7 +46,7 @@ if (!fs.existsSync(envPath)) {
 require('dotenv').config({ path: envPath });
 
 const { getDrives, getAvailableRaidDisks } = require('./driveService');
-const { listFiles, validatePath, getMediaGallery, rescanMediaGallery, searchFiles } = require('./fileService');
+const { listFiles, validatePath, getMediaGallery, rescanMediaGallery, searchFiles, deleteFilesAndFolders } = require('./fileService');
 const { streamFile } = require('./streamService');
 const tunnelService = require('./tunnelService');
 const { startTunnel, stopTunnel, getTunnelStatus, getNamedTunnelConfig, saveNamedTunnelConfig } = tunnelService;
@@ -785,6 +785,74 @@ app.get('/api/files', authenticateToken, async (req, res) => {
     res.json(results);
   } catch (err) {
     res.status(500).json({ error: `Failed to list files: ${err.message}` });
+  }
+});
+
+// ─── 7.1. DELETE FILES & FOLDERS ENDPOINT ────────────────────────────────────
+
+app.post('/api/files/delete', authenticateToken, checkReadWrite, async (req, res) => {
+  const { paths, path: singlePath } = req.body;
+  const itemsToDelete = Array.isArray(paths) ? paths : (singlePath ? [singlePath] : []);
+
+  if (itemsToDelete.length === 0) {
+    return res.status(400).json({ error: 'No files or folders specified for deletion' });
+  }
+
+  // Check disk permissions
+  for (const p of itemsToDelete) {
+    if (!isPathAllowed(p, req.user?.allowedDisks)) {
+      return res.status(403).json({ error: `Access Denied: You do not have permission to delete "${p}"` });
+    }
+  }
+
+  try {
+    const result = await deleteFilesAndFolders(itemsToDelete);
+    const delCount = result.deleted.length;
+    if (delCount > 0) {
+      logActivity('delete', `Deleted ${delCount} item(s): ${result.deleted.slice(0, 3).map(p => path.basename(p)).join(', ')}${delCount > 3 ? '...' : ''}`, req.user?.username);
+    }
+    return res.json({
+      success: true,
+      deletedCount: delCount,
+      deleted: result.deleted,
+      failed: result.failed
+    });
+  } catch (err) {
+    console.error('Delete error:', err);
+    return res.status(500).json({ error: `Failed to delete files: ${err.message}` });
+  }
+});
+
+app.delete('/api/files', authenticateToken, checkReadWrite, async (req, res) => {
+  const { paths, path: singlePath } = req.body || {};
+  const queryPath = req.query.path;
+  const itemsToDelete = Array.isArray(paths) ? paths : (singlePath ? [singlePath] : (queryPath ? [queryPath] : []));
+
+  if (itemsToDelete.length === 0) {
+    return res.status(400).json({ error: 'No files or folders specified for deletion' });
+  }
+
+  for (const p of itemsToDelete) {
+    if (!isPathAllowed(p, req.user?.allowedDisks)) {
+      return res.status(403).json({ error: `Access Denied: You do not have permission to delete "${p}"` });
+    }
+  }
+
+  try {
+    const result = await deleteFilesAndFolders(itemsToDelete);
+    const delCount = result.deleted.length;
+    if (delCount > 0) {
+      logActivity('delete', `Deleted ${delCount} item(s): ${result.deleted.slice(0, 3).map(p => path.basename(p)).join(', ')}${delCount > 3 ? '...' : ''}`, req.user?.username);
+    }
+    return res.json({
+      success: true,
+      deletedCount: delCount,
+      deleted: result.deleted,
+      failed: result.failed
+    });
+  } catch (err) {
+    console.error('Delete error:', err);
+    return res.status(500).json({ error: `Failed to delete files: ${err.message}` });
   }
 });
 
