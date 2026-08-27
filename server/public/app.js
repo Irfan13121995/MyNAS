@@ -2126,11 +2126,11 @@ async function renderFiles(container) {
   const currentFolderName = filePath.length > 0 ? (filePath[filePath.length - 1].startsWith('raid:') ? '🛡️ ' + filePath[filePath.length - 1].replace(/^raid:/, '') : filePath[filePath.length - 1]) : 'This PC';
 
   // Fetch drives for left navigation pane
-  const drivesR = await GET('/api/drives');
-  const drives = drivesR?.data || [];
+  const drivesR = await GET('/api/drives').catch(() => ({ data: [] }));
+  const drives = Array.isArray(drivesR?.data) ? drivesR.data : [];
 
-  const volumesR = await GET('/api/volumes').catch(() => ({ data: [] }));
-  const raidVolumes = volumesR?.data || [];
+  const volumesR = await GET('/api/raid/volumes').catch(() => ({ data: { volumes: [] } }));
+  const raidVolumes = Array.isArray(volumesR?.data?.volumes) ? volumesR.data.volumes : (Array.isArray(volumesR?.data) ? volumesR.data : []);
 
   // Breadcrumbs Bar
   const breadcrumbSegments = [

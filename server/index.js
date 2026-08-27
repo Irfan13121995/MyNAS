@@ -613,6 +613,16 @@ app.get('/api/raid/volumes', authenticateToken, async (req, res) => {
   }
 });
 
+// Alias for /api/volumes
+app.get('/api/volumes', authenticateToken, async (req, res) => {
+  try {
+    const volumes = dbService.getAllVolumes();
+    return res.json({ success: true, volumes });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: 'Failed to retrieve volumes' });
+  }
+});
+
 // POST /api/raid/create - Creates a RAID 1 Mirrored Array using two selected disks
 app.post('/api/raid/create', authenticateToken, requireAdmin, checkReadWrite, async (req, res) => {
   try {
