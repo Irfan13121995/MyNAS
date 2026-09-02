@@ -29,6 +29,7 @@ export default function BackupPanel({ serverUrl, token, drives = [], onClose }) 
   const [loading, setLoading] = useState(true);
   const [deviceName, setDeviceName] = useState('MobileDevice');
   const [selectedDrive, setSelectedDrive] = useState('');
+  const [raidVolumes, setRaidVolumes] = useState([]);
 
   // Media & Sync State
   const [allMedia, setAllMedia] = useState([]);
@@ -49,12 +50,36 @@ export default function BackupPanel({ serverUrl, token, drives = [], onClose }) 
         const sanitized = rawName.replace(/[^a-zA-Z0-9_-]/g, '_');
         setDeviceName(sanitized);
 
-        // Pick preferred destination drive
-        if (drives && drives.length > 0) {
-          const usbDrive = drives.find(d => d.isUsb);
-          const defDrive = usbDrive || drives[0];
-          setSelectedDrive(defDrive.letter || defDrive.path || 'C:');
+        // Fetch RAID storage pools
+        if (serverUrl && token) {
+          try {
+            const raidRes = await fetch(`${serverUrl}/api/raid/volumes`, {
+              headers: { Authorization: `Bearer ${token}` }
+            });
+            if (raidRes.ok) {
+              const raidData = await raidRes.json();
+              const vols = Array.isArray(raidData.volumes) ? raidData.volumes : (Array.isArray(raidData) ? raidData : []);
+              setRaidVolumes(vols);
+              if (vols.length > 0) {
+                // Default to active RAID storage pool!
+                setSelectedDrive(`raid:${vols[0].id}`);
+              }
+            }
+          } catch (e) {
+            console.warn('Failed to fetch RAID volumes for backup:', e);
+          }
         }
+
+        // Pick preferred destination drive if RAID not selected
+        setSelectedDrive(prev => {
+          if (prev) return prev;
+          if (drives && drives.length > 0) {
+            const usbDrive = drives.find(d => d.isUsb);
+            const defDrive = usbDrive || drives[0];
+            return defDrive.letter || defDrive.path || 'C:';
+          }
+          return 'C:';
+        });
 
         // Request modern media permissions (only photos & videos, avoid requesting audio)
         let perm = await MediaLibrary.getPermissionsAsync(false, ['photo', 'video']);
@@ -75,7 +100,7 @@ export default function BackupPanel({ serverUrl, token, drives = [], onClose }) 
     };
 
     initialize();
-  }, [drives]);
+  }, [drives, serverUrl, token]);
 
   // 2. Direct MediaStore Query (Photos + Videos) & Sync Cache
   const loadMediaStoreAndCache = async (devName) => {
@@ -127,14 +152,30 @@ export default function BackupPanel({ serverUrl, token, drives = [], onClose }) 
     }
   };
 
-  // 3. Background Sync Execution
+  // 3. Destination Display & Background Sync Execution
   const pendingItems = useMemo(() => {
     return allMedia.filter(item => !syncedIdsSet.has(item.id));
   }, [allMedia, syncedIdsSet]);
 
+  const destinationDisplay = useMemo(() => {
+    if (!selectedDrive) return 'Select Storage';
+    if (selectedDrive.startsWith('raid:')) {
+      const volId = selectedDrive.replace(/^raid:/, '');
+      const vol = raidVolumes.find(v => v.id === volId || v.name === volId);
+      const name = vol ? vol.name : 'myNAS';
+      return `${name} [RAID 1 Mirror]\\NAS_Backup\\${deviceName}\\`;
+    }
+    return `${selectedDrive.replace(/[\/\\]+$/, '')}\\NAS_Backup\\${deviceName}\\`;
+  }, [selectedDrive, raidVolumes, deviceName]);
+
   const startBackupSync = async () => {
     if (!selectedDrive) {
       Alert.alert('Select Drive', 'Please select a destination NAS drive.');
+      return;
+    }
+
+    if (!permissionGranted) {
+      handleRequestPermission();
       return;
     }
 
@@ -160,46 +201,58 @@ export default function BackupPanel({ serverUrl, token, drives = [], onClose }) 
         setCurrentProgress(i + 1);
         setSyncLog(`Uploading (${i + 1}/${pendingItems.length}): ${asset.filename}`);
 
-        const assetInfo = await MediaLibrary.getAssetInfoAsync(asset.id);
-        const fileUri = assetInfo.localUri || assetInfo.uri;
+        let fileUri = asset.uri;
+        try {
+          const assetInfo = await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: false });
+          if (assetInfo && (assetInfo.localUri || assetInfo.uri)) {
+            fileUri = assetInfo.localUri || assetInfo.uri;
+          }
+        } catch (e) {
+          // If getAssetInfoAsync fails or throws missing ACCESS_MEDIA_LOCATION, fallback directly to asset.uri
+          fileUri = asset.uri;
+        }
 
         if (!fileUri) {
           continue;
         }
 
-        const formData = new FormData();
-        const ext = asset.filename ? asset.filename.split('.').pop() : (asset.mediaType === 'video' ? 'mp4' : 'jpg');
-        formData.append('file', {
-          uri: fileUri,
-          name: asset.filename || `backup_${Date.now()}.${ext}`,
-          type: asset.mediaType === 'video' ? 'video/mp4' : 'image/jpeg'
-        });
+        try {
+          const formData = new FormData();
+          const ext = asset.filename ? asset.filename.split('.').pop() : (asset.mediaType === 'video' ? 'mp4' : 'jpg');
+          formData.append('file', {
+            uri: fileUri,
+            name: asset.filename || `backup_${Date.now()}.${ext}`,
+            type: asset.mediaType === 'video' ? 'video/mp4' : 'image/jpeg'
+          });
 
-        const uploadUrl = `${serverUrl}/api/upload?destination=${encodeURIComponent(targetPath)}`;
-        const response = await fetch(uploadUrl, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'multipart/form-data'
-          },
-          body: formData
-        });
+          const uploadUrl = `${serverUrl}/api/upload?destination=${encodeURIComponent(targetPath)}`;
+          const response = await fetch(uploadUrl, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'multipart/form-data'
+            },
+            body: formData
+          });
 
-        const resData = await response.json().catch(() => ({}));
+          const resData = await response.json().catch(() => ({}));
 
-        if (response.ok && (resData.success || resData.path)) {
-          successCount++;
-          updatedSyncedSet.add(asset.id);
-          setSyncedIdsSet(new Set(updatedSyncedSet));
+          if (response.ok && (resData.success || resData.path)) {
+            successCount++;
+            updatedSyncedSet.add(asset.id);
+            setSyncedIdsSet(new Set(updatedSyncedSet));
 
-          // Save progress incrementally
-          await AsyncStorage.setItem(`nas_backup_synced_${deviceName}`, JSON.stringify(Array.from(updatedSyncedSet)));
+            // Save progress incrementally
+            await AsyncStorage.setItem(`nas_backup_synced_${deviceName}`, JSON.stringify(Array.from(updatedSyncedSet)));
+          }
+        } catch (fileErr) {
+          console.warn(`Failed to upload ${asset.filename}:`, fileErr);
         }
       }
 
       setCurrentSyncingId(null);
       setSyncLog(`✅ Backup completed! ${successCount} files backed up.`);
-      Alert.alert('Backup Complete', `Successfully uploaded ${successCount} photos & videos to:\n${targetPath}`);
+      Alert.alert('Backup Complete', `Successfully uploaded ${successCount} photos & videos to:\n${destinationDisplay}`);
     } catch (err) {
       Alert.alert('Backup Interrupted', err.message || 'An error occurred during upload.');
     } finally {
@@ -296,14 +349,49 @@ export default function BackupPanel({ serverUrl, token, drives = [], onClose }) 
         <View style={{ flex: 1, paddingHorizontal: 16, paddingTop: 14 }}>
           {/* ── TOP BACKUP CONTROL CARD ── */}
           <View style={[styles.controlCard, { backgroundColor: colors.surfaceSolid, borderColor: colors.borderLight }]}>
-            <View style={styles.cardHeaderRow}>
-              <View>
+            <View style={styles.cardHeaderCol}>
+              <View style={styles.destHeaderRow}>
                 <Text style={[styles.destLabel, { color: colors.textSecondary }]}>DESTINATION DIRECTORY</Text>
-                <Text style={[styles.destPath, { color: colors.accent }]}>
-                  {selectedDrive ? `${selectedDrive.replace(/[\/\\]+$/, '')}\\NAS_Backup\\${deviceName}\\` : 'Select Drive'}
-                </Text>
+                {selectedDrive.startsWith('raid:') && (
+                  <View style={styles.raidActiveBadge}>
+                    <Text style={styles.raidActiveBadgeText}>🛡️ RAID 1 Mirrored</Text>
+                  </View>
+                )}
               </View>
-              <View style={styles.drivePickerRow}>
+              <Text style={[styles.destPath, { color: colors.accent }]} numberOfLines={1}>
+                {destinationDisplay}
+              </Text>
+
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.drivePickerScroll}
+                contentContainerStyle={styles.drivePickerContainer}
+              >
+                {/* Active RAID Storage Pools */}
+                {raidVolumes.map(vol => {
+                  const volKey = `raid:${vol.id}`;
+                  const isSel = selectedDrive === volKey;
+                  return (
+                    <TouchableOpacity
+                      key={volKey}
+                      style={[
+                        styles.drivePill,
+                        styles.raidPill,
+                        isSel && styles.raidPillActive
+                      ]}
+                      onPress={() => setSelectedDrive(volKey)}
+                      disabled={syncing}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.drivePillText, isSel && styles.raidPillTextActive]}>
+                        🛡️ {vol.name} (RAID 1)
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+
+                {/* Physical Drives */}
                 {drives.map(d => {
                   const dLetter = d.letter || d.path || 'C:';
                   const isSel = selectedDrive === dLetter;
@@ -313,6 +401,7 @@ export default function BackupPanel({ serverUrl, token, drives = [], onClose }) 
                       style={[styles.drivePill, isSel && { backgroundColor: colors.accent, borderColor: colors.accent }]}
                       onPress={() => setSelectedDrive(dLetter)}
                       disabled={syncing}
+                      activeOpacity={0.8}
                     >
                       <Text style={[styles.drivePillText, isSel && { color: '#0F172A', fontWeight: '700' }]}>
                         {d.name || dLetter}
@@ -320,7 +409,7 @@ export default function BackupPanel({ serverUrl, token, drives = [], onClose }) 
                     </TouchableOpacity>
                   );
                 })}
-              </View>
+              </ScrollView>
             </View>
 
             {/* Sync Counters */}
@@ -474,11 +563,27 @@ const getStyles = (colors) => StyleSheet.create({
     borderWidth: 1,
     marginBottom: 12,
   },
-  cardHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
+  cardHeaderCol: {
     marginBottom: 12,
+  },
+  destHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 2,
+  },
+  raidActiveBadge: {
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.4)',
+  },
+  raidActiveBadgeText: {
+    color: '#10B981',
+    fontSize: 10,
+    fontWeight: '800',
   },
   destLabel: {
     fontSize: 10,
@@ -491,13 +596,31 @@ const getStyles = (colors) => StyleSheet.create({
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
     marginTop: 2,
   },
-  drivePickerRow: {
+  drivePickerScroll: {
+    marginTop: 10,
+    marginHorizontal: -4,
+  },
+  drivePickerContainer: {
     flexDirection: 'row',
-    gap: 6,
+    alignItems: 'center',
+    paddingHorizontal: 4,
+    gap: 8,
+  },
+  raidPill: {
+    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    borderColor: 'rgba(16, 185, 129, 0.4)',
+  },
+  raidPillActive: {
+    backgroundColor: '#10B981',
+    borderColor: '#10B981',
+  },
+  raidPillTextActive: {
+    color: '#0F172A',
+    fontWeight: '800',
   },
   drivePill: {
-    paddingVertical: 4,
-    paddingHorizontal: 10,
+    paddingVertical: 5,
+    paddingHorizontal: 11,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.15)',

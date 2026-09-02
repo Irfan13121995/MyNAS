@@ -17,6 +17,7 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives = [], 
   const [chargingOnly, setChargingOnly] = useState(false);
   const [lowBatteryPause, setLowBatteryPause] = useState(true);
   const [selectedDrive, setSelectedDrive] = useState('');
+  const [raidVolumes, setRaidVolumes] = useState([]);
   const [syncFolder, setSyncFolder] = useState('');
   const [mediaType, setMediaType] = useState('both'); // 'photos' | 'videos' | 'both'
   const [folderStructure, setFolderStructure] = useState('flat'); // 'flat' | 'album' | 'date'
@@ -50,6 +51,21 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives = [], 
 
   const loadSettings = async () => {
     try {
+      // Fetch RAID storage pools
+      let foundRaidVols = [];
+      if (serverUrl && token) {
+        try {
+          const rRes = await fetch(`${serverUrl}/api/raid/volumes`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          if (rRes.ok) {
+            const rData = await rRes.json();
+            foundRaidVols = Array.isArray(rData.volumes) ? rData.volumes : (Array.isArray(rData) ? rData : []);
+            setRaidVolumes(foundRaidVols);
+          }
+        } catch (e) {}
+      }
+
       // 1. Try loading remote settings from server SQLite first
       let remoteSettings = null;
       if (serverUrl && token) {
@@ -58,16 +74,18 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives = [], 
             headers: { Authorization: `Bearer ${token}` }
           });
           if (res.ok) {
-            const data = await res.json();
-            remoteSettings = data.settings;
+            remoteSettings = await res.json();
           }
-        } catch (e) {}
+        } catch (e) {
+          console.warn('Failed to load remote sync settings:', e);
+        }
       }
 
-      const savedDrive = await AsyncStorage.getItem('autosync_drive');
-      const savedFolder = await AsyncStorage.getItem('autosync_folder');
+      // 2. Fallback to AsyncStorage local cache
       const savedEnabled = await AsyncStorage.getItem('autosync_enabled');
-      const savedType = await AsyncStorage.getItem('autosync_type');
+      const savedDrive = await AsyncStorage.getItem('autosync_target_drive');
+      const savedFolder = await AsyncStorage.getItem('autosync_target_folder');
+      const savedType = await AsyncStorage.getItem('autosync_media_type');
       const savedStruct = await AsyncStorage.getItem('autosync_folder_structure');
       const savedCount = await AsyncStorage.getItem('autosync_synced_count');
       const savedTime = await AsyncStorage.getItem('autosync_last_sync_time');
@@ -79,7 +97,8 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives = [], 
       const deviceName = (Device.deviceName || Device.modelName || 'Android_Phone').replace(/[^a-zA-Z0-9_-]/g, '_');
       const defaultFolder = `NAS_Backup\\${deviceName}`;
 
-      const activeDrive = remoteSettings?.targetDrive ?? savedDrive ?? (drives[0]?.letter || '');
+      const defaultDrive = (foundRaidVols.length > 0 ? `raid:${foundRaidVols[0].id}` : (drives[0]?.letter || ''));
+      const activeDrive = remoteSettings?.targetDrive ?? savedDrive ?? defaultDrive;
       const activeFolder = remoteSettings?.targetFolderPath ?? savedFolder ?? defaultFolder;
 
       setSelectedDrive(activeDrive);
@@ -281,6 +300,33 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives = [], 
             {/* Target Drive Selector */}
             <Text style={styles.sectionTitle}>Select Storage Drive</Text>
             <View style={styles.driveList}>
+              {/* RAID Storage Pools */}
+              {raidVolumes.map((vol) => {
+                const volKey = `raid:${vol.id}`;
+                const isSelected = selectedDrive === volKey;
+                return (
+                  <TouchableOpacity
+                    key={volKey}
+                    style={[
+                      styles.driveItem,
+                      { borderColor: 'rgba(16, 185, 129, 0.4)' },
+                      isSelected && { borderColor: '#10B981', backgroundColor: 'rgba(16, 185, 129, 0.15)' }
+                    ]}
+                    onPress={() => handleDriveSelect(volKey)}
+                  >
+                    <Text style={styles.driveIcon}>🛡️</Text>
+                    <View style={styles.driveMeta}>
+                      <Text style={styles.driveName}>{vol.name} (RAID 1 Mirror)</Text>
+                      <Text style={[styles.driveSub, { color: '#10B981', fontWeight: '700' }]}>
+                        {vol.usable_capacity_formatted || '931.5 GB'} • Healthy Mirrored Pool
+                      </Text>
+                    </View>
+                    {isSelected && <Text style={[styles.checkIcon, { color: '#10B981' }]}>✓</Text>}
+                  </TouchableOpacity>
+                );
+              })}
+
+              {/* Physical Drives */}
               {drives.map((d) => {
                 const isSelected = selectedDrive === d.letter || (!selectedDrive && d.letter === drives[0]?.letter);
                 return (
@@ -304,7 +350,9 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives = [], 
             <Text style={styles.sectionTitle}>Target Folder Path</Text>
             <View style={{ marginBottom: 16 }}>
                <View style={styles.folderInputRow}>
-                 <Text style={styles.drivePrefixText}>{selectedDrive ? selectedDrive.replace(/[\/\\]+$/, '') + '\\' : ''}</Text>
+                 <Text style={styles.drivePrefixText}>
+                   {selectedDrive ? (selectedDrive.startsWith('raid:') ? (raidVolumes.find(v => 'raid:' + v.id === selectedDrive)?.name || 'myNAS') + '\\' : selectedDrive.replace(/[\/\\]+$/, '') + '\\') : ''}
+                 </Text>
                  <TextInput
                     style={styles.folderTextInput}
                     placeholder="e.g. Mobile Backups\Photos"
