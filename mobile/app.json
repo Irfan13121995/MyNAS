@@ -2,7 +2,7 @@
   "expo": {
     "name": "Personal NAS",
     "slug": "personal-nas",
-    "version": "1.2.4",
+    "version": "1.2.5",
     "description": "Self-hosted personal NAS — access, stream, and sync your files from anywhere.",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -19,7 +19,7 @@
     },
     "android": {
       "package": "com.irfan.personalnas",
-      "versionCode": 13,
+      "versionCode": 14,
       "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "backgroundColor": "#0B0F17",
