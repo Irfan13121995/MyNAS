@@ -10,9 +10,13 @@ const isExpoGo = Constants.appOwnership === 'expo' || Constants.executionEnviron
 
 if (!isExpoGo) {
   try {
-    MediaLibrary = require('expo-media-library');
+    MediaLibrary = require('expo-media-library/legacy');
   } catch (e) {
-    MediaLibrary = null;
+    try {
+      MediaLibrary = require('expo-media-library');
+    } catch (err) {
+      MediaLibrary = null;
+    }
   }
 }
 

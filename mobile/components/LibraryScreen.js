@@ -7,7 +7,7 @@ import { FlashList } from '@shopify/flash-list';
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
-import * as MediaLibrary from 'expo-media-library';
+import * as MediaLibrary from 'expo-media-library/legacy';
 import { requestMediaPermissions, uploadFile } from '../services/syncService';
 import { cacheService } from '../services/cacheService';
 import { useTheme } from '../contexts/ThemeContext';
