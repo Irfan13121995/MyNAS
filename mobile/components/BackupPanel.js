@@ -56,9 +56,12 @@ export default function BackupPanel({ serverUrl, token, drives = [], onClose }) 
           setSelectedDrive(defDrive.letter || defDrive.path || 'C:');
         }
 
-        // Request modern media permissions
-        const { status } = await MediaLibrary.requestPermissionsAsync();
-        if (status === 'granted') {
+        // Request modern media permissions (only photos & videos, avoid requesting audio)
+        let perm = await MediaLibrary.getPermissionsAsync(false, ['photo', 'video']);
+        if (!perm.granted && perm.status !== 'granted') {
+          perm = await MediaLibrary.requestPermissionsAsync(false, ['photo', 'video']);
+        }
+        if (perm.granted || perm.status === 'granted' || perm.accessPrivileges === 'all' || perm.accessPrivileges === 'limited') {
           setPermissionGranted(true);
           await loadMediaStoreAndCache(sanitized);
         } else {
@@ -111,15 +114,16 @@ export default function BackupPanel({ serverUrl, token, drives = [], onClose }) 
 
   const handleRequestPermission = async () => {
     try {
-      const { status } = await MediaLibrary.requestPermissionsAsync();
-      if (status === 'granted') {
+      const res = await MediaLibrary.requestPermissionsAsync(false, ['photo', 'video']);
+      if (res.granted || res.status === 'granted' || res.accessPrivileges === 'all' || res.accessPrivileges === 'limited') {
         setPermissionGranted(true);
         await loadMediaStoreAndCache(deviceName);
       } else {
-        Alert.alert('Permission Denied', 'Please enable media permissions in settings to allow auto-backup.');
+        Alert.alert('Permission Denied', 'Please enable media permissions in system settings to allow auto-backup.');
       }
     } catch (e) {
-      Alert.alert('Permission Error', e.message);
+      console.warn('handleRequestPermission error:', e);
+      Alert.alert('Permission Error', e.message || 'Could not request permissions.');
     }
   };
 

@@ -252,7 +252,10 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
     else setLoadingMore(true);
 
     try {
-      const perm = await MediaLibrary.requestPermissionsAsync();
+      let perm = await MediaLibrary.getPermissionsAsync(false, ['photo', 'video']);
+      if (!perm.granted && perm.status !== 'granted') {
+        perm = await MediaLibrary.requestPermissionsAsync(false, ['photo', 'video']);
+      }
       const granted = perm.granted || perm.status === 'granted' || perm.accessPrivileges === 'all' || perm.accessPrivileges === 'limited';
       setHasPermission(granted);
 
@@ -331,7 +334,10 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
 
   const loadAlbums = async () => {
     try {
-      const perm = await MediaLibrary.requestPermissionsAsync();
+      let perm = await MediaLibrary.getPermissionsAsync(false, ['photo', 'video']);
+      if (!perm.granted && perm.status !== 'granted') {
+        perm = await MediaLibrary.requestPermissionsAsync(false, ['photo', 'video']);
+      }
       if (!perm.granted && perm.status !== 'granted' && perm.accessPrivileges !== 'all') return;
       const albumList = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true });
       // Get cover asset for each album
@@ -590,6 +596,89 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
     );
   }, [serverUrl, token, filteredMedia, onSelectMedia, isSelectionMode, selectedItems]);
 
+  const handleBatchDelete = () => {
+    if (selectedItems.size === 0) return;
+
+    if (activeSource === 'nas') {
+      Alert.alert(
+        'Delete from NAS',
+        `Are you sure you want to permanently delete ${selectedItems.size} selected item(s) from your NAS storage? This cannot be undone.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                setLoading(true);
+                const pathsToDelete = Array.from(selectedItems);
+                const res = await fetch(`${serverUrl}/api/files/delete`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${token}`
+                  },
+                  body: JSON.stringify({ paths: pathsToDelete })
+                });
+                const data = await res.json();
+                if (res.ok && data.success) {
+                  const toDeleteSet = new Set(pathsToDelete);
+                  setMediaItems(prev => prev.filter(m => !toDeleteSet.has(m.path || m.uri)));
+                  const cached = await cacheService.get('gallery_media_items');
+                  if (Array.isArray(cached)) {
+                    await cacheService.set('gallery_media_items', cached.filter(m => !toDeleteSet.has(m.path || m.uri)));
+                  }
+                  setSelectedItems(new Set());
+                  setIsSelectionMode(false);
+                  Alert.alert('Deleted', `Successfully deleted ${data.deletedCount || pathsToDelete.length} item(s) from NAS.`);
+                } else {
+                  Alert.alert('Delete Failed', data.error || 'Failed to delete selected files.');
+                }
+              } catch (err) {
+                console.warn('Delete error:', err);
+                Alert.alert('Error', err.message || 'Network error while deleting files.');
+              } finally {
+                setLoading(false);
+              }
+            }
+          }
+        ]
+      );
+    } else {
+      Alert.alert(
+        'Delete from Device',
+        `Are you sure you want to delete ${selectedItems.size} photo/video item(s) from this phone?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                setLoading(true);
+                const assetIds = filteredMedia
+                  .filter(m => selectedItems.has(m.path || m.uri) && m.id)
+                  .map(m => m.id);
+                if (assetIds.length > 0) {
+                  await MediaLibrary.deleteAssetsAsync(assetIds);
+                  const toDeleteSet = new Set(selectedItems);
+                  setDeviceMediaItems(prev => prev.filter(m => !toDeleteSet.has(m.path || m.uri)));
+                  setSelectedItems(new Set());
+                  setIsSelectionMode(false);
+                }
+              } catch (err) {
+                console.warn('Device delete error:', err);
+                Alert.alert('Delete Error', err.message || 'Failed to delete device assets.');
+              } finally {
+                setLoading(false);
+              }
+            }
+          }
+        ]
+      );
+    }
+  };
+
   const statusBarPadding = Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 8 : 16;
 
   return (
@@ -626,23 +715,33 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
           
           <View style={styles.selectionActionsRow}>
             {activeSource === 'device' ? (
-              <TouchableOpacity
-                style={[styles.actionBtn, { backgroundColor: colors.accent, borderColor: colors.accent }]}
-                onPress={() => setUploadModalVisible(true)}
-              >
-                <Text style={[styles.actionBtnText, { color: '#0F172A', fontWeight: '800' }]}>
-                  📤 Upload to NAS ({selectedItems.size})
-                </Text>
-              </TouchableOpacity>
-            ) : (
-              <>
-                <TouchableOpacity style={styles.actionBtn}>
-                  <Text style={styles.actionBtnText}>⬇️ Download</Text>
+              <View style={{ flexDirection: 'row', gap: 8, flex: 1 }}>
+                <TouchableOpacity
+                  style={[styles.actionBtn, { flex: 1, backgroundColor: colors.accent, borderColor: colors.accent }]}
+                  onPress={() => setUploadModalVisible(true)}
+                >
+                  <Text style={[styles.actionBtnText, { color: '#0F172A', fontWeight: '800' }]}>
+                    📤 Upload to NAS ({selectedItems.size})
+                  </Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.actionBtn, styles.actionBtnDanger]}>
+                <TouchableOpacity
+                  style={[styles.actionBtn, styles.actionBtnDanger, { paddingHorizontal: 14 }]}
+                  activeOpacity={0.7}
+                  onPress={handleBatchDelete}
+                >
                   <Text style={styles.actionBtnDangerText}>🗑️ Delete</Text>
                 </TouchableOpacity>
-              </>
+              </View>
+            ) : (
+              <View style={{ flexDirection: 'row', gap: 8, flex: 1 }}>
+                <TouchableOpacity
+                  style={[styles.actionBtn, styles.actionBtnDanger, { flex: 1 }]}
+                  activeOpacity={0.7}
+                  onPress={handleBatchDelete}
+                >
+                  <Text style={styles.actionBtnDangerText}>🗑️ Delete ({selectedItems.size})</Text>
+                </TouchableOpacity>
+              </View>
             )}
           </View>
         </View>

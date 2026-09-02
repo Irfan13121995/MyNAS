@@ -22,6 +22,8 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
   const [starredFiles, setStarredFiles] = useState([]);
   const [exploreVisible, setExploreVisible] = useState(false);
   const [explorePath, setExplorePath] = useState('');
+  const [raidVolumes, setRaidVolumes] = useState([]);
+  const [drivesList, setDrivesList] = useState([]);
 
   useEffect(() => {
     // Theme is now loaded in ThemeContext
@@ -77,9 +79,47 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
     }
   };
 
+  const fetchStorageAndRaid = async (signal) => {
+    const cachedRaid = await cacheService.get('home_raid_volumes');
+    if (cachedRaid && Array.isArray(cachedRaid)) setRaidVolumes(cachedRaid);
+
+    const cachedDrives = await cacheService.get('home_drives_list');
+    if (cachedDrives && Array.isArray(cachedDrives)) setDrivesList(cachedDrives);
+
+    try {
+      const [raidRes, drivesRes] = await Promise.allSettled([
+        fetch(`${serverUrl}/api/raid/volumes`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal
+        }),
+        fetch(`${serverUrl}/api/drives`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal
+        })
+      ]);
+
+      if (raidRes.status === 'fulfilled' && raidRes.value.ok) {
+        const rData = await raidRes.value.json();
+        const vols = Array.isArray(rData.volumes) ? rData.volumes : (Array.isArray(rData) ? rData : []);
+        setRaidVolumes(vols);
+        await cacheService.set('home_raid_volumes', vols);
+      }
+
+      if (drivesRes.status === 'fulfilled' && drivesRes.value.ok) {
+        const dData = await drivesRes.value.json();
+        const dList = Array.isArray(dData) ? dData : dData.drives || [];
+        setDrivesList(dList);
+        await cacheService.set('home_drives_list', dList);
+      }
+    } catch (err) {
+      if (err.name !== 'AbortError') console.warn('Failed to fetch storage/RAID info:', err);
+    }
+  };
+
   useEffect(() => {
     const controller = new AbortController();
     fetchRecentFiles(controller.signal);
+    fetchStorageAndRaid(controller.signal);
     return () => {
       controller.abort();
     };
@@ -123,6 +163,7 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
   const onRefresh = () => {
     setRefreshing(true);
     fetchRecentFiles();
+    fetchStorageAndRaid();
   };
 
   const defaultItems = [
@@ -365,21 +406,117 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
         ListHeaderComponent={
           <View>
-            <TouchableOpacity 
-              style={styles.storageCard} 
-              activeOpacity={0.8}
-              onPress={() => {
-                setExplorePath('C:\\');
-                setExploreVisible(true);
-              }}
-            >
-              <View style={styles.storageCardInfo}>
-                <Text style={styles.storageCardTitle}>Main Storage</Text>
-                <Text style={styles.storageCardDesc}>1.2 TB / 2.0 TB Used</Text>
-                <Text style={styles.storageCardTap}>Tap to explore disk</Text>
+            {/* ── ACTIVE RAID STORAGE POOLS (If active) ── */}
+            {raidVolumes.length > 0 && (
+              <View style={styles.raidSection}>
+                <View style={styles.raidSectionHeader}>
+                  <Text style={styles.raidSectionTitle}>🛡️ Active RAID Storage Pools</Text>
+                  <View style={styles.raidMirroredBadge}>
+                    <Text style={styles.raidMirroredBadgeText}>{raidVolumes.length} Mirrored</Text>
+                  </View>
+                </View>
+
+                {raidVolumes.map(vol => (
+                  <View key={vol.id} style={styles.raidCard}>
+                    <View style={styles.raidCardTop}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
+                        <View style={styles.raidShieldIconBox}>
+                          <Text style={{ fontSize: 22 }}>🛡️</Text>
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.raidVolName} numberOfLines={1}>{vol.name}</Text>
+                          <View style={styles.raidLevelPill}>
+                            <Text style={styles.raidLevelPillText}>{vol.raid_level || 'RAID 1'} Mirror</Text>
+                          </View>
+                        </View>
+                      </View>
+                      <View style={styles.raidHealthyBadge}>
+                        <View style={styles.raidHealthyDot} />
+                        <Text style={styles.raidHealthyText}>Healthy</Text>
+                      </View>
+                    </View>
+
+                    <View style={styles.raidDetailsBox}>
+                      <View style={styles.raidDetailRow}>
+                        <Text style={styles.raidDetailLabel}>Usable Capacity:</Text>
+                        <Text style={styles.raidDetailValBold}>{vol.usable_capacity_formatted || '931.5 GB'}</Text>
+                      </View>
+                      <View style={styles.raidDetailRow}>
+                        <Text style={styles.raidDetailLabel}>Mount Point:</Text>
+                        <Text style={styles.raidDetailValCode}>{vol.mount_point || 'R:\\' + vol.name}</Text>
+                      </View>
+                      <View style={styles.raidDetailRow}>
+                        <Text style={styles.raidDetailLabel}>Member Disks:</Text>
+                        <Text style={styles.raidDetailValCode}>{(vol.member_disks || []).join(', ')}</Text>
+                      </View>
+                    </View>
+
+                    <TouchableOpacity
+                      style={styles.raidBrowseBtn}
+                      activeOpacity={0.8}
+                      onPress={() => {
+                        setExplorePath(`raid:${vol.id}`);
+                        setExploreVisible(true);
+                      }}
+                    >
+                      <Text style={styles.raidBrowseBtnText}>📂 Browse Mirrored Storage</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
               </View>
-              <CircularGauge percentage={60} size={50} strokeWidth={5} />
-            </TouchableOpacity>
+            )}
+
+            {/* ── PHYSICAL DRIVES STORAGE SUMMARY ── */}
+            {drivesList.length > 0 ? (
+              <View style={{ marginTop: raidVolumes.length > 0 ? 8 : 16 }}>
+                <View style={styles.driveSectionHeader}>
+                  <Text style={styles.driveSectionTitle}>💿 Physical Drives</Text>
+                </View>
+                {drivesList.map((d, i) => {
+                  const usedGB = d.total && d.free !== undefined ? ((d.total - d.free) / (1024 ** 3)).toFixed(1) : '0';
+                  const totalGB = d.total ? (d.total / (1024 ** 3)).toFixed(1) : '0';
+                  const pct = d.total > 0 ? Math.round(((d.total - d.free) / d.total) * 100) : 0;
+                  return (
+                    <TouchableOpacity
+                      key={d.letter || d.path || i.toString()}
+                      style={styles.storageCard}
+                      activeOpacity={0.8}
+                      onPress={() => {
+                        setExplorePath(d.path || (d.letter ? `${d.letter}:\\` : 'C:\\'));
+                        setExploreVisible(true);
+                      }}
+                    >
+                      <View style={styles.storageCardInfo}>
+                        <Text style={styles.storageCardTitle}>
+                          {d.letter ? `Drive (${d.letter}:)` : d.name || 'Storage'} {d.label ? `— ${d.label}` : ''}
+                        </Text>
+                        <Text style={styles.storageCardDesc}>
+                          {usedGB} GB / {totalGB} GB ({pct}% used)
+                        </Text>
+                        <Text style={styles.storageCardTap}>Tap to explore disk</Text>
+                      </View>
+                      <CircularGauge percentage={pct} size={50} strokeWidth={5} />
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            ) : (
+              <TouchableOpacity 
+                style={styles.storageCard} 
+                activeOpacity={0.8}
+                onPress={() => {
+                  setExplorePath('C:\\');
+                  setExploreVisible(true);
+                }}
+              >
+                <View style={styles.storageCardInfo}>
+                  <Text style={styles.storageCardTitle}>Main Storage</Text>
+                  <Text style={styles.storageCardDesc}>1.2 TB / 2.0 TB Used</Text>
+                  <Text style={styles.storageCardTap}>Tap to explore disk</Text>
+                </View>
+                <CircularGauge percentage={60} size={50} strokeWidth={5} />
+              </TouchableOpacity>
+            )}
 
             <View style={styles.listHeaderRow}>
               <Text style={styles.dateHeader}>
@@ -577,6 +714,156 @@ const getStyles = (colors) => StyleSheet.create({
     shadowOpacity: 0.8,
     shadowRadius: 4,
     elevation: 3,
+  },
+
+  /* ── Active RAID Storage Pools ─── */
+  raidSection: {
+    marginTop: 16,
+    marginBottom: 6,
+  },
+  raidSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  raidSectionTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.textPrimary,
+    letterSpacing: -0.2,
+  },
+  raidMirroredBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.35)',
+  },
+  raidMirroredBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#10B981',
+  },
+  raidCard: {
+    backgroundColor: colors.surface,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 10,
+    borderWidth: 1.5,
+    borderColor: 'rgba(16, 185, 129, 0.35)',
+    elevation: 3,
+    shadowColor: colors.shadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+  },
+  raidCardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  raidShieldIconBox: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    backgroundColor: 'rgba(2, 132, 199, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(2, 132, 199, 0.3)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  raidVolName: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.textPrimary,
+    marginBottom: 2,
+  },
+  raidLevelPill: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 6,
+    backgroundColor: 'rgba(2, 132, 199, 0.15)',
+  },
+  raidLevelPillText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: colors.accent,
+  },
+  raidHealthyBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+  },
+  raidHealthyDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10B981',
+  },
+  raidHealthyText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#10B981',
+  },
+  raidDetailsBox: {
+    backgroundColor: colors.inputBg || 'rgba(0,0,0,0.15)',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 12,
+    gap: 6,
+  },
+  raidDetailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  raidDetailLabel: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    fontWeight: '500',
+  },
+  raidDetailValBold: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: colors.textPrimary,
+  },
+  raidDetailValCode: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.accent,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  raidBrowseBtn: {
+    backgroundColor: colors.accent,
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  raidBrowseBtnText: {
+    color: '#0F172A',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  driveSectionHeader: {
+    marginBottom: 6,
+  },
+  driveSectionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
 
   /* ── File List & Storage Card ─── */

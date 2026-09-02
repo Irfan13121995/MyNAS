@@ -61,11 +61,19 @@ export async function checkSyncConstraints() {
 export async function requestMediaPermissions() {
   if (MediaLibrary && typeof MediaLibrary.requestPermissionsAsync === 'function') {
     try {
-      const res = await MediaLibrary.requestPermissionsAsync();
+      if (typeof MediaLibrary.getPermissionsAsync === 'function') {
+        const check = await MediaLibrary.getPermissionsAsync(false, ['photo', 'video']);
+        if (check.granted || check.status === 'granted' || check.accessPrivileges === 'all' || check.accessPrivileges === 'limited') {
+          return true;
+        }
+      }
+      const res = await MediaLibrary.requestPermissionsAsync(false, ['photo', 'video']);
       if (res.granted || res.status === 'granted' || res.accessPrivileges === 'all' || res.accessPrivileges === 'limited') {
         return true;
       }
-    } catch (e) {}
+    } catch (e) {
+      console.warn('MediaLibrary permission check error:', e);
+    }
   }
   
   // Fallback to ImagePicker permissions
