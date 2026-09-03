@@ -19,7 +19,7 @@
     },
     "android": {
       "package": "com.irfan.personalnas",
-      "versionCode": 14,
+      "versionCode": 15,
       "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "backgroundColor": "#0B0F17",
