@@ -482,7 +482,8 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
                       style={styles.storageCard}
                       activeOpacity={0.8}
                       onPress={() => {
-                        setExplorePath(d.path || (d.letter ? `${d.letter}:\\` : 'C:\\'));
+                        const rawPath = d.path || (d.letter ? `${d.letter.replace(/[:/\\]+$/, '')}:\\` : 'C:\\');
+                        setExplorePath(rawPath.replace(/::+/g, ':'));
                         setExploreVisible(true);
                       }}
                     >

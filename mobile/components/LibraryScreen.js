@@ -118,13 +118,37 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [raidVolumes, setRaidVolumes] = useState([]);
+
+  const cleanDriveLetter = (letter) => {
+    if (!letter) return 'C:';
+    return String(letter).replace(/[:/\\]+$/, '') + ':';
+  };
 
   useEffect(() => {
+    // 1. Fetch RAID volumes if present
+    if (serverUrl && token) {
+      fetch(`${serverUrl}/api/raid/volumes`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+        .then(res => res.json())
+        .then(data => {
+          const vols = Array.isArray(data.volumes) ? data.volumes : (Array.isArray(data) ? data : []);
+          setRaidVolumes(vols);
+          if (vols.length > 0) {
+            setTargetDrive(`raid:${vols[0].id}`);
+            setTargetFolder(`raid:${vols[0].id}\\MobileUploads`);
+          }
+        })
+        .catch(() => {});
+    }
+
+    // 2. Fetch physical drives
     if (drives && drives.length > 0) {
       setAvailableDrives(drives);
-      const defaultDriveLetter = drives[0]?.letter || 'C';
-      setTargetDrive(defaultDriveLetter);
-      setTargetFolder(`${defaultDriveLetter}:\\MobileUploads`);
+      const defaultDriveLetter = cleanDriveLetter(drives[0]?.letter || drives[0]?.path || 'C:');
+      setTargetDrive(prev => (prev && prev.startsWith('raid:')) ? prev : defaultDriveLetter);
+      setTargetFolder(prev => (prev && prev.startsWith('raid:')) ? prev : `${defaultDriveLetter}\\MobileUploads`);
     } else if (serverUrl && token) {
       fetch(`${serverUrl}/api/drives`, {
         headers: { Authorization: `Bearer ${token}` }
@@ -134,9 +158,9 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
           const driveList = Array.isArray(data) ? data : data.drives || [];
           setAvailableDrives(driveList);
           if (driveList.length > 0) {
-            const letter = driveList[0]?.letter || 'C';
-            setTargetDrive(letter);
-            setTargetFolder(`${letter}:\\MobileUploads`);
+            const letter = cleanDriveLetter(driveList[0]?.letter || driveList[0]?.path || 'C:');
+            setTargetDrive(prev => (prev && prev.startsWith('raid:')) ? prev : letter);
+            setTargetFolder(prev => (prev && prev.startsWith('raid:')) ? prev : `${letter}\\MobileUploads`);
           }
         })
         .catch(() => {});
@@ -389,6 +413,9 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
     setIsBatchUploading(true);
     setUploadProgress({ current: 0, total: itemsToUpload.length, fileName: '', percent: 0 });
 
+    // Clean duplicate colons (e.g. I::\MobileUploads -> I:\MobileUploads)
+    let cleanDestination = (destinationPath || 'C:\\MobileUploads').trim().replace(/::+/g, ':');
+
     let successCount = 0;
     let failedCount = 0;
 
@@ -399,11 +426,13 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
 
       if (item.id) {
         try {
-          const info = await MediaLibrary.getAssetInfoAsync(item.id);
+          const info = await MediaLibrary.getAssetInfoAsync(item.id, { shouldDownloadFromNetwork: false });
           if (info && (info.localUri || info.uri)) {
             uploadUri = info.localUri || info.uri;
           }
-        } catch (e) {}
+        } catch (e) {
+          uploadUri = item.uri || item.path;
+        }
       }
 
       setUploadProgress({
@@ -424,7 +453,7 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
           mediaType: item.isVideo ? 'video' : 'image'
         };
 
-        await uploadFile(serverUrl, token, fileObj, destinationPath, (pct) => {
+        await uploadFile(serverUrl, token, fileObj, cleanDestination, (pct) => {
           setUploadProgress(prev => ({ ...prev, percent: Math.round(pct * 100) }));
         });
         successCount++;
@@ -438,9 +467,17 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
     setSelectedItems(new Set());
     setIsSelectionMode(false);
 
+    // Friendly display name for alert
+    let displayDest = cleanDestination;
+    if (cleanDestination.startsWith('raid:')) {
+      const volId = cleanDestination.replace(/^raid:/, '').split(/[\\\/]/)[0];
+      const vol = raidVolumes.find(v => v.id === volId || v.name === volId);
+      displayDest = `${vol ? vol.name : 'myNAS'} [RAID 1 Mirror]\\MobileUploads`;
+    }
+
     Alert.alert(
       'Upload Complete 🎉',
-      `Successfully uploaded ${successCount} photos/videos to NAS folder:\n${destinationPath}${failedCount > 0 ? `\n\n(${failedCount} items failed to upload)` : ''}`
+      `Successfully uploaded ${successCount} photos/videos to NAS folder:\n${displayDest}${failedCount > 0 ? `\n\n(${failedCount} items failed to upload)` : ''}`
     );
   };
 
@@ -1062,30 +1099,65 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
             <ScrollView style={{ maxHeight: 380 }} showsVerticalScrollIndicator={false}>
               {/* Target Storage Disk Selector */}
               <Text style={[styles.fieldLabel, { color: colors.accent, marginTop: 8 }]}>SELECT TARGET STORAGE DISK</Text>
-              <View style={styles.drivePillRow}>
-                {availableDrives.map(d => {
-                  const letter = d.letter || d;
-                  const isSelected = targetDrive === letter;
-                  return (
-                    <TouchableOpacity
-                      key={letter}
-                      style={[styles.drivePill, isSelected && styles.drivePillActive]}
-                      onPress={() => {
-                        setTargetDrive(letter);
-                        setTargetFolder(`${letter}:\\MobileUploads`);
-                      }}
-                    >
-                      <Text style={[styles.drivePillText, isSelected && styles.drivePillTextActive]}>
-                        💾 {d.name ? `${d.name} (${letter})` : `Drive ${letter}`}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -4, marginTop: 4 }}>
+                <View style={[styles.drivePillRow, { paddingHorizontal: 4 }]}>
+                  {/* Active RAID Storage Pools */}
+                  {raidVolumes.map(vol => {
+                    const volKey = `raid:${vol.id}`;
+                    const isSelected = targetDrive === volKey;
+                    return (
+                      <TouchableOpacity
+                        key={volKey}
+                        style={[
+                          styles.drivePill,
+                          { borderColor: 'rgba(16, 185, 129, 0.4)', backgroundColor: 'rgba(16, 185, 129, 0.1)' },
+                          isSelected && { backgroundColor: '#10B981', borderColor: '#10B981' }
+                        ]}
+                        onPress={() => {
+                          setTargetDrive(volKey);
+                          setTargetFolder(`${volKey}\\MobileUploads`);
+                        }}
+                      >
+                        <Text style={[styles.drivePillText, isSelected && { color: '#0F172A', fontWeight: '800' }]}>
+                          🛡️ {vol.name} (RAID 1)
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+
+                  {/* Physical Storage Drives */}
+                  {availableDrives.map(d => {
+                    const rawLetter = d.letter || d.path || d;
+                    const cleanLetter = cleanDriveLetter(rawLetter);
+                    const isSelected = targetDrive === cleanLetter;
+                    return (
+                      <TouchableOpacity
+                        key={cleanLetter}
+                        style={[styles.drivePill, isSelected && styles.drivePillActive]}
+                        onPress={() => {
+                          setTargetDrive(cleanLetter);
+                          setTargetFolder(`${cleanLetter}\\MobileUploads`);
+                        }}
+                      >
+                        <Text style={[styles.drivePillText, isSelected && styles.drivePillTextActive]}>
+                          💾 {d.name ? `${d.name} (${cleanLetter})` : `Drive ${cleanLetter}`}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </ScrollView>
 
               {/* Target Folder Path */}
-              <Text style={[styles.fieldLabel, { color: colors.accent, marginTop: 16 }]}>TARGET FOLDER PATH</Text>
-              <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 16 }}>
+                <Text style={[styles.fieldLabel, { color: colors.accent, marginTop: 0 }]}>TARGET FOLDER PATH</Text>
+                {targetDrive && targetDrive.startsWith('raid:') && (
+                  <View style={{ backgroundColor: 'rgba(16, 185, 129, 0.15)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8, borderWidth: 1, borderColor: 'rgba(16, 185, 129, 0.4)' }}>
+                    <Text style={{ color: '#10B981', fontSize: 10, fontWeight: '800' }}>🛡️ RAID 1 Mirrored</Text>
+                  </View>
+                )}
+              </View>
+              <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', marginTop: 6 }}>
                 <TextInput
                   style={[styles.folderInput, { backgroundColor: colors.inputBg, color: colors.textPrimary, borderColor: colors.accentBorder }]}
                   value={targetFolder}
@@ -1133,7 +1205,7 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
       {/* FILE EXPLORER MODAL FOR FOLDER BROWSER */}
       <FileExplorerModal
         visible={folderExplorerVisible}
-        initialPath={targetFolder || (targetDrive ? `${targetDrive}:\\` : 'C:\\')}
+        initialPath={targetFolder || (targetDrive ? (targetDrive.startsWith('raid:') ? targetDrive : `${cleanDriveLetter(targetDrive)}\\`) : 'C:\\')}
         serverUrl={serverUrl}
         token={token}
         mode="selectFolder"

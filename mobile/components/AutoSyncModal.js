@@ -351,7 +351,7 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives = [], 
             <View style={{ marginBottom: 16 }}>
                <View style={styles.folderInputRow}>
                  <Text style={styles.drivePrefixText}>
-                   {selectedDrive ? (selectedDrive.startsWith('raid:') ? (raidVolumes.find(v => 'raid:' + v.id === selectedDrive)?.name || 'myNAS') + '\\' : selectedDrive.replace(/[\/\\]+$/, '') + '\\') : ''}
+                   {selectedDrive ? (typeof selectedDrive === 'string' && selectedDrive.startsWith('raid:') ? (raidVolumes.find(v => 'raid:' + v.id === selectedDrive)?.name || 'myNAS') + '\\' : selectedDrive.replace(/[:/\\]+$/, '') + ':\\') : ''}
                  </Text>
                  <TextInput
                     style={styles.folderTextInput}

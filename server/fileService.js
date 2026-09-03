@@ -28,7 +28,7 @@ async function validatePath(targetPath) {
     throw new Error('Access Denied: Malformed path string detected');
   }
 
-  let formatted = targetPath.trim();
+  let formatted = targetPath.trim().replace(/::+/g, ':');
 
   // Handle RAID volume references (e.g. 'raid:vol_...', 'raid:myNAS', or volume name with subfolder)
   if (formatted.startsWith('raid:')) {

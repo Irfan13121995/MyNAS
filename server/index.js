@@ -976,11 +976,12 @@ async function safeEnsureDir(dirPath) {
 app.post('/api/upload', authenticateToken, checkReadWrite, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-  const destinationDir = req.query.destination;
-  if (!destinationDir) {
+  const rawDestination = req.query.destination;
+  if (!rawDestination) {
     try { await fs.promises.unlink(req.file.path); } catch {}
     return res.status(400).json({ error: 'Destination path query is required' });
   }
+  const destinationDir = String(rawDestination).trim().replace(/::+/g, ':');
 
   // Check if target is a RAID volume
   let raidVol = null;

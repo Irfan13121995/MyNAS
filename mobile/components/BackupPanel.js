@@ -8,6 +8,7 @@ import {
   Alert,
   Dimensions,
   Platform,
+  ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FlashList } from '@shopify/flash-list';
@@ -159,13 +160,14 @@ export default function BackupPanel({ serverUrl, token, drives = [], onClose }) 
 
   const destinationDisplay = useMemo(() => {
     if (!selectedDrive) return 'Select Storage';
-    if (selectedDrive.startsWith('raid:')) {
+    if (typeof selectedDrive === 'string' && selectedDrive.startsWith('raid:')) {
       const volId = selectedDrive.replace(/^raid:/, '');
       const vol = raidVolumes.find(v => v.id === volId || v.name === volId);
       const name = vol ? vol.name : 'myNAS';
       return `${name} [RAID 1 Mirror]\\NAS_Backup\\${deviceName}\\`;
     }
-    return `${selectedDrive.replace(/[\/\\]+$/, '')}\\NAS_Backup\\${deviceName}\\`;
+    const cleanDrive = typeof selectedDrive === 'string' ? selectedDrive.replace(/[:/\\]+$/, '') + ':' : 'C:';
+    return `${cleanDrive}\\NAS_Backup\\${deviceName}\\`;
   }, [selectedDrive, raidVolumes, deviceName]);
 
   const startBackupSync = async () => {
@@ -189,8 +191,10 @@ export default function BackupPanel({ serverUrl, token, drives = [], onClose }) 
     setCurrentProgress(0);
     setSyncLog('Connecting to NAS server...');
 
-    const cleanDrive = (selectedDrive || 'C:').replace(/[\/\\]+$/, '');
-    const targetPath = `${cleanDrive}\\NAS_Backup\\${deviceName}`;
+    const cleanDrive = typeof selectedDrive === 'string' ? selectedDrive.replace(/[:/\\]+$/, '') + ':' : 'C:';
+    const targetPath = (selectedDrive && typeof selectedDrive === 'string' && selectedDrive.startsWith('raid:'))
+      ? `${selectedDrive}\\NAS_Backup\\${deviceName}`
+      : `${cleanDrive}\\NAS_Backup\\${deviceName}`;
     const updatedSyncedSet = new Set(syncedIdsSet);
     let successCount = 0;
 
@@ -352,7 +356,7 @@ export default function BackupPanel({ serverUrl, token, drives = [], onClose }) 
             <View style={styles.cardHeaderCol}>
               <View style={styles.destHeaderRow}>
                 <Text style={[styles.destLabel, { color: colors.textSecondary }]}>DESTINATION DIRECTORY</Text>
-                {selectedDrive.startsWith('raid:') && (
+                {selectedDrive && typeof selectedDrive === 'string' && selectedDrive.startsWith('raid:') && (
                   <View style={styles.raidActiveBadge}>
                     <Text style={styles.raidActiveBadgeText}>🛡️ RAID 1 Mirrored</Text>
                   </View>
