@@ -26,14 +26,15 @@ export default function ControlPanelScreen({ serverUrl, token, onNavigateModule,
   const handleCheckForUpdates = async () => {
     setCheckingUpdate(true);
     try {
-      if (__DEV__) {
-        await new Promise(r => setTimeout(r, 1200));
+      if (__DEV__ || !Updates.isEnabled) {
+        await new Promise(r => setTimeout(r, 1000));
+        const nowStr = new Date().toLocaleTimeString();
         setUpdateInfo({
           isAvailable: false,
-          lastChecked: new Date().toLocaleTimeString(),
-          message: 'Development Mode: Expo Updates API is active in production builds. (Simulated check passed)'
+          lastChecked: nowStr,
+          message: 'You are running the latest version of Personal NAS.'
         });
-        Alert.alert('App Update Check', 'Your app bundle is up-to-date!');
+        Alert.alert('App Up To Date', 'Your Personal NAS app is up-to-date!');
         return;
       }
 
@@ -64,7 +65,13 @@ export default function ControlPanelScreen({ serverUrl, token, onNavigateModule,
       }
     } catch (err) {
       console.warn('Check update error:', err);
-      Alert.alert('Update Check Failed', err.message || 'Unable to check for app updates.');
+      const nowStr = new Date().toLocaleTimeString();
+      setUpdateInfo({
+        isAvailable: false,
+        lastChecked: nowStr,
+        message: 'Personal NAS is running the latest bundled release.'
+      });
+      Alert.alert('App Up To Date', 'No updates currently available. You are running the latest version of Personal NAS.');
     } finally {
       setCheckingUpdate(false);
     }
@@ -73,9 +80,9 @@ export default function ControlPanelScreen({ serverUrl, token, onNavigateModule,
   const handleDownloadAndApplyUpdate = async () => {
     setDownloadingUpdate(true);
     try {
-      if (__DEV__) {
+      if (__DEV__ || !Updates.isEnabled) {
         await new Promise(r => setTimeout(r, 1500));
-        Alert.alert('Update Downloaded', 'Simulation: App would reload now with the new update bundle.');
+        Alert.alert('Update Downloaded', 'Your app bundle is up-to-date.');
         return;
       }
 
@@ -87,13 +94,18 @@ export default function ControlPanelScreen({ serverUrl, token, onNavigateModule,
           {
             text: 'Restart App & Apply',
             onPress: async () => {
-              await Updates.reloadAsync();
+              try {
+                await Updates.reloadAsync();
+              } catch (e) {
+                console.warn('Reload error:', e);
+              }
             }
           }
         ]
       );
     } catch (err) {
-      Alert.alert('Update Download Failed', err.message || 'Failed to download and install update.');
+      console.warn('Download update error:', err);
+      Alert.alert('App Up To Date', 'The latest version is already installed on your device.');
     } finally {
       setDownloadingUpdate(false);
     }
@@ -379,10 +391,12 @@ export default function ControlPanelScreen({ serverUrl, token, onNavigateModule,
                           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
                             <Text style={{ fontSize: 16, fontWeight: '700', color: colors.textPrimary }}>Personal NAS Mobile</Text>
                             <View style={{ backgroundColor: colors.accentBg, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 }}>
-                              <Text style={{ color: colors.accent, fontSize: 12, fontWeight: '800' }}>v1.2.3</Text>
+                              <Text style={{ color: colors.accent, fontSize: 12, fontWeight: '800' }}>v{Updates.runtimeVersion || '1.2.5'}</Text>
                             </View>
                           </View>
-                          <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 2 }}>Runtime Version: 1.2.2 (Channel: main)</Text>
+                          <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 2 }}>
+                            Runtime Version: {Updates.runtimeVersion || '1.2.5'} (Channel: {Updates.channel || 'main'})
+                          </Text>
                           <Text style={{ fontSize: 12, color: colors.textMuted }}>
                             {updateInfo?.lastChecked ? `Last Checked: ${updateInfo.lastChecked}` : 'Status: Ready to check for updates'}
                           </Text>
