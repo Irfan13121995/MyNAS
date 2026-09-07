@@ -35,11 +35,20 @@ const upload = multer({
 
 // 1. Auto-generate .env on first run if it doesn't exist
 const envPath = path.join(BASE_DIR, '.env');
+let isFirstRunSetup = false;
+let initialGeneratedPasscode = null;
 if (!fs.existsSync(envPath)) {
+  isFirstRunSetup = true;
   const secret = crypto.randomBytes(32).toString('hex');
-  const passcode = Math.floor(100000 + Math.random() * 900000).toString();
-  const passcodeHash = bcrypt.hashSync(passcode, 10);
-  const envContent = `PORT=3000\nJWT_SECRET=${secret}\nPASSCODE_HASH=${passcodeHash}\nREQUIRE_EMAIL_VERIFICATION=true\n`;
+  initialGeneratedPasscode = Math.floor(100000 + Math.random() * 900000).toString();
+  const passcodeHash = bcrypt.hashSync(initialGeneratedPasscode, 10);
+  const envContent = `# Personal NAS Server Configuration
+PORT=3000
+JWT_SECRET=${secret}
+PASSCODE=${initialGeneratedPasscode}
+PASSCODE_HASH=${passcodeHash}
+REQUIRE_EMAIL_VERIFICATION=false
+`;
   fs.writeFileSync(envPath, envContent);
 }
 
@@ -1618,7 +1627,30 @@ app.get('*', (req, res) => {
 // ─── 12. START SERVER ─────────────────────────────────────────────────────────
 
 const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server is running at http://0.0.0.0:${PORT}`);
+  const nets = os.networkInterfaces();
+  const lanIps = [];
+  for (const name of Object.keys(nets)) {
+    for (const net of nets[name]) {
+      if (net.family === 'IPv4' && !net.internal) {
+        lanIps.push(net.address);
+      }
+    }
+  }
+
+  console.log('\n========================================================');
+  console.log('  🌐 Personal NAS Server is Live & Running!');
+  console.log(`  🏠 Local Access:     http://localhost:${PORT}`);
+  if (lanIps.length > 0) {
+    lanIps.forEach(ip => {
+      console.log(`  📡 Network (LAN):    http://${ip}:${PORT}`);
+    });
+  }
+  const displayPasscode = process.env.PASSCODE || (isFirstRunSetup ? initialGeneratedPasscode : null);
+  if (displayPasscode) {
+    console.log(`  🔑 Master Passcode:  ${displayPasscode}`);
+  }
+  console.log('  👤 Tip: The first registered user account is Admin.');
+  console.log('========================================================\n');
 
   try {
     const bonjour = new Bonjour({}, (err) => {

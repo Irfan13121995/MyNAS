@@ -45,102 +45,186 @@ The **Personal NAS** is a private, self-hosted cloud storage and media server de
 
 ---
 
-## 💻 Deployment & Installation Guide (Windows 10 / 11)
+## 💻 Server Installation & Quick Start Guide
 
-### Prerequisites
-- **Windows 11** or **Windows 10** (64-bit).
-- **Administrator Privileges** on host machine.
-- *(Optional)* Free [Cloudflare](https://dash.cloudflare.com) account for custom domains (`https://mynas-hi.online`).
+Personal NAS can be deployed on any PC running **Windows 10 / 11** (or macOS / Linux).
 
----
-
-### 🚀 Method 1: Automated Windows Service Setup (Recommended)
-
-An automated PowerShell installer is provided in `installer/scripts/install-service.ps1`.
-
-#### 1. Clone Codebase
-```powershell
-git clone https://github.com/Irfan13121995/MyNAS.git C:\PersonalNAS
-```
-
-#### 2. Run PowerShell Installer as Administrator
-Open **PowerShell as Administrator** and execute:
-```powershell
-cd C:\PersonalNAS\installer\scripts
-.\install-service.ps1 -Port 3000 -StoragePath "C:\NAS_Storage"
-```
-
-> [!NOTE]
-> **Automated Setup Highlights:**
-> - Auto-detects and installs **Node.js (v18+)** silently if missing.
-> - Installs server dependencies and compiles native SQLite binaries.
-> - Creates Windows Firewall rules for HTTP (port 3000) and mDNS (UDP port 5353).
-> - Auto-generates secure random `JWT_SECRET` and bcrypt passcode hash in `server/.env`.
-> - Registers and starts **PersonalNAS_Server** as a background Windows Service via NSSM.
+### 📋 Prerequisites
+- **Node.js LTS (v18, v20, or v22)** installed.  
+  👉 Download the installer from [nodejs.org](https://nodejs.org) if you haven't already. (Select **LTS**).
+- **Git** installed ([git-scm.com](https://git-scm.com)).
 
 ---
 
-### 🛠️ Method 2: Manual Developer Setup
+### 🚀 Method 1: 1-Click Quick Start for Windows (Easiest)
 
-#### 1. Install Node.js
-Download and install **Node.js LTS (v18+)** from [nodejs.org](https://nodejs.org).
+We provide a built-in startup script `start-server.bat` that automatically verifies Node.js, installs dependencies, initializes `.env`, launches the server, and opens your browser.
 
-#### 2. Clone & Install Dependencies
-```powershell
-git clone https://github.com/Irfan13121995/MyNAS.git
-cd MyNAS/server
-npm install
-```
+1. **Clone the repository**:
+   ```cmd
+   git clone https://github.com/Irfan13121995/MyNAS.git
+   cd MyNAS
+   ```
 
-#### 3. Create Environment File (`server/.env`)
-```env
-PORT=3000
-JWT_SECRET=your_random_32_byte_secret_here
-PASSCODE_HASH=$2b$10$0gh72kIzztqOGHfL/JrFYesmp9xU/PQSykIVDKTvKW12xHo7gRYue
-REQUIRE_EMAIL_VERIFICATION=false
-```
+2. **Launch the Server**:
+   Double-click `start-server.bat` in File Explorer, or run in your terminal:
+   ```cmd
+   start-server.bat
+   ```
 
-#### 4. Launch Server
-```powershell
-node index.js
-```
+3. **That's it!**
+   The script will install any missing dependencies, generate your secure `.env` file, start the server on port `3000`, and automatically open `http://localhost:3000` in your browser.
 
 ---
 
-## 🌐 Remote Access & Custom Domain Setup (`mynas-hi.online`)
+### 🛠️ Method 2: Standard Command-Line Setup (Cross-Platform)
 
-1. Open dashboard at `http://localhost:3000`.
-2. Log in with your passcode or user credentials.
-3. Navigate to **Remote Access**:
-   - Enter your **Cloudflare Zero Trust Tunnel Token**.
-   - Enter **Custom Public Domain URL**: `https://mynas-hi.online`.
-   - Click **Save & Connect**.
-4. In Cloudflare DNS, ensure a `CNAME` record points `@` to your tunnel target domain.
+If you prefer using the terminal (PowerShell, Command Prompt, or Terminal on Linux/Mac):
 
----
-
-## 📱 Mobile App Setup (Android & iOS)
-
-1. **Run App Locally**:
+1. **Clone the repository**:
    ```bash
-   cd mobile
+   git clone https://github.com/Irfan13121995/MyNAS.git
+   cd MyNAS
+   ```
+
+2. **Install Server Dependencies**:
+   ```bash
+   cd server
    npm install
-   npx expo start
    ```
-2. **Pairing**:
-   - **QR Code Scan:** Tap **📷 QR Scan** on the connection screen and scan the pairing QR code on the Web Dashboard to instantly pair and auto-login as that user.
-   - **Local Wi-Fi:** Enter host IP (e.g. `10.31.30.50`) and port `3000`.
-   - **Remote Access:** Enter `https://mynas-hi.online` and your user credentials.
-3. **Build Standalone Android APK**:
+
+3. **Configure Environment File** *(Optional - auto-generated if omitted)*:
+   If you want to set your own port or passcode before launching:
    ```bash
-   cd mobile
-   npx eas-cli build --platform android --profile preview
+   # On Windows PowerShell:
+   Copy-Item .env.example .env
+
+   # On Linux/macOS or CMD:
+   copy .env.example .env
    ```
-4. **Publish OTA Updates**:
+   *(If you skip this step, the server will automatically generate a fresh `.env` on first startup with a random JWT secret and passcode).*
+
+4. **Start the Server**:
    ```bash
-   cd mobile
-   npx eas-cli update --branch main --environment production
+   npm start
    ```
+   *(or run `node index.js`)*
+
+5. **Open Dashboard**:
+   Navigate to `http://localhost:3000` in any web browser.
+
+---
+
+### ⚙️ Method 3: Automated Windows Service (Runs in Background on PC Boot)
+
+If you want Personal NAS to run permanently in the background as a Windows Service (starting automatically whenever your computer turns on without needing a terminal open):
+
+1. **Open PowerShell as Administrator**:
+   Right-click the Windows Start menu button and choose **Terminal (Admin)** or **Windows PowerShell (Admin)**.
+
+2. **Navigate to the scripts folder and run**:
+   ```powershell
+   cd C:\Path\To\MyNAS\installer\scripts
+   .\install-service.ps1
+   ```
+   *(You can also specify custom parameters if desired, e.g.: `.\install-service.ps1 -Port 3000 -StoragePath "D:\NAS_Storage"`)*.
+
+> [!TIP]
+> **What the Service Installer does automatically:**
+> - Verifies Node.js (and silently installs Node.js LTS if missing).
+> - Installs all production dependencies (`npm install --omit=dev`).
+> - Downloads the background service wrapper (`nssm.exe`) if not present.
+> - Creates your Windows Firewall rules for HTTP (port 3000) and LAN mDNS discovery.
+> - Configures and starts the **PersonalNAS_Server** Windows service.
+> - To uninstall the service at any time: run `.\uninstall-service.ps1` as Administrator.
+
+---
+
+## 🔑 First-Time Login & Admin Account Setup
+
+When you open `http://localhost:3000` for the first time, you have two ways to log in:
+
+### Option A: Register an Admin Account (Recommended)
+1. On the login page, click **"Create an Account"** (or switch to the Register tab).
+2. Enter your desired **Username**, **Email**, and **Password**.
+3. Click **Register**.
+4. **The very first account registered on Personal NAS is automatically granted full Administrator privileges** with zero email verification barriers! You can immediately manage users, storage disks, RAID pools, and system settings.
+
+### Option B: Quick Passcode Login
+1. When the server starts for the first time, check your terminal output or open `server/.env`.
+2. Look for the line:
+   ```env
+   PASSCODE=123456
+   ```
+3. Enter that 6-digit passcode on the dashboard login screen to instantly log in as the Master Admin.
+
+---
+
+## 📡 Accessing Personal NAS from Other PCs & Phones on your Home Wi-Fi
+
+1. **Find your Server's Local IP**:
+   When you run `npm start` or `start-server.bat`, the terminal displays your network address, for example:
+   ```
+   📡 Network (LAN): http://192.168.1.105:3000
+   ```
+2. **Access from any device**:
+   On your phone, laptop, tablet, or another PC connected to the same Wi-Fi network, open a web browser and type:
+   `http://192.168.1.105:3000` *(replace with your host PC's IP)*.
+3. **Windows Firewall Note**:
+   If other devices cannot connect, ensure Windows Firewall permits inbound connections on Port 3000. You can allow it by running this one-line PowerShell command as Administrator:
+   ```powershell
+   New-NetFirewallRule -DisplayName "PersonalNAS_HTTP" -Direction Inbound -Protocol TCP -LocalPort 3000 -Action Allow
+   ```
+
+---
+
+## 🌐 Remote Access Anywhere & Custom Domain (`mynas-hi.online`)
+
+Personal NAS includes native zero-configuration Cloudflare Tunnel support so you can securely access your files from anywhere in the world without exposing router ports:
+
+1. Open your dashboard at `http://localhost:3000`.
+2. Navigate to **System Settings ⚙️ $\rightarrow$ Remote Access**.
+3. Enter your **Cloudflare Tunnel Token** and your custom domain (e.g. `https://mynas-hi.online`).
+4. Click **Save & Connect**.
+5. Your NAS is now globally reachable via HTTPS at `https://mynas-hi.online`!
+
+---
+
+## 📱 Mobile App (Android & iOS)
+
+### 📲 Direct Android APK Download
+Download the latest standalone Android APK directly to your phone:
+- **Latest Standalone APK (v1.2.6)**: [Download Personal NAS Android APK](https://expo.dev/artifacts/eas/t3F4Hf8LClf1QFPmhtJJxMmEQGStSVaCbK90f_H7yM0.apk)
+
+### 🔗 Pairing Your Phone to the Server
+1. Open the Personal NAS app on your phone.
+2. Log in using your credentials and server URL (`http://<YOUR_LAN_IP>:3000` or `https://mynas-hi.online`).
+3. **Instant QR Pairing**: In the Web Dashboard, open the top-right profile menu, click **Pair Mobile App**, and scan the displayed QR code with your phone camera to pair and log in instantly.
+
+### 💻 Running the Mobile Project Locally
+```bash
+cd mobile
+npm install
+npx expo start
+```
+
+---
+
+## ❓ Frequently Asked Questions & Troubleshooting
+
+#### 1. `'node'` or `'npm'` is not recognized as an internal or external command
+You need to install Node.js. Download and install **Node.js LTS** from [nodejs.org](https://nodejs.org). Make sure to check the box "Add to PATH" during installation, then close and reopen your terminal.
+
+#### 2. `Error: listen EADDRINUSE: address already in use :::3000`
+Another program (or an existing instance of Personal NAS) is already using port 3000.  
+- Change the port in `server/.env` to `PORT=3001` or another free port.
+- Or close the existing process using port 3000.
+
+#### 3. How do I change or reset my Master Passcode?
+Open `server/.env` in Notepad. Edit `PASSCODE=your_new_passcode` (and delete the `PASSCODE_HASH` line if present). Restart the server; it will automatically rehash and apply your new passcode.
+
+#### 4. How do I add or manage storage disks on the server?
+Log into the Web Dashboard as an Administrator, navigate to **Storage Pools / Disks**, and click **Add Storage Disk** or **Create RAID 1 Mirror Pool**. You can assign specific disks or folders to specific users.
 
 ---
 
@@ -152,3 +236,4 @@ node index.js
 - **Authentication:** bcrypt password hashing for user accounts and 6-digit bcrypt passcode hashing.
 - **Rate Limiting:** Auth rate limiter capped at 10 login attempts per 15 minutes.
 - **Secure Native Storage:** Mobile credentials encrypted via `expo-secure-store`.
+

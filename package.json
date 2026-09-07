@@ -1,0 +1,20 @@
+{
+  "name": "personal-nas",
+  "version": "1.2.6",
+  "description": "Personal NAS - Private Self-Hosted Storage Ecosystem",
+  "scripts": {
+    "start": "npm --prefix server start",
+    "server": "npm --prefix server start",
+    "install:server": "npm --prefix server install",
+    "install:mobile": "npm --prefix mobile install",
+    "mobile": "npm --prefix mobile start"
+  },
+  "keywords": [
+    "nas",
+    "cloud-storage",
+    "self-hosted",
+    "personal-cloud"
+  ],
+  "author": "Irfan",
+  "license": "MIT"
+}

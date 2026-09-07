@@ -1,8 +1,12 @@
 param(
-    [Parameter(Mandatory=$true)][string]$InstallDir
+    [Parameter(Mandatory=$false)][string]$InstallDir = ""
 )
 
 try {
+    if ([string]::IsNullOrWhiteSpace($InstallDir)) {
+        $InstallDir = (Resolve-Path "$PSScriptRoot\..\..").Path
+    }
+
     # 1. Logging
     $logPath = Join-Path $InstallDir 'uninstall.log'
     function Write-Log {
@@ -15,10 +19,13 @@ try {
         }
     }
 
-    Write-Log "Starting uninstall process..."
+    Write-Log "Starting uninstall process for $InstallDir..."
 
     # 2. Stop & Remove Windows Service
-    $nssmPath = Join-Path $InstallDir 'tools\nssm.exe'
+    $nssmPath = Join-Path $InstallDir 'installer\tools\nssm.exe'
+    if (-not (Test-Path $nssmPath)) {
+        $nssmPath = Join-Path $InstallDir 'tools\nssm.exe'
+    }
     $serviceName = 'PersonalNAS_Server'
 
     if (Test-Path $nssmPath) {

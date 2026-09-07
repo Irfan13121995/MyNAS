@@ -1,11 +1,16 @@
 param(
-    [Parameter(Mandatory=$true)][string]$InstallDir,
-    [Parameter(Mandatory=$true)][string]$Port,
-    [Parameter(Mandatory=$true)][string]$StoragePath,
+    [Parameter(Mandatory=$false)][string]$InstallDir = "",
+    [Parameter(Mandatory=$false)][string]$Port = "3000",
+    [Parameter(Mandatory=$false)][string]$StoragePath = "C:\NAS_Storage",
     [Parameter(Mandatory=$false)][string]$TunnelToken = ""
 )
 
 try {
+    # Resolve InstallDir automatically to repo root if omitted
+    if ([string]::IsNullOrWhiteSpace($InstallDir)) {
+        $InstallDir = (Resolve-Path "$PSScriptRoot\..\..").Path
+    }
+
     # Step 1: Logging Setup
     $logPath = Join-Path $InstallDir 'install.log'
     function Write-Log {
@@ -16,7 +21,7 @@ try {
         Add-Content -Path $logPath -Value $logMessage -ErrorAction SilentlyContinue
     }
 
-    Write-Log "Starting Personal NAS installation process..."
+    Write-Log "Starting Personal NAS installation process at $InstallDir..."
 
     # Step 2: Node.js Verification
     Write-Log "Checking Node.js version..."
@@ -37,10 +42,10 @@ try {
     }
 
     if (-not $nodeFound) {
-        Write-Log "Downloading Node.js v24.18.0 LTS MSI..."
-        $msiUrl = "https://nodejs.org/dist/v24.18.0/node-v24.18.0-x64.msi"
-        $msiPath = Join-Path $env:TEMP "node-v24.18.0-x64.msi"
-        Invoke-WebRequest -Uri $msiUrl -OutFile $msiPath
+        Write-Log "Downloading Node.js LTS MSI..."
+        $msiUrl = "https://nodejs.org/dist/v20.18.0/node-v20.18.0-x64.msi"
+        $msiPath = Join-Path $env:TEMP "node-lts-x64.msi"
+        Invoke-WebRequest -Uri $msiUrl -OutFile $msiPath -UseBasicParsing
         
         Write-Log "Installing Node.js..."
         $installArgs = "/i `"$msiPath`" /qn ADDLOCAL=ALL"
@@ -60,6 +65,24 @@ try {
         Remove-Item -Path $msiPath -Force -ErrorAction SilentlyContinue
     }
 
+    # Step 2.5: Install Server NPM Dependencies
+    $serverDir = Join-Path $InstallDir 'server'
+    $nodeModulesDir = Join-Path $serverDir 'node_modules'
+    if (-not (Test-Path $nodeModulesDir)) {
+        Write-Log "Installing server npm dependencies (please wait)..."
+        Push-Location $serverDir
+        try {
+            cmd.exe /c "npm install --omit=dev"
+            Write-Log "npm dependencies installed successfully."
+        } catch {
+            Write-Log "WARNING: npm install encountered an error: $($_.Exception.Message)"
+        } finally {
+            Pop-Location
+        }
+    } else {
+        Write-Log "server/node_modules already present."
+    }
+
     # Step 3: Cloudflared Check
     $cloudflaredDir = Join-Path $InstallDir "server\cloudflared"
     $cloudflaredExe = Join-Path $cloudflaredDir "cloudflared.exe"
@@ -70,8 +93,12 @@ try {
             New-Item -ItemType Directory -Path $cloudflaredDir -Force | Out-Null
         }
         $cfUrl = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
-        Invoke-WebRequest -Uri $cfUrl -OutFile $cloudflaredExe
-        Write-Log "Cloudflared downloaded successfully."
+        try {
+            Invoke-WebRequest -Uri $cfUrl -OutFile $cloudflaredExe -UseBasicParsing
+            Write-Log "Cloudflared downloaded successfully."
+        } catch {
+            Write-Log "WARNING: Failed to download cloudflared: $($_.Exception.Message)"
+        }
     } else {
         Write-Log "Cloudflared already exists at $cloudflaredExe"
     }
@@ -81,7 +108,6 @@ try {
     $passcode = ""
     if (Test-Path $envPath) {
         Write-Log "Existing .env preserved"
-        # Try to extract passcode if it exists for the summary
         $envContent = Get-Content $envPath
         $passcodeMatch = $envContent -match "^PASSCODE=(.+)$"
         if ($passcodeMatch) {
@@ -97,7 +123,7 @@ try {
             "PORT=$Port",
             "JWT_SECRET=$jwtSecret",
             "PASSCODE=$passcode",
-            "REQUIRE_EMAIL_VERIFICATION=true"
+            "REQUIRE_EMAIL_VERIFICATION=false"
         )
         if (-not [string]::IsNullOrEmpty($TunnelToken)) {
             $envContent += "CLOUDFLARE_TUNNEL_TOKEN=$TunnelToken"
@@ -122,7 +148,29 @@ try {
 
     # Step 6: Install & Configure NSSM Service
     Write-Log "Configuring Windows Service using NSSM..."
-    $nssmPath = Join-Path $InstallDir 'tools\nssm.exe'
+    $toolsDir = Join-Path $InstallDir 'installer\tools'
+    if (-not (Test-Path $toolsDir)) {
+        New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null
+    }
+    $nssmPath = Join-Path $toolsDir 'nssm.exe'
+    if (-not (Test-Path $nssmPath)) {
+        $legacyToolsNssm = Join-Path $InstallDir 'tools\nssm.exe'
+        if (Test-Path $legacyToolsNssm) {
+            $nssmPath = $legacyToolsNssm
+        } else {
+            Write-Log "nssm.exe not found. Downloading NSSM 2.24..."
+            try {
+                $nssmZip = Join-Path $env:TEMP 'nssm-2.24.zip'
+                $nssmUrl = 'https://nssm.cc/release/nssm-2.24.zip'
+                Invoke-WebRequest -Uri $nssmUrl -OutFile $nssmZip -UseBasicParsing
+                Expand-Archive -Path $nssmZip -DestinationPath (Join-Path $env:TEMP 'nssm_extracted') -Force
+                Copy-Item -Path (Join-Path $env:TEMP 'nssm_extracted\nssm-2.24\win64\nssm.exe') -Destination $nssmPath -Force
+                Write-Log "NSSM 64-bit extracted to $nssmPath"
+            } catch {
+                Write-Log "WARNING: Could not auto-download NSSM: $($_.Exception.Message)"
+            }
+        }
+    }
     $nodePath = (Get-Command node -ErrorAction SilentlyContinue).Source
     if (-not $nodePath) {
         $nodePath = "C:\Program Files\nodejs\node.exe"
