@@ -102,16 +102,17 @@ graph TD
 
 | Module | Responsibility | Primary Exports / Functions | Key Dependencies |
 | :--- | :--- | :--- | :--- |
+| [`main.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/main.js) | Electron desktop wrapper, background system tray icon, auto-start toggle, silent firewall rule setup (`PersonalNAS_HTTP`), and persistent `%APPDATA%\PersonalNAS` environment configuration. | Electron App Lifecycle, BrowserWindow, Tray | `electron`, `child_process`, `os` |
 | [`index.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/index.js) | Main Express HTTP server, REST routes, auth middlewares, per-user disk permission filtering (`isPathAllowed`), rate limiting, static web serving. | Express App Listener, Route Handlers | `express`, `cors`, `helmet`, `express-rate-limit`, `jsonwebtoken` |
-| [`dbService.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/dbService.js) | SQLite database interface for users, activity logs, sync manifests, user roles (`admin`/`user`), and disk access JSON array. | `getUserByEmail`, `createUser`, `updateUserPermissions`, `logActivity`, `isSynced`, `recordSync` | `better-sqlite3`, `bcryptjs` |
+| [`dbService.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/dbService.js) | SQLite database interface for users, activity logs, sync manifests, user roles (`admin`/`user`), and disk access JSON array. Persistent path in `%APPDATA%\PersonalNAS`. | `getUserByEmail`, `createUser`, `updateUserPermissions`, `logActivity`, `isSynced`, `recordSync` | `better-sqlite3`, `bcryptjs` |
 | [`fileService.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/fileService.js) | File Explorer operations, media gallery scanner, chunked upload processing, zip downloads. | `getDirectoryContents`, `getMediaGallery`, `handleChunkUpload`, `createZipArchive` | `fs`, `path`, `archiver`, `multer` |
 | [`driveService.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/driveService.js) | Windows WMI / PowerShell disk space detection and drive letter caching (5s TTL). | `getStorageDrives`, `getDriveSpace` | `child_process` (PowerShell `Get-Volume`) |
 | [`driveConfigService.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/driveConfigService.js) | Custom backup path validation, writability checks, target storage path resolution. | `getBackupDriveConfig`, `validateBackupTarget`, `setBackupDriveConfig` | `fs`, `path` |
-| [`tunnelService.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/tunnelService.js) | Cloudflare Quick Tunnels (`*.trycloudflare.com`) and Named Tunnel process manager. | `startQuickTunnel`, `getTunnelStatus`, `stopTunnel`, `configureNamedTunnel` | `child_process` (`cloudflared`) |
+| [`tunnelService.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/tunnelService.js) | Cloudflare Quick Tunnels (`*.trycloudflare.com`) and Named Tunnel process manager. Bundled `cloudflared.exe` resolver with auto-download fallback. | `startQuickTunnel`, `getTunnelStatus`, `stopTunnel`, `configureNamedTunnel`, `ensureCloudflared` | `child_process`, `https`, `fs` |
 | [`emailService.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/emailService.js) | SMTP client for sending verification codes and system notifications. | `sendVerificationEmail`, `sendAlertEmail` | `nodemailer` |
 | [`streamService.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/streamService.js) | HTTP 206 Partial Content video and audio range streaming. | `streamMediaFile` | `fs` |
-| [`thumbnailService.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/thumbnailService.js) | Image thumbnail generation and persistent disk caching. | `generateThumbnail` | `sharp` |
-| [`trashService.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/trashService.js) | Soft delete / restore system with `.nas_trash` folder management. | `moveToTrash`, `restoreFromTrash`, `emptyTrash` | `fs`, `path` |
+| [`thumbnailService.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/thumbnailService.js) | Image thumbnail generation and persistent disk caching in `%APPDATA%\PersonalNAS\.nas_cache`. | `generateThumbnail` | `sharp` |
+| [`trashService.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/trashService.js) | Soft delete / restore system with `.nas_trash` folder management in `%APPDATA%\PersonalNAS\.nas_trash`. | `moveToTrash`, `restoreFromTrash`, `emptyTrash` | `fs`, `path` |
 | [`usersService.js`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/server/usersService.js) | User account management, creation, permissions updates, password resets, and account unlocking. | `createUser`, `updateUserPermissions`, `resetUserPassword`, `unlockUserAccount` | `dbService` |
 
 ---
@@ -157,7 +158,9 @@ REST API Routes (index.js)
 │   ├── GET  /status              -> Active Cloudflare tunnel URL and status
 │   ├── POST /start               -> Start Cloudflare tunnel process
 │   ├── POST /stop                -> Stop Cloudflare tunnel process
-│   └── POST /configure-named     -> Configure named custom domain tunnel
+├── /api/setup
+│   ├── GET  /status              -> Check if server requires initial onboarding wizard setup
+│   └── POST /complete            -> Complete initial setup: create admin, select drives, configure tunnel
 └── /api/system
     └── GET  /                    -> Hostname, IP addresses, system uptime, security status
 ```
@@ -368,3 +371,54 @@ npx eas-cli build --platform android --profile preview
 cd mobile
 npx eas-cli update --branch main --environment production
 ```
+
+---
+
+## 8. Windows Desktop & Microsoft Store Packaging Pipeline
+
+```mermaid
+graph LR
+    Source[server/ code + assets] --> ElectronBuilder[electron-builder 26.x]
+    IconGen[generate-icons.js] -->|Generates .ico, PNGs, UWP Tiles| BuildRes[server/build/]
+    Cloudflared[cloudflared.exe] -->|extraResources| Resources[resources/cloudflared/]
+    
+    ElectronBuilder -->|Target: nsis| NSISExe["Personal NAS Setup 1.0.0.exe (124.5 MB)"]
+    ElectronBuilder -->|Target: appx| AppXStore["Personal NAS 1.0.0.appx (182.8 MB)"]
+    
+    subgraph Runtime Environment
+        AppData["%APPDATA%\\PersonalNAS\\"]
+        DB[(nas_data.db)]
+        Cache[(.nas_cache/thumbnails)]
+        Trash[(.nas_trash)]
+        Cfg[tunnel_config.json]
+        Env[.env]
+        
+        AppData --> DB
+        AppData --> Cache
+        AppData --> Trash
+        AppData --> Cfg
+        AppData --> Env
+    end
+```
+
+### 8.1 Desktop & Packaging Commands
+```bash
+# Generate high-resolution icons and UWP store tiles
+npm --prefix server run icons
+
+# Build Turnkey Windows Standalone NSIS Installer (.exe)
+npm run build:exe
+
+# Build Windows App Store Package (.appx / .msix)
+npm run build:store
+
+# Build Both Formats Concurrently
+npm run build:all
+```
+
+### 8.2 The 4 Automated Setup Pillars
+1. **Pre-Bundled `cloudflared.exe`**: Built into `resources/cloudflared/cloudflared.exe` with dynamic path resolution and GitHub auto-download fallback.
+2. **Automated Windows Firewall Configuration**: Inbound rule `PersonalNAS_HTTP` (TCP 3000) created automatically on startup via `netsh advfirewall`.
+3. **Always-On System Tray**: Minimize-to-tray on close, auto-start toggle with Windows login (`openAtLogin`).
+4. **First-Run Onboarding Wizard**: Guided 3-step setup modal in the web dashboard for Admin creation, storage drive selection, and Cloudflare tunnel testing.
+

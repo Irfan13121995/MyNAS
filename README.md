@@ -49,14 +49,38 @@ The **Personal NAS** is a private, self-hosted cloud storage and media server de
 
 Personal NAS can be deployed on any PC running **Windows 10 / 11** (or macOS / Linux).
 
-### 📋 Prerequisites
-- **Node.js LTS (v18, v20, or v22)** installed.  
-  👉 Download the installer from [nodejs.org](https://nodejs.org) if you haven't already. (Select **LTS**).
-- **Git** installed ([git-scm.com](https://git-scm.com)).
+---
+
+### 🏆 Method 1: Windows Standalone Installer (`.exe`) — Recommended for End Users
+
+Zero prerequisites needed! No Node.js, Python, or Git required.
+
+1. Download **`Personal NAS Setup 1.0.0.exe`** from the [Releases page](https://github.com/Irfan13121995/MyNAS/releases) or build it locally with `npm run build:exe`.
+2. Run the installer:
+   - Installs Personal NAS to your user directory.
+   - Automatically configures Windows Firewall (TCP port 3000).
+   - Bundles `cloudflared` for zero-configuration remote tunnels.
+   - Adds desktop and Start Menu shortcuts.
+3. Launch **Personal NAS**:
+   - Runs silently in your Windows System Tray.
+   - Automatically displays the **First-Run Setup Wizard** to create your Admin account, select active storage disks, and configure Cloudflare remote tunnels with 1-click test.
 
 ---
 
-### 🚀 Method 1: 1-Click Quick Start for Windows (Easiest)
+### 🏪 Method 2: Microsoft Windows Store Package (`.appx` / `.msix`)
+
+Personal NAS is fully packaged for the Microsoft Store!
+
+- Store package location: `server/dist/Personal NAS 1.0.0.appx`
+- To sideload for local testing: Double-click the `.appx` file or run:
+  ```powershell
+  Add-AppxPackage -Path "server\dist\Personal NAS 1.0.0.appx"
+  ```
+- To publish to Microsoft Partner Center, see the complete step-by-step guide: [docs/WINDOWS_STORE_PUBLISHING.md](docs/WINDOWS_STORE_PUBLISHING.md).
+
+---
+
+### 🚀 Method 3: 1-Click Quick Start for Windows Developers (Batch Script)
 
 We provide a built-in startup script `start-server.bat` that automatically verifies Node.js, installs dependencies, initializes `.env`, launches the server, and opens your browser.
 
@@ -77,7 +101,7 @@ We provide a built-in startup script `start-server.bat` that automatically verif
 
 ---
 
-### 🛠️ Method 2: Standard Command-Line Setup (Cross-Platform)
+### 🛠️ Method 4: Standard Command-Line Setup (Cross-Platform)
 
 If you prefer using the terminal (PowerShell, Command Prompt, or Terminal on Linux/Mac):
 

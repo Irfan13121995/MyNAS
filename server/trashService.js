@@ -2,7 +2,8 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const TRASH_DIR = path.join(__dirname, '.nas_trash');
+const DATA_DIR = process.env.NAS_DATA_DIR || __dirname;
+const TRASH_DIR = path.join(DATA_DIR, '.nas_trash');
 const TRASH_FILES_DIR = path.join(TRASH_DIR, 'files');
 const MANIFEST_FILE = path.join(TRASH_DIR, 'manifest.json');
 

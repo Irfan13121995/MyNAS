@@ -3,7 +3,11 @@ const fs = require('fs');
 const bcrypt = require('bcryptjs');
 const Database = require('better-sqlite3');
 
-const DB_PATH = path.join(__dirname, 'nas_data.db');
+const DATA_DIR = process.env.NAS_DATA_DIR || __dirname;
+if (!fs.existsSync(DATA_DIR)) {
+  try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch {}
+}
+const DB_PATH = path.join(DATA_DIR, 'nas_data.db');
 const db = new Database(DB_PATH);
 
 // Enable WAL mode for high performance & ACID safety
@@ -82,7 +86,9 @@ if (!columns.includes('status')) {
 }
 
 // Auto-migrate legacy users.json if exists
-const legacyFile = path.join(__dirname, 'users.json');
+const legacyFile = fs.existsSync(path.join(DATA_DIR, 'users.json'))
+  ? path.join(DATA_DIR, 'users.json')
+  : path.join(__dirname, 'users.json');
 if (fs.existsSync(legacyFile)) {
   try {
     const raw = fs.readFileSync(legacyFile, 'utf8');

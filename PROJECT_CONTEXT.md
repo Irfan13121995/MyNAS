@@ -9,12 +9,15 @@ A self-hosted, enterprise-grade Personal NAS ecosystem providing unified private
 - **Mobile App:** React Native, Expo SDK 52, `expo-image`, `expo-video`, `expo-media-library`, `expo-device`, `expo-secure-store`, `expo-task-manager`, `FlashList` by Shopify.
 
 ## 3. Key Features & Capability Matrix
-- **Web Dashboard:**
+- **Web Dashboard & Desktop Shell:**
+  - **First-Run Onboarding Wizard:** 3-step Liquid Glass setup card automatically launched on clean machines to initialize Admin credentials, select storage disks, and configure Cloudflare remote tunnels with live test.
+  - **Electron Desktop Wrapper:** Native Windows shell with background System Tray integration, minimize-to-tray behavior, auto-start on boot (`openAtLogin`), and automatic Windows Firewall rule creation (`PersonalNAS_HTTP` TCP 3000).
+  - **Data Persistence Routing:** Fully isolated in `%APPDATA%\PersonalNAS\` (`nas_data.db`, `.env`, `.nas_cache`, `.nas_trash`, `temp_uploads`, and `tunnel_config.json`) for seamless UWP/MSIX compliance.
   - 6-Digit PIN passcode & user account authentication with bcrypt hashing.
   - Granular User Access Control: Per-user allowed storage disks (e.g. `C:`, `G:`) and Read-Only / Read-Write permission flags.
   - Light / Dark Theme toggle with custom animated switch widget and ambient radial background lighting.
   - Registered NAS Users management panel with interactive circular arc storage gauges.
-  - Cloudflare Permanent Named Tunnel configuration (`mynas-hi.online`) accessible to non-admin & admin users.
+  - Cloudflare Permanent Named Tunnel configuration (`mynas-hi.online`) accessible to non-admin & admin users with bundled `cloudflared.exe`.
   - User-specific mobile pairing QR code embedding session JWT tokens for seamless 1-tap mobile auto-login.
   - Hidden plain-text passcode security across UI elements.
 - **Mobile App:**
@@ -29,6 +32,7 @@ A self-hosted, enterprise-grade Personal NAS ecosystem providing unified private
 
 ## 4. API Endpoint Reference
 - `/api/auth`: Handles passcode verification, bcrypt user login, registration, `/api/auth/verify` token validation, and email verification.
+- `/api/setup`: Server first-run onboarding status check (`/status`) and initial setup completion (`/complete`).
 - `/api/drives`: Retrieves system storage and mounted drive information filtered by allowed paths and user disk permissions (`isPathAllowed`).
 - `/api/files`: Serves file explorer endpoints for directory listing, search, moving, deletion, and batch zip downloading.
 - `/api/upload`: Handles standard multipart and chunked (`/api/upload/chunk`) file/media uploads to specified destination paths.
@@ -51,7 +55,12 @@ A self-hosted, enterprise-grade Personal NAS ecosystem providing unified private
 
 ## 7. Development & Build Instructions
 - **Code Graph & Technical Specification:** See [`CODE_GRAPH.md`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/CODE_GRAPH.md).
+- **Windows Store Submission Guide:** See [`docs/WINDOWS_STORE_PUBLISHING.md`](file:///C:/Users/irfan/.gemini/antigravity/scratch/personal-nas/docs/WINDOWS_STORE_PUBLISHING.md).
 - **Running Server Backend:** `cd server` -> `node index.js`.
+- **Running Desktop Shell:** `cd server` -> `npm run desktop`.
+- **Building Windows Standalone Installer (.exe):** `npm run build:exe`.
+- **Building Microsoft Windows Store Package (.appx):** `npm run build:store`.
+- **Building Both Windows Packages:** `npm run build:all`.
 - **Mobile Development Server:** `cd mobile` -> `npx expo start`.
 - **Building Android Standalone APK:** `cd mobile` -> `npx eas-cli build -p android --profile preview`.
 - **Publishing Over-The-Air (OTA) Updates:** `cd mobile` -> `npx eas-cli update --branch main --environment production`.

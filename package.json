@@ -5,6 +5,10 @@
   "scripts": {
     "start": "npm --prefix server start",
     "server": "npm --prefix server start",
+    "desktop": "npm --prefix server run desktop",
+    "build:exe": "npm --prefix server run dist:exe",
+    "build:store": "npm --prefix server run dist:store",
+    "build:all": "npm --prefix server run dist:all",
     "install:server": "npm --prefix server install",
     "install:mobile": "npm --prefix mobile install",
     "mobile": "npm --prefix mobile start"

@@ -3,10 +3,34 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 
-const BASE_DIR = process.pkg ? path.dirname(process.execPath) : __dirname;
-const CLOUDFLARED_DIR = path.join(BASE_DIR, 'cloudflared');
-const CLOUDFLARED_EXE = path.join(CLOUDFLARED_DIR, 'cloudflared.exe');
-const TUNNEL_CONFIG_PATH = path.join(CLOUDFLARED_DIR, 'tunnel_config.json');
+const DATA_DIR = process.env.NAS_DATA_DIR || __dirname;
+const TUNNEL_CONFIG_PATH = path.join(DATA_DIR, 'tunnel_config.json');
+
+function resolveCloudflaredPath() {
+  const candidates = [
+    // 1. Explicit environment variable
+    process.env.CLOUDFLARED_PATH,
+    // 2. Electron unpacked / resources directory
+    process.resourcesPath ? path.join(process.resourcesPath, 'cloudflared', 'cloudflared.exe') : null,
+    process.resourcesPath ? path.join(process.resourcesPath, 'app.asar.unpacked', 'cloudflared', 'cloudflared.exe') : null,
+    process.resourcesPath ? path.join(process.resourcesPath, 'cloudflared.exe') : null,
+    // 3. User Data Directory
+    path.join(DATA_DIR, 'cloudflared', 'cloudflared.exe'),
+    path.join(DATA_DIR, 'cloudflared.exe'),
+    // 4. Source tree
+    path.join(__dirname, 'cloudflared', 'cloudflared.exe'),
+    // 5. PKG standalone binary dir
+    process.pkg ? path.join(path.dirname(process.execPath), 'cloudflared', 'cloudflared.exe') : null
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return path.join(DATA_DIR, 'cloudflared', 'cloudflared.exe');
+}
+
+let CLOUDFLARED_EXE = resolveCloudflaredPath();
+let CLOUDFLARED_DIR = path.dirname(CLOUDFLARED_EXE);
 
 // In-memory tunnel state
 let tunnelProcess = null;
@@ -17,8 +41,13 @@ let tunnelError = null;
 
 function getNamedTunnelConfig() {
   try {
-    if (fs.existsSync(TUNNEL_CONFIG_PATH)) {
-      const raw = fs.readFileSync(TUNNEL_CONFIG_PATH, 'utf8');
+    // Check DATA_DIR first, fallback to legacy path in source
+    const configPath = fs.existsSync(TUNNEL_CONFIG_PATH)
+      ? TUNNEL_CONFIG_PATH
+      : path.join(__dirname, 'cloudflared', 'tunnel_config.json');
+
+    if (fs.existsSync(configPath)) {
+      const raw = fs.readFileSync(configPath, 'utf8');
       const cfg = JSON.parse(raw);
       if (cfg) {
         if (!cfg.customUrl || cfg.customUrl.includes('eu.org')) {
@@ -35,8 +64,8 @@ function getNamedTunnelConfig() {
 
 function saveNamedTunnelConfig(config) {
   try {
-    if (!fs.existsSync(CLOUDFLARED_DIR)) {
-      fs.mkdirSync(CLOUDFLARED_DIR, { recursive: true });
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
     }
     fs.writeFileSync(TUNNEL_CONFIG_PATH, JSON.stringify(config, null, 2));
   } catch (err) {
@@ -49,6 +78,9 @@ function saveNamedTunnelConfig(config) {
  * @returns {Promise<string>} Path to the cloudflared executable.
  */
 async function ensureCloudflared() {
+  CLOUDFLARED_EXE = resolveCloudflaredPath();
+  CLOUDFLARED_DIR = path.dirname(CLOUDFLARED_EXE);
+
   if (fs.existsSync(CLOUDFLARED_EXE)) {
     return CLOUDFLARED_EXE;
   }

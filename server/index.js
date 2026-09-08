@@ -12,7 +12,11 @@ const bcrypt = require('bcryptjs');
 
 const rateLimit = require('express-rate-limit');
 
-const BASE_DIR = process.pkg ? path.dirname(process.execPath) : __dirname;
+const DATA_DIR = process.env.NAS_DATA_DIR || (process.pkg ? path.dirname(process.execPath) : __dirname);
+if (!fs.existsSync(DATA_DIR)) {
+  try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch {}
+}
+const BASE_DIR = DATA_DIR;
 
 // Rate Limiter for Authentication Endpoints (10 requests per 15 mins per IP)
 const authLimiter = rateLimit({
@@ -24,7 +28,7 @@ const authLimiter = rateLimit({
 });
 
 // Configure upload temp storage
-const uploadTempDir = path.join(BASE_DIR, 'temp_uploads');
+const uploadTempDir = path.join(DATA_DIR, 'temp_uploads');
 if (!fs.existsSync(uploadTempDir)) {
   fs.mkdirSync(uploadTempDir, { recursive: true });
 }
@@ -34,7 +38,7 @@ const upload = multer({
 });
 
 // 1. Auto-generate .env on first run if it doesn't exist
-const envPath = path.join(BASE_DIR, '.env');
+const envPath = path.join(DATA_DIR, '.env');
 let isFirstRunSetup = false;
 let initialGeneratedPasscode = null;
 if (!fs.existsSync(envPath)) {
@@ -225,6 +229,74 @@ function isPathAllowed(targetPath, allowedDisks) {
     return cleanTarget.startsWith(normDisk);
   });
 }
+
+// ─── 2.5 SETUP / ONBOARDING WIZARD ENDPOINTS ────────────────────────────────
+app.get('/api/setup/status', async (req, res) => {
+  try {
+    const hasUsers = usersService.hasAnyUsers();
+    const drives = await getDrives();
+    const tunnelConfig = getNamedTunnelConfig();
+    res.json({
+      needsSetup: !hasUsers,
+      hasUsers,
+      drives,
+      defaultTunnelUrl: tunnelConfig.customUrl || 'https://mynas-hi.online'
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/setup/complete', authLimiter, async (req, res) => {
+  try {
+    if (usersService.hasAnyUsers()) {
+      return res.status(403).json({ error: 'Setup has already been completed. Please log in.' });
+    }
+
+    const { username, email, password, storageDrive, tunnelToken, customUrl } = req.body;
+    if (!username || username.length < 3) {
+      return res.status(400).json({ error: 'Username must be at least 3 characters' });
+    }
+    if (!password || password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+
+    // 1. Create first user as Admin (always verified when created during initial setup)
+    const result = await usersService.createUser({ username, email, password, role: 'admin' });
+    logActivity('auth', 'Initial Admin account configured via Setup Wizard: ' + username, username);
+
+    // 2. Configure Cloudflare Tunnel if token provided
+    if (tunnelToken && tunnelToken.trim().length > 10) {
+      const cleanUrl = customUrl ? customUrl.trim() : 'https://mynas-hi.online';
+      saveNamedTunnelConfig({ mode: 'named', token: tunnelToken.trim(), customUrl: cleanUrl });
+      startTunnel({ mode: 'named', token: tunnelToken.trim(), customUrl: cleanUrl }).catch(e => {
+        console.warn('[Setup] Background tunnel launch notice:', e.message);
+      });
+      logActivity('system', `Cloudflare Tunnel configured with domain ${cleanUrl}`, username);
+    }
+
+    // 3. Issue Admin JWT Session Token
+    const token = jwt.sign({
+      authenticated: true,
+      id: result.user.id,
+      username: result.user.username,
+      role: 'admin',
+      isReadonly: false,
+      allowedDisks: null
+    }, JWT_SECRET, { expiresIn: '7d' });
+
+    res.json({
+      success: true,
+      message: 'Setup completed successfully!',
+      token,
+      username: result.user.username,
+      user: result.user
+    });
+  } catch (err) {
+    console.error('Setup wizard error:', err);
+    res.status(400).json({ error: err.message || 'Setup wizard failed' });
+  }
+});
 
 // ─── 3. AUTH ENDPOINTS ────────────────────────────────────────────────────────
 

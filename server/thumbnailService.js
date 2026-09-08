@@ -7,8 +7,8 @@ try {
 } catch (e) {
   console.warn('sharp library optional load warning:', e.message);
 }
-
-const CACHE_DIR = path.join(__dirname, '.nas_cache', 'thumbnails');
+const DATA_DIR = process.env.NAS_DATA_DIR || __dirname;
+const CACHE_DIR = path.join(DATA_DIR, '.nas_cache', 'thumbnails');
 
 function ensureCacheDir() {
   if (!fs.existsSync(CACHE_DIR)) {

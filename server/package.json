@@ -8,7 +8,11 @@
   "scripts": {
     "start": "node index.js",
     "desktop": "electron .",
-    "dist": "electron-builder --win nsis"
+    "icons": "node build-assets/generate-icons.js",
+    "dist": "npm run icons && electron-builder --win nsis",
+    "dist:exe": "npm run icons && electron-builder --win nsis",
+    "dist:store": "npm run icons && electron-builder --win appx",
+    "dist:all": "npm run icons && electron-builder --win nsis appx"
   },
   "dependencies": {
     "archiver": "^8.0.0",
@@ -34,8 +38,10 @@
   "build": {
     "appId": "com.irfan.personalnas",
     "productName": "Personal NAS",
+    "npmRebuild": false,
     "directories": {
-      "output": "dist"
+      "output": "dist",
+      "buildResources": "build"
     },
     "files": [
       "main.js",
@@ -53,11 +59,31 @@
       "public/**/*",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": "cloudflared/cloudflared.exe",
+        "to": "cloudflared/cloudflared.exe"
+      }
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "**/better-sqlite3/**",
+      "**/sharp/**",
+      "**/cloudflared/**"
+    ],
     "win": {
-      "target": "nsis",
-      "icon": "public/favicon.png"
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "appx",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "build/icon.ico"
     },
-    "npmRebuild": false,
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
@@ -65,6 +91,15 @@
       "createStartMenuShortcut": true,
       "shortcutName": "Personal NAS",
       "runAfterFinish": true
+    },
+    "appx": {
+      "identityName": "Irfan.PersonalNAS",
+      "applicationId": "Irfan.PersonalNAS",
+      "publisher": "CN=Irfan",
+      "publisherDisplayName": "Irfan",
+      "displayName": "Personal NAS",
+      "backgroundColor": "#0B0F17",
+      "showNameOnTiles": true
     }
   }
 }

@@ -3790,14 +3790,177 @@ async function init() {
       Auth.clear();
     }
   }
-  showLogin();
+
+  bindSetupWizardEvents();
+
   try {
-    const statusRes = await fetch('/api/auth/status');
+    const statusRes = await fetch('/api/setup/status');
     const statusData = await statusRes.json();
-    if (statusData.hasUsers === false) {
-      document.querySelector('.auth-tab[data-tab="register"]')?.click();
+    if (statusData.needsSetup || statusData.hasUsers === false) {
+      await openSetupWizard();
+      return;
     }
   } catch (e) {}
+
+  showLogin();
+}
+
+// ─── FIRST-RUN SETUP WIZARD CONTROLLER ────────────────────────
+let wizardState = {
+  username: '',
+  email: '',
+  password: '',
+  storageDrive: 'C:\\',
+  customUrl: 'https://mynas-hi.online',
+  drives: []
+};
+
+async function openSetupWizard() {
+  const wizardOverlay = document.getElementById('setup-wizard-overlay');
+  const loginOverlay = document.getElementById('login-overlay');
+  if (!wizardOverlay) return;
+
+  if (loginOverlay) loginOverlay.classList.add('hidden');
+  wizardOverlay.classList.remove('hidden');
+
+  try {
+    const res = await fetch('/api/setup/status');
+    const data = await res.json();
+    wizardState.drives = data.drives || [];
+    if (data.defaultTunnelUrl) wizardState.customUrl = data.defaultTunnelUrl;
+    renderWizardDrives();
+  } catch (err) {
+    console.warn('Failed to fetch setup drives:', err);
+  }
+}
+
+function renderWizardDrives() {
+  const container = document.getElementById('wiz-drives-container');
+  if (!container) return;
+
+  if (wizardState.drives.length === 0) {
+    container.innerHTML = '<div style="color:#94A3B8; font-size:12px; padding:8px;">Drive C: (Default Storage)</div>';
+    wizardState.storageDrive = 'C:\\';
+    return;
+  }
+
+  container.innerHTML = wizardState.drives.map((d, i) => {
+    const letter = d.letter || d.mounted || 'C:';
+    const isChecked = i === 0 ? 'checked' : '';
+    if (i === 0) wizardState.storageDrive = letter;
+    const label = d.name ? `${d.name} (${letter})` : `Local Disk (${letter})`;
+    const size = d.size ? ` — ${d.size}` : '';
+    return `
+      <label style="display:flex; align-items:center; gap:10px; padding:10px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:10px; cursor:pointer;">
+        <input type="radio" name="wiz_drive" value="${letter}" ${isChecked} onchange="wizardState.storageDrive = this.value" style="accent-color:#00D4FF;" />
+        <div style="font-size:13px; font-weight:600; color:#F8FAFC;">
+          💾 ${label} <span style="font-size:11px; color:#94A3B8;">${size}</span>
+        </div>
+      </label>
+    `;
+  }).join('');
+}
+
+function showWizardStep(stepNum) {
+  [1, 2, 3].forEach(n => {
+    const stepDiv = document.getElementById(`wizard-step-${n}`);
+    const stepPill = document.getElementById(`wizard-step-pill-${n}`);
+    if (stepDiv) stepDiv.classList.toggle('hidden', n !== stepNum);
+    if (stepPill) {
+      if (n === stepNum) {
+        stepPill.style.background = 'rgba(0,212,255,0.2)';
+        stepPill.style.color = '#00D4FF';
+        stepPill.style.borderColor = '#00D4FF';
+      } else {
+        stepPill.style.background = 'rgba(255,255,255,0.05)';
+        stepPill.style.color = '#94A3B8';
+        stepPill.style.borderColor = 'rgba(255,255,255,0.1)';
+      }
+    }
+  });
+  const errEl = document.getElementById('wizard-error');
+  if (errEl) errEl.classList.add('hidden');
+}
+
+function bindSetupWizardEvents() {
+  const errEl = document.getElementById('wizard-error');
+  const showErr = (msg) => {
+    if (errEl) {
+      errEl.textContent = msg;
+      errEl.classList.remove('hidden');
+    }
+  };
+
+  // Step 1 -> Step 2
+  document.getElementById('wiz-next-1')?.addEventListener('click', () => {
+    const u = document.getElementById('wiz-username')?.value.trim();
+    const p = document.getElementById('wiz-password')?.value;
+    const c = document.getElementById('wiz-confirm')?.value;
+    const e = document.getElementById('wiz-email')?.value.trim();
+
+    if (!u || u.length < 3) return showErr('Username must be at least 3 characters.');
+    if (!p || p.length < 6) return showErr('Password must be at least 6 characters.');
+    if (p !== c) return showErr('Passwords do not match.');
+
+    wizardState.username = u;
+    wizardState.password = p;
+    wizardState.email = e;
+    showWizardStep(2);
+  });
+
+  // Step 2 Back & Next
+  document.getElementById('wiz-back-2')?.addEventListener('click', () => showWizardStep(1));
+  document.getElementById('wiz-next-2')?.addEventListener('click', () => showWizardStep(3));
+
+  // Step 3 Back
+  document.getElementById('wiz-back-3')?.addEventListener('click', () => showWizardStep(2));
+
+  // Step 3 Finish
+  const finishSetup = async (skipTunnel = false) => {
+    const spinner = document.getElementById('wiz-finish-spinner');
+    const text = document.getElementById('wiz-finish-text');
+    if (spinner) spinner.classList.remove('hidden');
+    if (text) text.style.opacity = '0.5';
+
+    const token = skipTunnel ? '' : (document.getElementById('wiz-tunnel-token')?.value.trim() || '');
+    const url = document.getElementById('wiz-tunnel-url')?.value.trim() || 'https://mynas-hi.online';
+
+    try {
+      const resp = await fetch('/api/setup/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: wizardState.username,
+          password: wizardState.password,
+          email: wizardState.email,
+          storageDrive: wizardState.storageDrive,
+          tunnelToken: token,
+          customUrl: url
+        })
+      });
+
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Setup failed');
+
+      Auth.setToken(data.token);
+      localStorage.setItem('nas_user', data.username);
+      if (data.user) localStorage.setItem('nas_user_info', JSON.stringify(data.user));
+
+      document.getElementById('setup-wizard-overlay')?.classList.add('hidden');
+      bindThemeSwitches();
+      showApp();
+      await loadSystemInfo();
+      navigate('dashboard');
+    } catch (e) {
+      showErr(e.message || 'Setup completion failed');
+    } finally {
+      if (spinner) spinner.classList.add('hidden');
+      if (text) text.style.opacity = '1';
+    }
+  };
+
+  document.getElementById('wiz-finish-btn')?.addEventListener('click', () => finishSetup(false));
+  document.getElementById('wiz-skip-btn')?.addEventListener('click', () => finishSetup(true));
 }
 
 document.addEventListener('DOMContentLoaded', init);
