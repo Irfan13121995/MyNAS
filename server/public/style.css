@@ -305,6 +305,56 @@ label { display: block; font-size: 11px; font-weight: 700; color: var(--text-sec
   box-shadow: var(--glass-shadow-lg), 0 0 35px rgba(0, 212, 255, 0.22);
 }
 
+/* ── 6.5 DATA TABLES & REGISTERED USERS TABLE ──────────────────────────────── */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 13.5px;
+}
+.table th {
+  padding: 16px 20px;
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  border-bottom: 1.5px solid var(--border);
+  white-space: nowrap;
+}
+.table td {
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--border-light);
+  vertical-align: middle;
+  color: var(--text-primary);
+}
+.table tr:last-child td {
+  border-bottom: none;
+  padding-bottom: 28px;
+}
+.table th:first-child,
+.table td:first-child {
+  padding-left: 32px;
+}
+.table th:last-child,
+.table td:last-child {
+  padding-right: 32px;
+}
+.table tbody tr {
+  transition: background 0.15s ease;
+}
+.table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+[data-theme='light'] .table tbody tr:hover {
+  background: rgba(0, 0, 0, 0.025);
+}
+
+.table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
 /* ── SECTION TITLE ──────────────────────────────────────────────────────────── */
 .section-header {
   display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 8px;
@@ -653,47 +703,66 @@ label { display: block; font-size: 11px; font-weight: 700; color: var(--text-sec
 .sidebar.collapsed .nav-item span { display: none; }
 
 .sidebar-footer {
-  padding: 18px 14px 22px;
+  padding: 14px 14px 18px;
   border-top: 1px solid var(--border-light);
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
   gap: 8px;
 }
-.sidebar-server-info {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--text-secondary);
-  min-width: 0;
+.sidebar-footer .btn {
+  justify-content: flex-start;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
   font-weight: 600;
+  transition: var(--transition);
+  border: 1px solid transparent;
+  width: 100%;
 }
-.sidebar-server-info span { truncate; }
+.sidebar-footer .btn .nav-icon {
+  width: 18px;
+  height: 18px;
+  margin-right: 10px;
+  flex-shrink: 0;
+}
+#switch-account-btn:hover {
+  background: var(--accent-dim);
+  color: var(--accent);
+  border-color: rgba(0, 212, 255, 0.35);
+  box-shadow: 0 0 16px rgba(0, 212, 255, 0.2);
+}
+#logout-btn:hover {
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.25);
+}
 
 .sidebar.collapsed .sidebar-footer {
   flex-direction: column;
-  padding: 16px 0 20px;
+  padding: 14px 0 18px;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   width: 100%;
 }
-.sidebar.collapsed #sidebar-ip { display: none; }
+.sidebar.collapsed #switch-account-btn,
 .sidebar.collapsed #logout-btn {
-  width: 48px;
-  height: 48px;
-  min-width: 48px;
-  min-height: 48px;
-  max-width: 48px;
-  max-height: 48px;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  max-width: 44px;
+  max-height: 44px;
   padding: 0;
   margin: 0 auto;
-  border-radius: 16px; /* Perfect Squircle */
+  border-radius: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
 }
+.sidebar.collapsed #switch-account-btn span,
 .sidebar.collapsed #logout-btn span { display: none; }
+.sidebar.collapsed #switch-account-btn .nav-icon,
 .sidebar.collapsed #logout-btn .nav-icon {
   margin: 0 auto;
 }
@@ -1449,7 +1518,8 @@ label { display: block; font-size: 11px; font-weight: 700; color: var(--text-sec
   .sidebar.collapsed { width: var(--sidebar-width); }
   .sidebar.collapsed .sidebar-logo-text,
   .sidebar.collapsed .nav-item span,
-  .sidebar.collapsed #sidebar-ip { display: block; }
+  .sidebar.collapsed #switch-account-btn span,
+  .sidebar.collapsed #logout-btn span { display: block; }
   
   .topbar { padding: 0 14px; border-radius: var(--radius-lg); }
   .topbar-title { font-size: 16px; }

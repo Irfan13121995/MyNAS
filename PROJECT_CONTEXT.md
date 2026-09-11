@@ -19,6 +19,8 @@ A self-hosted, enterprise-grade Personal NAS ecosystem providing unified private
   - Registered NAS Users management panel with interactive circular arc storage gauges.
   - Cloudflare Permanent Named Tunnel configuration (`mynas-hi.online`) accessible to non-admin & admin users with bundled `cloudflared.exe`.
   - User-specific mobile pairing QR code embedding session JWT tokens for seamless 1-tap mobile auto-login.
+  - Dual "Switch Account" and "Logout" actions in sidebar footer with instant credential refocus and state reset.
+  - Generous 32px/28px breathing-room data tables with 2px card borders, squircle styling, and subtle hover rows for Admin Registered Users and Audit Logs.
   - Hidden plain-text passcode security across UI elements.
 - **Mobile App:**
   - **TopBar Header:** Persistent top bar featuring the square `myNAS` logo on the left and live user badge (`👤 <username>`) on the right.

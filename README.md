@@ -19,6 +19,8 @@ The **Personal NAS** is a private, self-hosted cloud storage and media server de
 - **Granular User & Disk Access Management:** Admin panel to manage users, assign per-user allowed storage disks (e.g. `C:`, `G:`), and enforce read-only vs. read-write permissions.
 - **Multi-File & Complete Folder Uploads:** Interactive Apple Liquid Glass drag-and-drop upload zone supporting simultaneous multi-file selection, full recursive folder uploads with directory hierarchy preservation (`webkitdirectory` / DirectoryReader), live item staging preview, and high-speed parallel uploads with progress tracking.
 - **Passcode Privacy:** Zero plain-text passcode exposure across the UI with encrypted security status pills.
+- **Dual Switch Account & Logout Actions:** Streamlined account switching and logout controls in the sidebar navigation footer with instant credential refocus and session reset.
+- **Refined Data Tables:** Generous 32px/28px breathing-room tables with defined borders and smooth hover states for Registered Users management and system logs.
 - **Cropped 1:1 Brand Logo:** Modernized square logo presentation across Web Dashboard and Mobile App.
 
 ### 2. 📱 Android & iOS Mobile App

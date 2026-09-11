@@ -17,6 +17,7 @@ Mobile Backups/
 *.bak
 cloudflared/
 users.json
+tunnel_config.json
 .nas_cache/
 .nas_trash/
 

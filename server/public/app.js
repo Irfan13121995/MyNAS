@@ -64,9 +64,9 @@ async function admin(content) {
       </div>
 
       <div id="admin-tab-users" class="admin-tab-content active">
-        <div class="card" style="padding:0;overflow:hidden">
-          <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
-            <h4 style="margin:0">Registered Users</h4>
+        <div class="card" style="padding:0;overflow:hidden;border:2px solid var(--border);border-radius:var(--radius-squircle);box-shadow:var(--glass-shadow)">
+          <div style="padding:20px 32px;border-bottom:1.5px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+            <h4 style="margin:0;font-size:16px;font-weight:700">Registered Users</h4>
             <span id="user-count-badge" class="badge" style="background:var(--accent-dim);color:var(--accent)">Loading...</span>
           </div>
           <div style="overflow-x:auto">
@@ -756,8 +756,8 @@ async function loadSystemInfo() {
   const r = await GET('/api/system');
   if (!r || !r.ok) return;
   const s = r.data;
-  const ip = s.ipAddresses?.[0] || 'localhost';
-  document.getElementById('sidebar-ip').textContent = ip;
+  const sidebarIp = document.getElementById('sidebar-ip');
+  if (sidebarIp) sidebarIp.textContent = ip;
 
   let userInfo = {};
   try { userInfo = JSON.parse(localStorage.getItem('nas_user_info') || '{}'); } catch(e) {}
@@ -3758,9 +3758,57 @@ async function init() {
     }
   });
 
-  document.getElementById('logout-btn').addEventListener('click', () => {
+  document.getElementById('switch-account-btn')?.addEventListener('click', () => {
     Auth.clear();
+    localStorage.removeItem('nas_user');
+    localStorage.removeItem('nas_user_info');
+    
+    // Clear inputs in login form
+    const usernameInput = document.getElementById('username-input');
+    const passwordInput = document.getElementById('password-input');
+    const pinInputs = document.querySelectorAll('.pin-box');
+    if (usernameInput) usernameInput.value = '';
+    if (passwordInput) passwordInput.value = '';
+    pinInputs.forEach(input => input.value = '');
+    const passcodeInput = document.getElementById('passcode-input');
+    if (passcodeInput) passcodeInput.value = '';
+
+    // Reset heading & error
+    const authHeading = document.getElementById('auth-heading');
+    if (authHeading) authHeading.textContent = 'Switch Account';
+    const loginError = document.getElementById('login-error');
+    if (loginError) {
+      loginError.textContent = '';
+      loginError.classList.add('hidden');
+    }
+
+    // Switch to Login tab
+    document.querySelectorAll('.auth-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.auth-tab-content').forEach(c => c.classList.remove('active'));
+    document.querySelector('.auth-tab[data-tab="login"]')?.classList.add('active');
+    document.getElementById('tab-login')?.classList.add('active');
+
     showLogin();
+    setTimeout(() => {
+      if (usernameInput) usernameInput.focus();
+    }, 150);
+  });
+
+  document.getElementById('logout-btn')?.addEventListener('click', () => {
+    Auth.clear();
+    localStorage.removeItem('nas_user');
+    localStorage.removeItem('nas_user_info');
+
+    const authHeading = document.getElementById('auth-heading');
+    if (authHeading) authHeading.textContent = 'Welcome back';
+    const loginError = document.getElementById('login-error');
+    if (loginError) {
+      loginError.textContent = '';
+      loginError.classList.add('hidden');
+    }
+
+    showLogin();
+    toast('Logged out successfully', 'info');
   });
 
   document.getElementById('sidebar-toggle').addEventListener('click', toggleSidebar);
