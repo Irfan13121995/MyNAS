@@ -983,6 +983,8 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
         <TouchableOpacity
           style={[styles.syncFab, { backgroundColor: colors.accent }]}
           activeOpacity={0.85}
+          accessibilityLabel="Sync to NAS"
+          accessibilityRole="button"
           onPress={() => {
             const mediaOnly = filteredMedia.filter(i => !i.isSectionHeader);
             const allKeys = mediaOnly.map(i => i.path || i.uri);
@@ -991,7 +993,7 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
             setUploadModalVisible(true);
           }}
         >
-          <Text style={styles.syncFabText}>🔄 Sync to NAS</Text>
+          <Text style={styles.syncFabIcon}>🔄</Text>
         </TouchableOpacity>
       )}
 
@@ -1857,14 +1859,16 @@ const getStyles = (colors) => StyleSheet.create({
     paddingBottom: 8,
   },
 
-  // SYNC FAB
+  // SYNC FAB (Circular Floating Action Button placed safely above the floating bottom dock)
   syncFab: {
     position: 'absolute',
-    bottom: 24,
+    bottom: Platform.OS === 'ios' ? 108 : 96,
     right: 20,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
+    width: 56,
+    height: 56,
     borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
     elevation: 8,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
@@ -1872,9 +1876,9 @@ const getStyles = (colors) => StyleSheet.create({
     shadowRadius: 8,
     zIndex: 100,
   },
-  syncFabText: {
-    color: '#0F172A',
-    fontSize: 14,
-    fontWeight: '800',
+  syncFabIcon: {
+    fontSize: 24,
+    lineHeight: 28,
+    textAlign: 'center',
   },
 });

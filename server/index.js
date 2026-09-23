@@ -128,17 +128,19 @@ app.use(cors({
     if (!origin) return callback(null, true);
 
     const savedConfig = tunnelService.getNamedTunnelConfig();
-    const customHost = savedConfig?.customUrl ? savedConfig.customUrl.replace(/^https?:\/\//, '') : '';
+    const customHost = savedConfig?.customUrl ? savedConfig.customUrl.replace(/^https?:\/\//, '').split('/')[0].split(':')[0] : '';
 
-    // Allow localhost, LAN IPs, Cloudflare domains, and custom tunnel domains
-    if (origin.match(/^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.|10\.)/)
-        || origin.endsWith('.trycloudflare.com')
-        || origin.endsWith('.cloudflare.com')
-        || (customHost && origin.includes(customHost))) {
+    // Allow localhost, LAN IPs (192.168.x.x, 10.x.x.x, 172.16-31.x.x, [::1]), Cloudflare domains, and custom tunnel domains
+    const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(origin);
+    const isLan = /^https?:\/\/(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/.test(origin);
+    const isCloudflare = origin.endsWith('.trycloudflare.com') || origin.endsWith('.cloudflare.com');
+    const isCustomHost = customHost && (origin === `https://${customHost}` || origin === `http://${customHost}` || origin.includes(`://${customHost}`));
+
+    if (isLocalhost || isLan || isCloudflare || isCustomHost) {
       return callback(null, true);
     }
-    // Fallback: allow requests from valid client connections
-    return callback(null, true);
+    // Block unauthorized origins
+    return callback(null, false);
   },
   credentials: true
 }));
@@ -1166,15 +1168,16 @@ app.post('/api/upload', authenticateToken, checkReadWrite, upload.single('file')
 app.post('/api/upload/chunk', authenticateToken, checkReadWrite, upload.single('chunk'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No chunk file provided' });
 
-  const fileId = req.headers['x-file-id'] || req.query.fileId;
-  const chunkIndex = parseInt(req.headers['x-chunk-index'] || req.query.chunkIndex || '0', 10);
-  const totalChunks = parseInt(req.headers['x-total-chunks'] || req.query.totalChunks || '1', 10);
-  const originalName = req.headers['x-filename'] || req.query.filename || req.file.originalname;
-  const destinationDir = req.query.destination;
+  const rawFileId = req.headers['x-file-id'] || req.query.fileId || req.body?.fileId || (req.body?.fileName ? `f_${Buffer.from(req.body.fileName).toString('hex').slice(0, 32)}` : null) || (req.file ? `f_${Buffer.from(req.file.originalname).toString('hex').slice(0, 32)}` : null) || `upload_${Date.now()}`;
+  const fileId = String(rawFileId).replace(/[^a-zA-Z0-9_-]/g, '');
+  const chunkIndex = parseInt(req.headers['x-chunk-index'] || req.query.chunkIndex || req.body?.chunkIndex || '0', 10);
+  const totalChunks = parseInt(req.headers['x-total-chunks'] || req.query.totalChunks || req.body?.totalChunks || '1', 10);
+  const originalName = req.headers['x-filename'] || req.query.filename || req.body?.fileName || req.file.originalname;
+  const destinationDir = req.query.destination || req.body?.destination;
 
-  if (!fileId || !destinationDir) {
+  if (!fileId || !destinationDir || !originalName) {
     try { await fs.promises.unlink(req.file.path); } catch {}
-    return res.status(400).json({ error: 'Missing fileId or destination parameter' });
+    return res.status(400).json({ error: 'Missing fileId, destination, or fileName parameter' });
   }
 
   // Check if destination is a RAID volume
@@ -1190,7 +1193,7 @@ app.post('/api/upload/chunk', authenticateToken, checkReadWrite, upload.single('
     raidVol = volumes.find(v => v.name.toLowerCase() === destinationDir.toLowerCase() || (v.mount_point && v.mount_point.toUpperCase() === destinationDir.toUpperCase()));
   }
 
-  const chunkDir = path.join(__dirname, 'temp_uploads', 'chunks', fileId.replace(/[^a-zA-Z0-9_-]/g, ''));
+  const chunkDir = path.join(__dirname, 'temp_uploads', 'chunks', fileId);
 
   try {
     await safeEnsureDir(chunkDir);
@@ -1268,10 +1271,10 @@ app.post('/api/upload/chunk', authenticateToken, checkReadWrite, upload.single('
       // Clean up chunk directory
       await fs.promises.rmdir(chunkDir).catch(() => {});
 
-      return res.json({ success: true, completed: true, path: finalPath });
+      return res.json({ success: true, completed: true, complete: true, path: finalPath });
     }
 
-    res.json({ success: true, completed: false, chunkIndex, totalChunks });
+    res.json({ success: true, completed: false, complete: false, chunkIndex, totalChunks, chunksReceived: files.length });
   } catch (err) {
     try { await fs.promises.unlink(req.file.path); } catch {}
     res.status(500).json({ error: `Chunk upload failed: ${err.message}` });
@@ -1282,7 +1285,7 @@ app.post('/api/upload/chunk', authenticateToken, checkReadWrite, upload.single('
 
 app.get('/api/tunnel/status', authenticateToken, (req, res) => res.json(getTunnelStatus()));
 
-app.post('/api/tunnel/start', authenticateToken, async (req, res) => {
+app.post('/api/tunnel/start', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { mode, token, customUrl } = req.body || {};
     const savedConfig = getNamedTunnelConfig();
@@ -1299,7 +1302,7 @@ app.post('/api/tunnel/start', authenticateToken, async (req, res) => {
   }
 });
 
-app.post('/api/tunnel/configure-named', authenticateToken, async (req, res) => {
+app.post('/api/tunnel/configure-named', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { token, customUrl } = req.body || {};
     if (!token) {
@@ -1318,7 +1321,7 @@ app.post('/api/tunnel/configure-named', authenticateToken, async (req, res) => {
   }
 });
 
-app.post('/api/tunnel/stop', authenticateToken, (req, res) => {
+app.post('/api/tunnel/stop', authenticateToken, requireAdmin, (req, res) => {
   stopTunnel();
   logActivity('tunnel', 'Tunnel deactivated', req.user?.username);
   res.json({ success: true });
@@ -1546,9 +1549,13 @@ app.post('/api/sync/settings', authenticateToken, (req, res) => {
 });
 
 // Validate target directory availability, write permissions, and available disk space
-app.post('/api/sync/validate-target', authenticateToken, async (req, res) => {
+app.post('/api/sync/validate-target', authenticateToken, checkReadWrite, async (req, res) => {
   const { destination, requiredBytes } = req.body || {};
   if (!destination) return res.status(400).json({ error: 'destination is required' });
+
+  if (!isPathAllowed(destination, req.user?.allowedDisks)) {
+    return res.status(403).json({ error: 'Access Denied: You do not have permission to sync to this drive or directory.' });
+  }
 
   try {
     const validatedDir = await validatePath(destination);
@@ -1589,6 +1596,10 @@ app.get('/api/sync/manifest', authenticateToken, async (req, res) => {
   const folder = req.query.folder;
   if (!folder) return res.status(400).json({ error: 'folder query parameter is required' });
 
+  if (!isPathAllowed(folder, req.user?.allowedDisks)) {
+    return res.status(403).json({ error: 'Access Denied: You do not have permission to view this directory manifest.' });
+  }
+
   try {
     const validatedPath = await validatePath(folder);
     const fsSync = require('fs');
@@ -1612,65 +1623,6 @@ app.get('/api/sync/manifest', authenticateToken, async (req, res) => {
     res.json({ files: manifest, folder: validatedPath });
   } catch (err) {
     res.status(403).json({ error: err.message });
-  }
-});
-
-// Chunked upload endpoint — receives file chunks and assembles them
-app.post('/api/upload/chunk', authenticateToken, upload.single('chunk'), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No chunk data' });
-
-  const { fileName, chunkIndex, totalChunks, destination } = req.body;
-  if (!fileName || chunkIndex === undefined || !totalChunks || !destination) {
-    try { await fs.promises.unlink(req.file.path); } catch {}
-    return res.status(400).json({ error: 'fileName, chunkIndex, totalChunks, and destination are required' });
-  }
-
-  try {
-    const validatedDir = await validatePath(destination);
-    const chunksDir = path.join(uploadTempDir, `chunks_${Buffer.from(fileName).toString('hex')}`);
-    await fs.promises.mkdir(chunksDir, { recursive: true });
-
-    // Move chunk to chunks staging area
-    const chunkPath = path.join(chunksDir, `chunk_${String(chunkIndex).padStart(6, '0')}`);
-    await fs.promises.rename(req.file.path, chunkPath);
-
-    const idx = parseInt(chunkIndex);
-    const total = parseInt(totalChunks);
-
-    // Check if all chunks received
-    const existingChunks = await fs.promises.readdir(chunksDir);
-    if (existingChunks.length >= total) {
-      // Assemble final file
-      await fs.promises.mkdir(validatedDir, { recursive: true });
-      const finalPath = path.join(validatedDir, fileName);
-      const writeStream = require('fs').createWriteStream(finalPath);
-
-      for (let i = 0; i < total; i++) {
-        const cp = path.join(chunksDir, `chunk_${String(i).padStart(6, '0')}`);
-        const chunkData = await fs.promises.readFile(cp);
-        writeStream.write(chunkData);
-      }
-      writeStream.end();
-
-      await new Promise((resolve, reject) => {
-        writeStream.on('finish', resolve);
-        writeStream.on('error', reject);
-      });
-
-      // Cleanup chunks
-      for (const f of existingChunks) {
-        await fs.promises.unlink(path.join(chunksDir, f)).catch(() => {});
-      }
-      await fs.promises.rmdir(chunksDir).catch(() => {});
-
-      logActivity('upload', `Chunked upload complete: ${fileName}`, req.user?.username);
-      return res.json({ success: true, complete: true, path: finalPath });
-    }
-
-    res.json({ success: true, complete: false, chunksReceived: existingChunks.length, totalChunks: total });
-  } catch (err) {
-    try { await fs.promises.unlink(req.file.path); } catch {}
-    res.status(500).json({ error: err.message });
   }
 });
 

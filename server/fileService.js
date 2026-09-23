@@ -57,9 +57,10 @@ async function validatePath(targetPath) {
 
   const resolvedPath = path.resolve(formatted);
 
-  // Enforce Path Traversal Check
-  if (targetPath.includes('..') && !resolvedPath.startsWith(path.normalize(formatted))) {
-    throw new Error('Access Denied: Directory traversal is forbidden');
+  // Enforce Path Traversal Check: Reject any path containing '..' traversal segments
+  const pathSegments = targetPath.split(/[\\\/]/);
+  if (pathSegments.some(segment => segment.trim() === '..')) {
+    throw new Error('Access Denied: Directory traversal sequences (..) are forbidden');
   }
 
   const drives = await getDrives();

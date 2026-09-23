@@ -2,6 +2,8 @@ import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+const SENSITIVE_KEYS = new Set(['nas_jwt_token', 'nas_passcode']);
+
 export async function setSecureItem(key, value) {
   try {
     if (value === null || value === undefined) {
@@ -22,7 +24,8 @@ export async function setSecureItem(key, value) {
     }
   } catch (err) {
     console.warn(`SecureStore write error for key ${key}:`, err.message);
-    if (value != null) {
+    // Never persist sensitive credentials like JWT tokens into plaintext AsyncStorage on native devices
+    if (value != null && !SENSITIVE_KEYS.has(key)) {
       await AsyncStorage.setItem(key, String(value));
     }
   }
