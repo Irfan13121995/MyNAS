@@ -1626,6 +1626,92 @@ app.get('/api/sync/manifest', authenticateToken, async (req, res) => {
   }
 });
 
+// Returns a set of unique filenames of all media already uploaded on the NAS (fast dedup)
+app.get('/api/sync/synced-filenames', authenticateToken, async (req, res) => {
+  try {
+    const fsSync = require('fs');
+    const folder = req.query.folder;
+    const filenameMap = new Map();
+
+    const addFilesFromDir = (dirPath) => {
+      try {
+        if (!fsSync.existsSync(dirPath)) return;
+        const entries = fsSync.readdirSync(dirPath, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isFile()) {
+            const lower = entry.name.toLowerCase();
+            if (!filenameMap.has(lower)) {
+              filenameMap.set(lower, entry.name);
+            }
+          }
+        }
+      } catch (e) {}
+    };
+
+    let primaryFolder = 'MobileUploads';
+
+    // 1. If explicit folder passed, scan it first
+    if (folder) {
+      try {
+        const validated = await validatePath(folder);
+        addFilesFromDir(validated);
+        primaryFolder = path.basename(validated);
+      } catch (e) {}
+    }
+
+    // 2. Scan standard RAID member disks for MobileUploads and NAS_Backup
+    try {
+      const volumes = dbService.getAllVolumes();
+      for (const vol of volumes) {
+        if (Array.isArray(vol.member_disks)) {
+          for (const disk of vol.member_disks) {
+            const cleanDisk = disk.replace(/[\/\\]+$/, '');
+            addFilesFromDir(path.join(cleanDisk + '\\', vol.name, 'MobileUploads'));
+            addFilesFromDir(path.join(cleanDisk + '\\', vol.name, 'NAS_Backup'));
+            addFilesFromDir(path.join(cleanDisk + '\\', 'MobileUploads'));
+            addFilesFromDir(path.join(cleanDisk + '\\', 'NAS_Backup'));
+          }
+        }
+      }
+    } catch (e) {}
+
+    // 3. Scan physical drives for MobileUploads and NAS_Backup
+    try {
+      const drives = await getDrives();
+      for (const d of drives) {
+        const dPath = (d.letter || '').replace(/[\/\\]+$/, '') + '\\';
+        addFilesFromDir(path.join(dPath, 'MobileUploads'));
+        addFilesFromDir(path.join(dPath, 'NAS_Backup'));
+        addFilesFromDir(path.join(dPath, 'myNAS', 'MobileUploads'));
+        addFilesFromDir(path.join(dPath, 'myNAS', 'NAS_Backup'));
+      }
+    } catch (e) {}
+
+    // 4. Incorporate gallery items
+    try {
+      const galleryItems = await getMediaGallery();
+      for (const item of galleryItems) {
+        if (item.name) {
+          const lower = item.name.toLowerCase();
+          if (!filenameMap.has(lower)) {
+            filenameMap.set(lower, item.name);
+          }
+        }
+      }
+    } catch (e) {}
+
+    const filenames = Array.from(filenameMap.keys());
+    res.json({
+      success: true,
+      count: filenames.length,
+      filenames,
+      primaryFolder
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── 11. API 404 & GLOBAL JSON ERROR HANDLERS ───────────────────────────────
 app.all('/api/*', (req, res) => {
   res.status(404).json({ error: `API endpoint not found: ${req.method} ${req.path}` });

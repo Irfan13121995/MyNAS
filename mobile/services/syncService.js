@@ -90,21 +90,35 @@ export async function getNewMediaToSync(serverUrl, token, syncFolder, mediaType)
     return { newFiles: [], totalOnDevice: 0, alreadySynced: 0, isExpoGo: true };
   }
 
-  // 1. Fetch server manifest
-  let serverManifest = [];
+  // 1. Fetch server filenames & manifest
+  let serverSet = new Set();
+  let serverFilenames = new Set();
   try {
-    const res = await fetch(`${serverUrl}/api/sync/manifest?folder=${encodeURIComponent(syncFolder)}`, {
+    const res = await fetch(`${serverUrl}/api/sync/synced-filenames?folder=${encodeURIComponent(syncFolder || 'MobileUploads')}`, {
       headers: { Authorization: `Bearer ${token}` }
     });
     if (res.ok) {
       const data = await res.json();
-      serverManifest = data.files || data;
+      if (Array.isArray(data.filenames)) {
+        serverFilenames = new Set(data.filenames.map(f => f.toLowerCase()));
+      }
     }
   } catch (err) {
-    console.warn('Failed to fetch server manifest', err);
+    console.warn('Failed to fetch server synced filenames', err);
   }
 
-  const serverSet = new Set(serverManifest.map(f => `${f.name}_${f.size}`));
+  try {
+    const res = await fetch(`${serverUrl}/api/sync/manifest?folder=${encodeURIComponent(syncFolder || 'MobileUploads')}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const files = data.files || data;
+      if (Array.isArray(files)) {
+        serverSet = new Set(files.map(f => `${f.name}_${f.size}`));
+      }
+    }
+  } catch (err) {}
 
   // 2. Scan device media
   const lastSyncTime = await AsyncStorage.getItem('autosync_last_sync_time');
@@ -144,6 +158,12 @@ export async function getNewMediaToSync(serverUrl, token, syncFolder, mediaType)
 
   for (const asset of localAssets) {
     try {
+      const fname = (asset.filename || '').toLowerCase();
+      if (serverFilenames.has(fname)) {
+        alreadySynced++;
+        continue;
+      }
+
       const info = await MediaLibrary.getAssetInfoAsync(asset);
       if (!info) continue;
 

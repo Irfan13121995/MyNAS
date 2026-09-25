@@ -11,11 +11,18 @@ export default function CircularGauge({ percentage = 0, size = 68, strokeWidth =
     color = '#F59E0B'; // yellow
   }
 
-  // Pure React Native Ring — 100% Native compatibility, 0 external SVG dependencies!
-  const topColor = color;
-  const rightColor = pct >= 25 ? color : 'transparent';
-  const bottomColor = pct >= 50 ? color : 'transparent';
-  const leftColor = pct >= 75 ? color : 'transparent';
+  const half = size / 2;
+  const theta = (pct / 100) * 360;
+
+  // Right half covers 0 to 180 degrees (0% to 50%)
+  const rightAngle = Math.min(180, theta) - 135;
+
+  // Left half covers 180 to 360 degrees (50% to 100%)
+  const hasLeftHalf = theta > 180;
+  const leftAngle = hasLeftHalf ? (theta - 180) - 135 : -135;
+
+  // Display text: accurate fractional display if 0 < pct < 1
+  const displayText = pct === 0 ? '0%' : (pct < 1 ? `${pct.toFixed(1)}%` : `${Math.round(pct)}%`);
 
   return (
     <View style={[{ width: size, height: size }, styles.container]}>
@@ -24,31 +31,78 @@ export default function CircularGauge({ percentage = 0, size = 68, strokeWidth =
         style={{
           width: size,
           height: size,
-          borderRadius: size / 2,
+          borderRadius: half,
           borderWidth: strokeWidth,
           borderColor: 'rgba(255, 255, 255, 0.08)',
           position: 'absolute',
         }}
       />
-      {/* Active Arc Highlight Ring */}
-      <View
-        style={{
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-          borderWidth: strokeWidth,
-          borderColor: 'transparent',
-          borderTopColor: topColor,
-          borderRightColor: rightColor,
-          borderBottomColor: bottomColor,
-          borderLeftColor: leftColor,
-          transform: [{ rotate: '-45deg' }],
-          position: 'absolute',
-        }}
-      />
+
+      {/* Right Half Arc (0% - 50%) */}
+      {pct > 0 && (
+        <View
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: half,
+            width: half,
+            height: size,
+            overflow: 'hidden',
+          }}
+        >
+          <View
+            style={{
+              width: size,
+              height: size,
+              borderRadius: half,
+              borderWidth: strokeWidth,
+              borderColor: 'transparent',
+              borderTopColor: color,
+              borderRightColor: color,
+              position: 'absolute',
+              top: 0,
+              left: -half,
+              transform: [{ rotate: `${rightAngle}deg` }],
+            }}
+          />
+        </View>
+      )}
+
+      {/* Left Half Arc (50% - 100%) */}
+      {hasLeftHalf && (
+        <View
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: half,
+            height: size,
+            overflow: 'hidden',
+          }}
+        >
+          <View
+            style={{
+              width: size,
+              height: size,
+              borderRadius: half,
+              borderWidth: strokeWidth,
+              borderColor: 'transparent',
+              borderBottomColor: color,
+              borderLeftColor: color,
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              transform: [{ rotate: `${leftAngle}deg` }],
+            }}
+          />
+        </View>
+      )}
+
       {/* Center Percentage Label */}
-      <View style={[StyleSheet.absoluteFill, styles.textContainer]}>
-        <Text style={[styles.text, { color }]}>{Math.round(pct)}%</Text>
+      <View style={[StyleSheet.absoluteFill, styles.textContainer]} pointerEvents="none">
+        <Text style={[styles.text, { color, fontSize: size < 55 ? 10 : 12 }]}>
+          {displayText}
+        </Text>
       </View>
     </View>
   );
@@ -64,7 +118,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   text: {
-    fontSize: 13,
     fontWeight: '800',
   },
 });

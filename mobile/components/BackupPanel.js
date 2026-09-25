@@ -31,6 +31,7 @@ export default function BackupPanel({ serverUrl, token, drives = [], onClose }) 
   const [deviceName, setDeviceName] = useState('MobileDevice');
   const [selectedDrive, setSelectedDrive] = useState('');
   const [raidVolumes, setRaidVolumes] = useState([]);
+  const [targetFolder, setTargetFolder] = useState('MobileUploads');
 
   // Media & Sync State
   const [allMedia, setAllMedia] = useState([]);
@@ -111,7 +112,27 @@ export default function BackupPanel({ serverUrl, token, drives = [], onClose }) 
       const savedIdsJson = await AsyncStorage.getItem(`nas_backup_synced_${devName}`);
       const syncedArr = savedIdsJson ? JSON.parse(savedIdsJson) : [];
       const syncedSet = new Set(syncedArr);
-      setSyncedIdsSet(syncedSet);
+
+      // Fetch filenames already backed up on NAS from server
+      let serverFilenamesSet = new Set();
+      if (serverUrl && token) {
+        try {
+          const res = await fetch(`${serverUrl}/api/sync/synced-filenames`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data.filenames)) {
+              serverFilenamesSet = new Set(data.filenames.map(f => f.toLowerCase()));
+            }
+            if (data.primaryFolder) {
+              setTargetFolder(data.primaryFolder);
+            }
+          }
+        } catch (e) {
+          console.warn('Failed to fetch server synced filenames:', e);
+        }
+      }
 
       // Direct MediaStore query
       let fetched = [];
@@ -130,6 +151,17 @@ export default function BackupPanel({ serverUrl, token, drives = [], onClose }) 
         endCursor = page.endCursor;
       }
 
+      // Reconcile: match local media against server filenames
+      for (const asset of fetched) {
+        const fname = (asset.filename || '').toLowerCase();
+        if (serverFilenamesSet.has(fname)) {
+          syncedSet.add(asset.id);
+        }
+      }
+
+      // Persist reconciled IDs
+      await AsyncStorage.setItem(`nas_backup_synced_${devName}`, JSON.stringify(Array.from(syncedSet)));
+      setSyncedIdsSet(syncedSet);
       setAllMedia(fetched);
     } catch (err) {
       console.warn('Error loading MediaStore assets:', err);
@@ -160,15 +192,16 @@ export default function BackupPanel({ serverUrl, token, drives = [], onClose }) 
 
   const destinationDisplay = useMemo(() => {
     if (!selectedDrive) return 'Select Storage';
+    const folder = targetFolder || 'MobileUploads';
     if (typeof selectedDrive === 'string' && selectedDrive.startsWith('raid:')) {
       const volId = selectedDrive.replace(/^raid:/, '');
       const vol = raidVolumes.find(v => v.id === volId || v.name === volId);
       const name = vol ? vol.name : 'myNAS';
-      return `${name} [RAID 1 Mirror]\\NAS_Backup\\${deviceName}\\`;
+      return `${name} [RAID 1 Mirror]\\${folder}\\`;
     }
     const cleanDrive = typeof selectedDrive === 'string' ? selectedDrive.replace(/[:/\\]+$/, '') + ':' : 'C:';
-    return `${cleanDrive}\\NAS_Backup\\${deviceName}\\`;
-  }, [selectedDrive, raidVolumes, deviceName]);
+    return `${cleanDrive}\\${folder}\\`;
+  }, [selectedDrive, raidVolumes, targetFolder]);
 
   const startBackupSync = async () => {
     if (!selectedDrive) {
@@ -191,10 +224,11 @@ export default function BackupPanel({ serverUrl, token, drives = [], onClose }) 
     setCurrentProgress(0);
     setSyncLog('Connecting to NAS server...');
 
+    const folder = targetFolder || 'MobileUploads';
     const cleanDrive = typeof selectedDrive === 'string' ? selectedDrive.replace(/[:/\\]+$/, '') + ':' : 'C:';
     const targetPath = (selectedDrive && typeof selectedDrive === 'string' && selectedDrive.startsWith('raid:'))
-      ? `${selectedDrive}\\NAS_Backup\\${deviceName}`
-      : `${cleanDrive}\\NAS_Backup\\${deviceName}`;
+      ? `${selectedDrive}\\${folder}`
+      : `${cleanDrive}\\${folder}`;
     const updatedSyncedSet = new Set(syncedIdsSet);
     let successCount = 0;
 

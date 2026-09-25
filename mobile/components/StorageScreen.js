@@ -15,17 +15,28 @@ export default function StorageScreen({ serverUrl, token, onOpenAddStorage }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [drives, setDrives] = useState([]);
+  const [raidVolumes, setRaidVolumes] = useState([]);
   const [exploreVisible, setExploreVisible] = useState(false);
   const [explorePath, setExplorePath] = useState('');
 
   const fetchDrives = async () => {
     try {
-      const res = await fetch(`${serverUrl}/api/drives`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
+      const [drivesRes, raidRes] = await Promise.allSettled([
+        fetch(`${serverUrl}/api/drives`, {
+          headers: { Authorization: `Bearer ${token}` }
+        }),
+        fetch(`${serverUrl}/api/raid/volumes`, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+      ]);
+      if (drivesRes.status === 'fulfilled' && drivesRes.value.ok) {
+        const data = await drivesRes.value.json();
         setDrives(data || []);
+      }
+      if (raidRes.status === 'fulfilled' && raidRes.value.ok) {
+        const rData = await raidRes.value.json();
+        const vols = Array.isArray(rData.volumes) ? rData.volumes : (Array.isArray(rData) ? rData : []);
+        setRaidVolumes(vols);
       }
     } catch (err) {
       console.warn('Failed to fetch storage drives:', err);
@@ -117,69 +128,155 @@ export default function StorageScreen({ serverUrl, token, onOpenAddStorage }) {
             </Text>
           </View>
         ) : (
-          displayDrives.map((drive, idx) => {
-            const usedSpace = (drive.size || 0) - (drive.freeSpace || 0);
-            const pct = drive.size ? Math.min(100, Math.round((usedSpace / drive.size) * 100)) : 0;
-            const driveLabel = drive.name || drive.label || `Drive ${drive.letter}`;
-
-            return (
-              <View key={drive.letter || idx} style={styles.driveCard}>
-                <View style={styles.driveHeader}>
-                  <View style={styles.poolIconBox}>
-                    <Text style={styles.poolIcon}>{drive.isUsb ? '🔌' : '💾'}</Text>
-                  </View>
-
-                  <View style={styles.poolInfo}>
-                    <View style={styles.poolTitleRow}>
-                      <Text style={styles.poolTitle}>{driveLabel}</Text>
-                      <Text style={styles.poolDesc}>({drive.letter})</Text>
-                    </View>
-
-                    <View style={styles.tagRow}>
-                      <View style={styles.statusBadge}>
-                        <Text style={styles.statusBadgeText}>ONLINE</Text>
-                      </View>
-                      <Text style={styles.specTagDivider}>•</Text>
-                      <Text style={styles.specTag}>{formatBytes(drive.size)} Total</Text>
-                    </View>
+          <>
+            {/* ── ACTIVE RAID 1 STORAGE POOLS ── */}
+            {activeTab === 'storage' && raidVolumes.length > 0 && (
+              <View style={{ marginBottom: 16 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, paddingHorizontal: 4 }}>
+                  <Text style={{ fontSize: 16, fontWeight: '800', color: colors.textPrimary }}>
+                    🛡️ Active RAID Storage Pools
+                  </Text>
+                  <View style={[styles.statusBadge, { backgroundColor: 'rgba(16, 185, 129, 0.15)' }]}>
+                    <Text style={[styles.statusBadgeText, { color: colors.success }]}>
+                      {raidVolumes.length} Mirrored Pool
+                    </Text>
                   </View>
                 </View>
 
-                {/* Progress Bar & Storage Utilization */}
-                <View style={styles.volumeCard}>
-                  <View style={{ flex: 1, marginRight: 16 }}>
-                    <View style={styles.volumeHeader}>
-                      <View style={styles.volumeTitleRow}>
-                        <Text style={styles.volumeIcon}>📂</Text>
-                        <Text style={styles.volumeTitle}>Storage Volume</Text>
+                {raidVolumes.map(vol => (
+                  <View key={vol.id} style={[styles.driveCard, { borderColor: colors.accent, borderWidth: 1.5, backgroundColor: colors.surfaceSolid || colors.card }]}>
+                    <View style={styles.driveHeader}>
+                      <View style={[styles.poolIconBox, { backgroundColor: 'rgba(2, 132, 199, 0.15)', borderColor: colors.accent }]}>
+                        <Text style={styles.poolIcon}>🛡️</Text>
+                      </View>
+
+                      <View style={styles.poolInfo}>
+                        <View style={styles.poolTitleRow}>
+                          <Text style={[styles.poolTitle, { color: colors.accent }]}>{vol.name}</Text>
+                          <Text style={styles.poolDesc}>({vol.raid_level || 'RAID 1 Mirror'})</Text>
+                        </View>
+
+                        <View style={styles.tagRow}>
+                          <View style={[styles.statusBadge, { backgroundColor: 'rgba(16, 185, 129, 0.2)' }]}>
+                            <Text style={[styles.statusBadgeText, { color: colors.success, fontWeight: '700' }]}>● HEALTHY</Text>
+                          </View>
+                          <Text style={styles.specTagDivider}>•</Text>
+                          <Text style={styles.specTag}>{vol.usable_capacity_formatted || '931.5 GB'} Usable</Text>
+                        </View>
                       </View>
                     </View>
-                    <View style={styles.capacityRow}>
-                      <Text style={styles.capacityText}>Free: {formatBytes(drive.freeSpace)}</Text>
+
+                    <View style={styles.volumeCard}>
+                      <View style={{ flex: 1, marginRight: 16 }}>
+                        <View style={styles.capacityRow}>
+                          <Text style={[styles.capacityText, { color: colors.textPrimary, fontWeight: '600' }]}>
+                            Member Disks: {(vol.member_disks || []).join(', ')}
+                          </Text>
+                        </View>
+                        <View style={styles.capacityRow}>
+                          <Text style={styles.capacityText}>Mount Point: {vol.mount_point || 'R:\\' + vol.name}</Text>
+                        </View>
+                        <TouchableOpacity
+                          style={[styles.exploreBtn, { backgroundColor: colors.accent, marginTop: 10 }]}
+                          onPress={() => {
+                            setExplorePath(`raid:${vol.id}`);
+                            setExploreVisible(true);
+                          }}
+                        >
+                          <Text style={[styles.exploreBtnText, { color: '#0F172A', fontWeight: '700' }]}>📂 Browse Mirrored Storage</Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
-                    <View style={styles.capacityRow}>
-                      <Text style={styles.capacityText}>Used: {formatBytes(usedSpace)}</Text>
-                    </View>
-                    <TouchableOpacity 
-                      style={styles.exploreBtn} 
-                      onPress={() => {
-                        const raw = drive.path || drive.letter || 'C:\\';
-                        let clean = raw.replace(/::+/g, ':').trim();
-                        if (/^[a-zA-Z]:?$/.test(clean)) {
-                          clean = clean.replace(':', '') + ':\\';
-                        }
-                        setExplorePath(clean);
-                        setExploreVisible(true);
-                      }}
-                    >
-                      <Text style={styles.exploreBtnText}>📂 Explore Disk</Text>
-                    </TouchableOpacity>
                   </View>
-                  <CircularGauge percentage={pct} size={68} strokeWidth={7} />
+                ))}
+
+                <View style={{ marginTop: 8, marginBottom: 8, paddingHorizontal: 4 }}>
+                  <Text style={{ fontSize: 15, fontWeight: '800', color: colors.textPrimary }}>
+                    💿 Physical Member Disks
+                  </Text>
                 </View>
               </View>
-            );
-          })
+            )}
+
+            {/* ── PHYSICAL STORAGE DISKS ── */}
+            {displayDrives.map((drive, idx) => {
+              const usedSpace = Math.max(0, (drive.size || 0) - (drive.freeSpace || 0));
+              const rawPct = drive.size && drive.size > 0 ? (usedSpace / drive.size) * 100 : 0;
+              const pct = rawPct > 0 && rawPct < 1 ? parseFloat(rawPct.toFixed(1)) : Math.round(rawPct);
+              const cleanLetter = (drive.letter || '').replace(/[:/\\]+$/, '').toUpperCase();
+              const parentRaid = raidVolumes.find(vol =>
+                (vol.member_disks || []).some(m => m.replace(/[:/\\]+$/, '').toUpperCase() === cleanLetter)
+              );
+              const driveLabel = drive.name || drive.label || `Drive ${cleanLetter}:`;
+
+              return (
+                <View key={drive.letter || idx} style={styles.driveCard}>
+                  <View style={styles.driveHeader}>
+                    <View style={styles.poolIconBox}>
+                      <Text style={styles.poolIcon}>{drive.isUsb ? '🔌' : '💾'}</Text>
+                    </View>
+
+                    <View style={styles.poolInfo}>
+                      <View style={styles.poolTitleRow}>
+                        <Text style={styles.poolTitle}>{driveLabel}</Text>
+                        <Text style={styles.poolDesc}>({cleanLetter}:)</Text>
+                      </View>
+
+                      <View style={styles.tagRow}>
+                        <View style={styles.statusBadge}>
+                          <Text style={styles.statusBadgeText}>ONLINE</Text>
+                        </View>
+                        {parentRaid && (
+                          <View style={[styles.statusBadge, { backgroundColor: 'rgba(2, 132, 199, 0.15)', borderWidth: 1, borderColor: colors.accent }]}>
+                            <Text style={[styles.statusBadgeText, { color: colors.accent, fontWeight: '700' }]}>
+                              🛡️ RAID 1 ({parentRaid.name})
+                            </Text>
+                          </View>
+                        )}
+                        <Text style={styles.specTagDivider}>•</Text>
+                        <Text style={styles.specTag}>{formatBytes(drive.size)} Total</Text>
+                      </View>
+                    </View>
+                  </View>
+
+                  {/* Progress Bar & Storage Utilization */}
+                  <View style={styles.volumeCard}>
+                    <View style={{ flex: 1, marginRight: 16 }}>
+                      <View style={styles.volumeHeader}>
+                        <View style={styles.volumeTitleRow}>
+                          <Text style={styles.volumeIcon}>📂</Text>
+                          <Text style={styles.volumeTitle}>
+                            {parentRaid ? `Storage Volume • Mirrored (${parentRaid.name})` : 'Storage Volume'}
+                          </Text>
+                        </View>
+                      </View>
+                      <View style={styles.capacityRow}>
+                        <Text style={styles.capacityText}>Free: {formatBytes(drive.freeSpace)}</Text>
+                      </View>
+                      <View style={styles.capacityRow}>
+                        <Text style={styles.capacityText}>Used: {formatBytes(usedSpace)} ({pct}% used)</Text>
+                      </View>
+                      <TouchableOpacity 
+                        style={styles.exploreBtn} 
+                        onPress={() => {
+                          const raw = drive.path || drive.letter || 'C:\\';
+                          let clean = raw.replace(/::+/g, ':').trim();
+                          if (/^[a-zA-Z]:?$/.test(clean)) {
+                            clean = clean.replace(':', '') + ':\\';
+                          }
+                          setExplorePath(clean);
+                          setExploreVisible(true);
+                        }}
+                      >
+                        <Text style={styles.exploreBtnText}>📂 Explore Disk</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <CircularGauge percentage={pct} size={68} strokeWidth={7} />
+                  </View>
+                </View>
+              );
+            })}
+          </>
         )}
       </ScrollView>
 

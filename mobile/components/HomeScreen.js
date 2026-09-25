@@ -473,23 +473,30 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
                   <Text style={styles.driveSectionTitle}>💿 Physical Drives</Text>
                 </View>
                 {drivesList.map((d, i) => {
-                  const usedGB = d.total && d.free !== undefined ? ((d.total - d.free) / (1024 ** 3)).toFixed(1) : '0';
-                  const totalGB = d.total ? (d.total / (1024 ** 3)).toFixed(1) : '0';
-                  const pct = d.total > 0 ? Math.round(((d.total - d.free) / d.total) * 100) : 0;
+                  const totalBytes = d.size || d.total || 0;
+                  const freeBytes = d.freeSpace !== undefined ? d.freeSpace : (d.free !== undefined ? d.free : 0);
+                  const usedBytes = Math.max(0, totalBytes - freeBytes);
+                  const usedGB = (usedBytes / (1024 ** 3)).toFixed(1);
+                  const totalGB = (totalBytes / (1024 ** 3)).toFixed(1);
+                  const rawPct = totalBytes > 0 ? (usedBytes / totalBytes) * 100 : 0;
+                  const pct = rawPct > 0 && rawPct < 1 ? parseFloat(rawPct.toFixed(1)) : Math.round(rawPct);
+                  const cleanLetter = (d.letter || '').replace(/[:/\\]+$/, '');
+                  const driveTitle = cleanLetter ? `Drive (${cleanLetter}:)` : (d.name || 'Storage');
+
                   return (
                     <TouchableOpacity
                       key={d.letter || d.path || i.toString()}
                       style={styles.storageCard}
                       activeOpacity={0.8}
                       onPress={() => {
-                        const rawPath = d.path || (d.letter ? `${d.letter.replace(/[:/\\]+$/, '')}:\\` : 'C:\\');
+                        const rawPath = d.path || (cleanLetter ? `${cleanLetter}:\\` : 'C:\\');
                         setExplorePath(rawPath.replace(/::+/g, ':'));
                         setExploreVisible(true);
                       }}
                     >
                       <View style={styles.storageCardInfo}>
                         <Text style={styles.storageCardTitle}>
-                          {d.letter ? `Drive (${d.letter}:)` : d.name || 'Storage'} {d.label ? `— ${d.label}` : ''}
+                          {driveTitle} {d.label ? `— ${d.label}` : ''}
                         </Text>
                         <Text style={styles.storageCardDesc}>
                           {usedGB} GB / {totalGB} GB ({pct}% used)

@@ -83,9 +83,9 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives = [], 
 
       // 2. Fallback to AsyncStorage local cache
       const savedEnabled = await AsyncStorage.getItem('autosync_enabled');
-      const savedDrive = await AsyncStorage.getItem('autosync_target_drive');
-      const savedFolder = await AsyncStorage.getItem('autosync_target_folder');
-      const savedType = await AsyncStorage.getItem('autosync_media_type');
+      const savedDrive = (await AsyncStorage.getItem('autosync_drive')) || (await AsyncStorage.getItem('autosync_target_drive'));
+      const savedFolder = (await AsyncStorage.getItem('autosync_folder')) || (await AsyncStorage.getItem('autosync_target_folder'));
+      const savedType = (await AsyncStorage.getItem('autosync_type')) || (await AsyncStorage.getItem('autosync_media_type'));
       const savedStruct = await AsyncStorage.getItem('autosync_folder_structure');
       const savedCount = await AsyncStorage.getItem('autosync_synced_count');
       const savedTime = await AsyncStorage.getItem('autosync_last_sync_time');
@@ -94,8 +94,7 @@ export default function AutoSyncModal({ visible, serverUrl, token, drives = [], 
       const savedCharging = await AsyncStorage.getItem('autosync_charging_only');
       const savedLowBat = await AsyncStorage.getItem('autosync_low_battery_pause');
 
-      const deviceName = (Device.deviceName || Device.modelName || 'Android_Phone').replace(/[^a-zA-Z0-9_-]/g, '_');
-      const defaultFolder = `NAS_Backup\\${deviceName}`;
+      const defaultFolder = 'MobileUploads';
 
       const defaultDrive = (foundRaidVols.length > 0 ? `raid:${foundRaidVols[0].id}` : (drives[0]?.letter || ''));
       const activeDrive = remoteSettings?.targetDrive ?? savedDrive ?? defaultDrive;

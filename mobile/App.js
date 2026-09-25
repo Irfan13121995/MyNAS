@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, ActivityIndicator, StatusBar, Text, Platform, BackHandler, Modal, TextInput, TouchableOpacity, Alert, Image } from 'react-native';
+import { StyleSheet, View, ActivityIndicator, StatusBar, Text, Platform, BackHandler, Modal, TextInput, TouchableOpacity, Alert, Image, AppState } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
@@ -28,11 +28,11 @@ if (!isExpoGo) {
       try {
         const serverUrl = await getSecureItem('nas_server_url');
         const token = await getSecureItem('nas_jwt_token');
-        const targetDrive = await AsyncStorage.getItem('autosync_drive');
-        const syncFolder = await AsyncStorage.getItem('autosync_folder');
-        const mediaType = await AsyncStorage.getItem('autosync_type') || 'both';
+        const targetDrive = (await AsyncStorage.getItem('autosync_drive')) || '';
+        const syncFolder = (await AsyncStorage.getItem('autosync_folder')) || 'MobileUploads';
+        const mediaType = (await AsyncStorage.getItem('autosync_type')) || 'both';
         
-        if (!serverUrl || !token || !syncFolder) {
+        if (!serverUrl || !token) {
           return 1; // BackgroundFetch.Result.NoData
         }
 
@@ -135,11 +135,47 @@ function AppContent() {
     return () => backHandler.remove();
   }, [selectedFile, autoSyncVisible, activeTab]);
 
+  // Foreground auto-sync when app is active/resumed
+  useEffect(() => {
+    let lastForegroundSync = 0;
+    const triggerForegroundSync = async () => {
+      const now = Date.now();
+      if (now - lastForegroundSync < 60000) return; // Throttle at most once every 60s
+      if (!serverUrl || !token) return;
+      try {
+        const isEnabled = await AsyncStorage.getItem('autosync_enabled');
+        if (isEnabled === 'false') return;
+        const targetDrive = (await AsyncStorage.getItem('autosync_drive')) || '';
+        const syncFolder = (await AsyncStorage.getItem('autosync_folder')) || 'MobileUploads';
+        const mediaType = (await AsyncStorage.getItem('autosync_type')) || 'both';
+        const fullTargetPath = targetDrive 
+          ? `${targetDrive.replace(/[\/\\]+$/, '')}\\${syncFolder.replace(/^[\/\\]+/, '')}`
+          : syncFolder;
+        lastForegroundSync = now;
+        await runFullSync(serverUrl, token, fullTargetPath, mediaType, null, null);
+      } catch (err) {
+        console.warn('Foreground auto-sync check error:', err);
+      }
+    };
+
+    const sub = AppState.addEventListener('change', (nextAppState) => {
+      if (nextAppState === 'active') {
+        triggerForegroundSync();
+      }
+    });
+
+    if (serverUrl && token) {
+      triggerForegroundSync();
+    }
+
+    return () => sub.remove();
+  }, [serverUrl, token]);
+
   const registerBackgroundSync = async () => {
     if (isExpoGo || !BackgroundFetch || !BackgroundFetch.registerTaskAsync) return;
     try {
       const isEnabled = await AsyncStorage.getItem('autosync_enabled');
-      if (isEnabled === 'true') {
+      if (isEnabled !== 'false') { // Default to enabled unless explicitly turned off
         const isRegistered = await TaskManager.isTaskRegisteredAsync(BACKGROUND_SYNC_TASK);
         if (!isRegistered) {
           await BackgroundFetch.registerTaskAsync(BACKGROUND_SYNC_TASK, {
@@ -371,7 +407,7 @@ function AppContent() {
         {/* ── TOP BAR HEADER (Logo on Left, Username on Right) ──────────── */}
         <View style={[styles.topBar, { backgroundColor: colors.surface, borderBottomColor: colors.borderLight }]}>
           <View style={styles.topBarLeft}>
-            <Image source={require('./assets/icon.png')} style={styles.topBarLogo} />
+            <Image source={require('./assets/logo.png')} style={styles.topBarLogo} resizeMode="contain" />
             <Text style={[styles.topBarTitle, { color: colors.textPrimary }]}>myNAS</Text>
           </View>
           <View style={styles.topBarRight}>
@@ -518,9 +554,8 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   topBarLogo: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
+    width: 40,
+    height: 40,
   },
   topBarTitle: {
     fontSize: 18,
