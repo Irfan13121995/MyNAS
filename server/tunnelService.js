@@ -286,6 +286,7 @@ module.exports = {
   startTunnel,
   stopTunnel,
   getTunnelStatus,
+  getStatus: getTunnelStatus,
   getNamedTunnelConfig,
   saveNamedTunnelConfig
 };

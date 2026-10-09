@@ -137,7 +137,7 @@ app.use(cors({
     // Allow localhost, LAN IPs, exact active tunnel URL, and exact custom domain
     const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(origin);
     const isLan = /^https?:\/\/(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/.test(origin);
-    const activeTunnel = tunnelService.getStatus();
+    const activeTunnel = tunnelService.getTunnelStatus();
     const activeTunnelUrl = activeTunnel?.url ? activeTunnel.url.replace(/\/+$/, '').toLowerCase() : null;
     const isCurrentTunnel = activeTunnelUrl && origin.toLowerCase() === activeTunnelUrl;
     const isCustomHost = customHost && (origin.toLowerCase() === `https://${customHost}` || origin.toLowerCase() === `http://${customHost}`);
@@ -425,7 +425,7 @@ app.post('/api/pairing/create', authenticateToken, async (req, res) => {
   try {
     const { pairingCode, expiresAt } = usersService.createPairingCode(req.user.username);
     const namedConfig = tunnelService.getNamedTunnelConfig();
-    const tunnelStatus = tunnelService.getStatus();
+    const tunnelStatus = tunnelService.getTunnelStatus();
     let serverUrl = tunnelStatus?.url || namedConfig?.customUrl || `http://${req.get('host')}`;
     serverUrl = serverUrl.replace(/\/+$/, '');
 
@@ -445,7 +445,7 @@ app.get('/api/pairing/qr', authenticateToken, async (req, res) => {
   try {
     const { pairingCode, expiresAt } = usersService.createPairingCode(req.user.username);
     const namedConfig = tunnelService.getNamedTunnelConfig();
-    const tunnelStatus = tunnelService.getStatus();
+    const tunnelStatus = tunnelService.getTunnelStatus();
     let serverUrl = tunnelStatus?.url || namedConfig?.customUrl || `http://${req.get('host')}`;
     serverUrl = serverUrl.replace(/\/+$/, '');
 
