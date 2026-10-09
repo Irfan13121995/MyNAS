@@ -6,12 +6,26 @@
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const API_BASE = '';
 
-// ─── TOKEN MANAGEMENT ─────────────────────────────────────────────────────────
+// ─── TOKEN & SESSION MANAGEMENT ───────────────────────────────────────────────
 const Auth = {
-  getToken: () => localStorage.getItem('nas_token'),
-  setToken: (t) => localStorage.setItem('nas_token', t),
-  clear:    () => localStorage.removeItem('nas_token'),
-  headers:  () => ({ 'Authorization': `Bearer ${Auth.getToken()}`, 'Content-Type': 'application/json' })
+  getToken: () => localStorage.getItem('nas_token') || '',
+  setToken: (t) => {
+    if (t) localStorage.setItem('nas_token', t);
+  },
+  clear: async () => {
+    localStorage.removeItem('nas_token');
+    localStorage.removeItem('nas_user');
+    localStorage.removeItem('nas_user_info');
+    try {
+      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+    } catch (e) {}
+  },
+  headers: () => {
+    const h = { 'Content-Type': 'application/json' };
+    const t = Auth.getToken();
+    if (t) h['Authorization'] = `Bearer ${t}`;
+    return h;
+  }
 };
 
 // ─── THEME MANAGEMENT ────────────────────────────────────────────────────────
@@ -522,7 +536,7 @@ async function parseResponse(res) {
 
 async function api(method, endpoint, body) {
   try {
-    const opts = { method, headers: Auth.headers() };
+    const opts = { method, headers: Auth.headers(), credentials: 'include' };
     if (body) opts.body = JSON.stringify(body);
     const res = await fetch(API_BASE + endpoint, opts);
     const data = await parseResponse(res);
@@ -655,32 +669,20 @@ function showApp() {
 async function doLogin(credentials) {
   const body = typeof credentials === 'string' ? { passcode: credentials } : credentials;
   const res = await fetch('/api/auth/login', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    method: 'POST', 
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
     body: JSON.stringify(body)
   });
   const data = await parseResponse(res);
   if (!res.ok) throw new Error(data.error || 'Login failed');
-  Auth.setToken(data.token);
+  localStorage.removeItem('nas_token');
   const username = data.username || body.username || 'Passcode Admin';
   localStorage.setItem('nas_user', username);
   if (data.user) {
     localStorage.setItem('nas_user_info', JSON.stringify(data.user));
   } else if (body.passcode) {
     localStorage.setItem('nas_user_info', JSON.stringify({ username: 'Passcode Admin', role: 'admin', isReadonly: false }));
-  }
-}
-
-async function doRegister(username, password) {
-  const res = await fetch('/api/auth/register', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password })
-  });
-  const data = await parseResponse(res);
-  if (!res.ok) throw new Error(data.error || 'Registration failed');
-  Auth.setToken(data.token);
-  localStorage.setItem('nas_user', username);
-  if (data.user) {
-    localStorage.setItem('nas_user_info', JSON.stringify(data.user));
   }
 }
 
@@ -1140,7 +1142,10 @@ async function showUploadModal(preselectedDrive = '', preselectedFolder = '') {
           const xhr = new XMLHttpRequest();
           const uploadUrl = `/api/upload?destination=${encodeURIComponent(destination)}&relativePath=${encodeURIComponent(relativePath)}`;
           xhr.open('POST', uploadUrl);
-          xhr.setRequestHeader('Authorization', `Bearer ${Auth.getToken()}`);
+          xhr.withCredentials = true;
+          if (Auth.getToken()) {
+            xhr.setRequestHeader('Authorization', `Bearer ${Auth.getToken()}`);
+          }
 
           let fileLoadedPrev = 0;
           xhr.upload.onprogress = (e) => {
@@ -2801,7 +2806,8 @@ function bindExplorerEvents(container, items, isAtRoot) {
       toast('Preparing ZIP download...', 'info');
       const res = await fetch('/api/files/batch-zip', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${Auth.getToken()}` },
+        headers: Auth.headers(),
+        credentials: 'include',
         body: JSON.stringify({ paths })
       });
       if (res.ok) {
@@ -3486,18 +3492,37 @@ async function remote(container) {
   if (isRunning && tunnel.url) {
     const qrContainer = document.getElementById('qr-container');
     if (qrContainer) {
-      // Embed URL and session token so mobile app can auto-login as this user
-      const qrPayload = JSON.stringify({ url: tunnel.url, token: Auth.getToken() });
-      const img = document.createElement('img');
-      img.src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qrPayload)}`;
-      img.style.borderRadius = '8px';
-      img.alt = 'QR Code for tunnel URL and auto-login';
-      qrContainer.appendChild(img);
+      qrContainer.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:180px"><span class="spinner"></span></div>';
+      try {
+        const qrRes = await GET('/api/pairing/qr');
+        if (qrRes?.data?.qrDataUrl) {
+          qrContainer.innerHTML = '';
+          const img = document.createElement('img');
+          img.src = qrRes.data.qrDataUrl;
+          img.style.borderRadius = '12px';
+          img.style.width = '200px';
+          img.style.height = '200px';
+          img.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+          img.style.backgroundColor = '#FFFFFF';
+          img.style.padding = '8px';
+          img.alt = 'Secure Mobile Pairing QR Code';
+          qrContainer.appendChild(img);
 
-      const hint = document.createElement('p');
-      hint.style.cssText = 'font-size:12px;color:var(--text-secondary);margin-top:10px;text-align:center';
-      hint.textContent = '⚡ Scan in mobile app to pair & auto-login seamlessly';
-      qrContainer.appendChild(hint);
+          const hint = document.createElement('p');
+          hint.style.cssText = 'font-size:12px;color:var(--text-secondary);margin-top:10px;text-align:center';
+          hint.textContent = '⚡ Scan with your phone’s myNAS app to pair securely';
+          qrContainer.appendChild(hint);
+
+          const sub = document.createElement('span');
+          sub.style.cssText = 'font-size:11px;color:var(--text-muted);display:block;text-align:center;margin-top:2px';
+          sub.textContent = '🔒 Single-use pairing code (expires in 5 minutes)';
+          qrContainer.appendChild(sub);
+        } else {
+          qrContainer.innerHTML = '<p style="font-size:12px;color:var(--text-muted);text-align:center">Failed to load pairing QR code.</p>';
+        }
+      } catch (err) {
+        qrContainer.innerHTML = '<p style="font-size:12px;color:var(--text-muted);text-align:center">Error generating local QR code.</p>';
+      }
     }
   }
 }
@@ -3719,49 +3744,8 @@ async function init() {
     });
   });
 
-  document.getElementById('register-btn')?.addEventListener('click', async (e) => {
-    e.preventDefault();
-    const u = document.getElementById('reg-username').value;
-    const p = document.getElementById('reg-password').value;
-    const cp = document.getElementById('reg-confirm').value;
-    const err = document.getElementById('register-error');
-    err.classList.add('hidden');
-
-    if (u.length < 3) {
-      err.textContent = 'Username must be at least 3 characters';
-      err.classList.remove('hidden');
-      return;
-    }
-    if (p.length < 6) {
-      err.textContent = 'Password must be at least 6 characters';
-      err.classList.remove('hidden');
-      return;
-    }
-    if (p !== cp) {
-      err.textContent = 'Passwords do not match';
-      err.classList.remove('hidden');
-      return;
-    }
-
-    const btn = document.getElementById('register-btn');
-    btn.disabled = true;
-    try {
-      await doRegister(u, p);
-      showApp();
-      await loadSystemInfo();
-      navigate('dashboard');
-    } catch (error) {
-      err.textContent = error.message;
-      err.classList.remove('hidden');
-    } finally {
-      btn.disabled = false;
-    }
-  });
-
-  document.getElementById('switch-account-btn')?.addEventListener('click', () => {
-    Auth.clear();
-    localStorage.removeItem('nas_user');
-    localStorage.removeItem('nas_user_info');
+  document.getElementById('switch-account-btn')?.addEventListener('click', async () => {
+    await Auth.clear();
     
     // Clear inputs in login form
     const usernameInput = document.getElementById('username-input');
@@ -3782,22 +3766,14 @@ async function init() {
       loginError.classList.add('hidden');
     }
 
-    // Switch to Login tab
-    document.querySelectorAll('.auth-tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.auth-tab-content').forEach(c => c.classList.remove('active'));
-    document.querySelector('.auth-tab[data-tab="login"]')?.classList.add('active');
-    document.getElementById('tab-login')?.classList.add('active');
-
     showLogin();
     setTimeout(() => {
       if (usernameInput) usernameInput.focus();
     }, 150);
   });
 
-  document.getElementById('logout-btn')?.addEventListener('click', () => {
-    Auth.clear();
-    localStorage.removeItem('nas_user');
-    localStorage.removeItem('nas_user_info');
+  document.getElementById('logout-btn')?.addEventListener('click', async () => {
+    await Auth.clear();
 
     const authHeading = document.getElementById('auth-heading');
     if (authHeading) authHeading.textContent = 'Welcome back';
@@ -3825,19 +3801,25 @@ async function init() {
     }
   });
 
-  const token = Auth.getToken();
-  if (token) {
-    const r = await fetch('/api/auth/verify', { headers: { Authorization: `Bearer ${token}` } });
+  // Verify active session via HttpOnly cookie (or token fallback)
+  try {
+    const r = await fetch('/api/auth/verify', { credentials: 'include' });
     if (r.ok) {
-      bindThemeSwitches();
-      showApp();
-      await loadSystemInfo();
-      navigate('dashboard');
-      return;
+      const data = await r.json();
+      if (data.authenticated && data.user) {
+        localStorage.removeItem('nas_token');
+        localStorage.setItem('nas_user', data.user.username);
+        localStorage.setItem('nas_user_info', JSON.stringify(data.user));
+        bindThemeSwitches();
+        showApp();
+        await loadSystemInfo();
+        navigate('dashboard');
+        return;
+      }
     } else {
-      Auth.clear();
+      localStorage.removeItem('nas_token');
     }
-  }
+  } catch (e) {}
 
   bindSetupWizardEvents();
 

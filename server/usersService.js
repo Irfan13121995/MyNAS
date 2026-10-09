@@ -39,5 +39,14 @@ module.exports = {
   unlockUserAccount: dbService.unlockUserAccount,
 
   /** Delete user account */
-  deleteUser: dbService.deleteUser
+  deleteUser: dbService.deleteUser,
+
+  /** Create single-use pairing code for mobile */
+  createPairingCode: dbService.createPairingCode,
+
+  /** Redeem single-use pairing code */
+  redeemPairingCode: dbService.redeemPairingCode,
+
+  /** Increment user token version to invalidate sessions */
+  incrementTokenVersion: dbService.incrementTokenVersion
 };

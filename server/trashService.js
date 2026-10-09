@@ -45,9 +45,10 @@ function saveManifest(items) {
 /**
  * Moves a file to the NAS trash bin.
  * @param {string} filePath Absolute path to file.
+ * @param {string} [owner] Username of the file owner.
  * @returns {object} Trash item details.
  */
-function moveToTrash(filePath) {
+function moveToTrash(filePath, owner = 'system') {
   ensureTrashDirs();
   if (!fs.existsSync(filePath)) {
     throw new Error('File does not exist');
@@ -66,6 +67,7 @@ function moveToTrash(filePath) {
     originalPath: filePath,
     fileName,
     trashPath,
+    owner: owner || 'system',
     deletedAt: new Date().toISOString(),
     size: fs.existsSync(trashPath) ? fs.statSync(trashPath).size : 0
   };
@@ -76,19 +78,25 @@ function moveToTrash(filePath) {
 }
 
 /**
- * Lists all items currently in the trash bin.
+ * Lists items currently in the trash bin, filtered by user ownership if not admin.
+ * @param {object} [user] Authenticated user object.
  * @returns {Array<object>}
  */
-function listTrash() {
-  return getManifest();
+function listTrash(user = null) {
+  const manifest = getManifest();
+  if (!user || user.role === 'admin') {
+    return manifest;
+  }
+  return manifest.filter(item => !item.owner || item.owner === user.username);
 }
 
 /**
  * Restores an item from the trash bin to its original location.
  * @param {string} id Trash item ID.
+ * @param {object} [user] Authenticated user object.
  * @returns {object} Restored item metadata.
  */
-function restoreFromTrash(id) {
+function restoreFromTrash(id, user = null) {
   const manifest = getManifest();
   const index = manifest.findIndex(item => item.id === id);
   if (index === -1) {
@@ -96,6 +104,10 @@ function restoreFromTrash(id) {
   }
 
   const item = manifest[index];
+  if (user && user.role !== 'admin' && item.owner && item.owner !== user.username) {
+    throw new Error('Access Denied: You do not have permission to restore this item');
+  }
+
   if (!fs.existsSync(item.trashPath)) {
     manifest.splice(index, 1);
     saveManifest(manifest);
@@ -120,15 +132,19 @@ function restoreFromTrash(id) {
 /**
  * Purges trash items by ID or removes items older than 30 days.
  * @param {string|null} id Specific item ID to purge, or null to auto-purge expired items.
+ * @param {object} [user] Authenticated user object.
  * @returns {{success: boolean}}
  */
-function purgeTrash(id = null) {
+function purgeTrash(id = null, user = null) {
   let manifest = getManifest();
 
   if (id) {
     const index = manifest.findIndex(item => item.id === id);
     if (index !== -1) {
       const item = manifest[index];
+      if (user && user.role !== 'admin' && item.owner && item.owner !== user.username) {
+        throw new Error('Access Denied: You do not have permission to purge this item');
+      }
       if (fs.existsSync(item.trashPath)) {
         fs.rmSync(item.trashPath, { recursive: true, force: true });
       }

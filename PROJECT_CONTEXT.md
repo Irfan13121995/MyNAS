@@ -20,12 +20,20 @@ A self-hosted, enterprise-grade Personal NAS ecosystem providing unified private
   - Cloudflare Permanent Named Tunnel configuration (`mynas-hi.online`) accessible to non-admin & admin users with bundled `cloudflared.exe`.
   - User-specific mobile pairing QR code embedding session JWT tokens for seamless 1-tap mobile auto-login.
   - Dual "Switch Account" and "Logout" actions in sidebar footer with instant credential refocus and state reset.
+  - **Security & Multi-Tenant Containment:**
+    - Canonical path resolution (`resolveSafeTarget`) blocking path traversal, relative parent escapes (`..`), alternate data streams (`:`), and Windows reserved device names (`CON`, `PRN`, `AUX`, `NUL`, `COM1-9`, `LPT1-9`).
+    - Storage isolation via `validatePath` preventing access to `.env`, `nas_data.db`, AppData, `%WINDIR%`, and enforcing drive boundary restrictions.
+    - Token versioning with instant session revocation on password changes, admin permission adjustments, and `/api/auth/logout`.
+    - Local offline pairing QR code generation via `qrcode` (no third-party API exposure) with single-use 5-minute OTP pairing codes.
+    - Locked public registration by default (`ALLOW_PUBLIC_REGISTRATION=false`), with self-registered accounts quarantined (Read-Only, 0 disks allowed).
+    - Trash ownership isolation preventing cross-user file viewing, restoration, or purging.
+    - Strict CORS enforcement matching active Cloudflare tunnel domain, custom domain, or local RFC1918 subnets.
   - Generous 32px/28px breathing-room data tables with 2px card borders, squircle styling, and subtle hover rows for Admin Registered Users and Audit Logs.
   - Hidden plain-text passcode security across UI elements.
 - **Mobile App:**
   - **TopBar Header:** Persistent top bar featuring the square `myNAS` logo on the left and live user badge (`👤 <username>`) on the right.
   - **Dynamic Theming:** Light and Dark theme modes powered by `ThemeContext`, persisting across app restarts.
-  - **Seamless QR Scanner Auto-Login:** Scans web QR payload (`{ url, token }`), verifies identity via `/api/auth/verify`, and logs in as that exact user with appropriate disk permissions.
+  - **Seamless QR Scanner Auto-Login:** Scans web QR payload (`{ url, pairingCode }` or `{ url, token }`), redeems single-use pairing codes via `/api/pairing/redeem`, verifies identity via `/api/auth/verify`, and logs in with scoped user permissions.
   - **Camera Roll Backup Engine:** Multi-protocol background photo/video backup, SHA-256 deduplication, target directory validation (`/api/sync/validate-target`), 5MB chunked large-file uploads, and standard path formatting (`<Drive>\NAS_Backup\<DeviceName>\`).
   - **Media Gallery:** High-performance paginated media grid (`FlashList`), date grouping, format extension filter bar (`ALL`, `.JPG`, `.PNG`, `.WEBP`, `.MP4`, `.MKV`), long-press batch selection mode with **Select All / Deselect All**, and direct targeted NAS upload modal.
   - **Storage & Interactive Explorer:** Circular storage gauges and full Interactive NAS Disk File Explorer (`FileExplorerModal`).
@@ -33,21 +41,28 @@ A self-hosted, enterprise-grade Personal NAS ecosystem providing unified private
   - **Security & Network:** Biometric unlock (Fingerprint / Face ID), passcode fallback modal, custom Expo config plugin (`withCleartextTraffic.js`), and HTTPS tunnel failover for HTTP cleartext exceptions.
 
 ## 4. API Endpoint Reference
-- `/api/auth`: Handles passcode verification, bcrypt user login, registration, `/api/auth/verify` token validation, and email verification.
-- `/api/setup`: Server first-run onboarding status check (`/status`) and initial setup completion (`/complete`).
+- `/api/auth`: Handles passcode verification, bcrypt user login, registration (`ALLOW_PUBLIC_REGISTRATION` gated), `/api/auth/verify` token validation, token version checking, `/api/auth/logout` session invalidation, and HTML-escaped email verification.
+- `/api/pairing`: Secure pairing subsystem:
+  - `POST /api/pairing/create`: Admin/user authenticated generation of a 5-minute single-use pairing code.
+  - `GET /api/pairing/qr`: Generates local, offline Data URL QR code.
+  - `POST /api/pairing/redeem`: Rate-limited single-use code exchange for scoped JWT session token.
+- `/api/setup`: Server first-run onboarding status check (`/status`) and initial setup completion (`/complete`, blocked over public tunnels).
 - `/api/drives`: Retrieves system storage and mounted drive information filtered by allowed paths and user disk permissions (`isPathAllowed`).
-- `/api/files`: Serves file explorer endpoints for directory listing, search, moving, deletion, and batch zip downloading.
-- `/api/upload`: Handles standard multipart and chunked (`/api/upload/chunk`) file/media uploads to specified destination paths.
+- `/api/files`: Serves file explorer endpoints for directory listing, search, moving, deletion, and batch zip downloading — all strictly contained within storage roots.
+- `/api/upload`: Handles standard multipart and chunked (`/api/upload/chunk`) file/media uploads to specified destination paths, protected against path traversal.
 - `/api/sync/validate-target`: Validates target NAS backup folders for writability and free disk space.
 - `/api/gallery`: Serves paginated media items filtered by user disk access rules.
 - `/api/users` & `/api/admin/users`: Manages registered users, creation, permissions updates, password resets, and account unlocking.
+- `/api/trash`: Multi-tenant trash endpoints (`/list`, `/restore`, `/purge`) with per-user ownership enforcement.
 - `/api/tunnel`: Manages Cloudflare Quick Tunnels and Permanent Named Tunnels (`/start`, `/stop`, `/configure-named`, `/status`).
 - `/api/activity`: Serves recent activity logs with strict user isolation (regular users only receive their own activity, while admins see global activity with user attribution tags).
 - `/api/admin/activity`: Admin-only endpoint serving the full security audit log with user attribution.
 - `/api/system`: Serves server status, uptime, network IP addresses, and system info.
 
 ## 5. Database Schema (`nas_data.db`)
-- **`users`**: Stores user ID, username, email, bcrypt password hash, role (`admin`/`user`), `is_readonly` flag, `allowed_disks` JSON array, email verification status, and timestamp.
+- **`users`**: Stores user ID, username, email, bcrypt password hash, role (`admin`/`user`), `is_readonly` flag, `allowed_disks` JSON array, `token_version` integer, email verification status, and timestamp.
+- **`pairing_codes`**: Stores ephemeral single-use mobile pairing codes with user ID, username, role, expiration timestamp, and redeemed flag.
+- **`trash_items`**: Stores trashed files with original path, trash path, deletion timestamp, size, and user `owner`.
 - **`activity_logs`**: SQLite table storing `id`, `type`, `detail`, `username`, and `time` with indexed username and timestamp columns for fast, secure audit querying.
 - **`sync_manifest`**: Keeps track of device ID, file hashes, filenames, file sizes, target NAS paths, and sync timestamps for deduplication.
 

@@ -1,8 +1,127 @@
+const fsSync = require('fs');
 const fs = require('fs').promises;
 const path = require('path');
 const { getDrives } = require('./driveService');
 const driveConfig = require('./driveConfigService');
 const dbService = require('./dbService');
+
+const APP_DIR = path.resolve(__dirname);
+const BASE_DIR = path.resolve(process.pkg ? path.dirname(process.execPath) : __dirname);
+const DATA_DIR = path.resolve(process.env.NAS_DATA_DIR || __dirname);
+const REPO_ROOT = path.resolve(path.join(__dirname, '..'));
+
+// Windows & OS system directories that must NEVER be accessed via storage API
+const SYSTEM_ROOTS = [
+  process.env.WINDIR,
+  process.env.SystemRoot,
+  process.env.ProgramFiles,
+  process.env['ProgramFiles(x86)'],
+  process.env.ProgramData,
+  process.env.APPDATA,
+  process.env.LOCALAPPDATA,
+  process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'AppData') : null,
+  process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'Application Data') : null,
+  APP_DIR,
+  BASE_DIR,
+  DATA_DIR,
+  REPO_ROOT
+].filter(Boolean).map(p => path.resolve(p).toLowerCase());
+
+// Blocked sensitive file names (exact match or lowercased)
+const SENSITIVE_FILENAMES = new Set([
+  '.env',
+  '.env.local',
+  '.env.production',
+  'nas_data.db',
+  'nas_data.db-wal',
+  'nas_data.db-shm',
+  'tunnel_config.json',
+  'drives_config.json',
+  'users.json',
+  'ntuser.dat',
+  'ntuser.ini',
+  'pagefile.sys',
+  'hiberfil.sys',
+  'swapfile.sys'
+]);
+
+function getCanonicalPath(targetPath) {
+  let resolved = path.resolve(targetPath);
+  try {
+    return fsSync.realpathSync(resolved);
+  } catch (err) {
+    let parts = [];
+    let curr = resolved;
+    while (curr && !fsSync.existsSync(curr)) {
+      parts.unshift(path.basename(curr));
+      const parent = path.dirname(curr);
+      if (parent === curr) break;
+      curr = parent;
+    }
+    try {
+      const realParent = fsSync.realpathSync(curr);
+      return path.join(realParent, ...parts);
+    } catch {
+      return resolved;
+    }
+  }
+}
+
+function isContainedWithin(childPath, parentDir) {
+  if (!childPath || !parentDir) return false;
+  const rel = path.relative(parentDir.toLowerCase(), childPath.toLowerCase());
+  return !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+/**
+ * Resolves a safe target path inside baseDir, preventing directory traversal and reserved names.
+ * @param {string} baseDir Base allowed directory
+ * @param {string} relativeOrFilename File name or relative path segment
+ * @returns {string} Fully resolved and contained absolute path
+ */
+function resolveSafeTarget(baseDir, relativeOrFilename) {
+  if (!baseDir || typeof baseDir !== 'string') {
+    throw new Error('Base directory is required');
+  }
+  if (!relativeOrFilename || typeof relativeOrFilename !== 'string') {
+    throw new Error('Filename or path segment is required');
+  }
+
+  // Null bytes
+  if (relativeOrFilename.includes('\0') || relativeOrFilename.includes('%00')) {
+    throw new Error('Access Denied: Malformed path string detected');
+  }
+
+  // Normalize slashes
+  const clean = relativeOrFilename.replace(/\\/g, '/');
+  const segments = clean.split('/').filter(s => s !== '' && s !== '.');
+
+  if (segments.length === 0) {
+    throw new Error('Access Denied: Empty file or path target');
+  }
+
+  for (const seg of segments) {
+    if (seg === '..' || seg.includes(':')) {
+      throw new Error('Access Denied: Directory traversal sequences (..) are forbidden');
+    }
+    const baseSeg = seg.split('.')[0].toUpperCase();
+    const reserved = ['CON', 'PRN', 'AUX', 'NUL', 'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9', 'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9'];
+    if (reserved.includes(baseSeg)) {
+      throw new Error(`Access Denied: Reserved system filename "${seg}" is forbidden`);
+    }
+  }
+
+  const resolvedBase = path.resolve(baseDir);
+  const resolvedTarget = path.resolve(resolvedBase, segments.join(path.sep));
+
+  // Containment check: target must be inside baseDir
+  const rel = path.relative(resolvedBase.toLowerCase(), resolvedTarget.toLowerCase());
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new Error('Access Denied: Target path escapes allowed base directory');
+  }
+
+  return resolvedTarget;
+}
 
 const MEDIA_EXTENSIONS = new Set([
   // Images
@@ -16,7 +135,7 @@ const VIDEO_EXTENSIONS = new Set([
 ]);
 
 /**
- * Validates a path to prevent directory traversal and verify it resides on an active drive or RAID pool.
+ * Validates a path to prevent directory traversal, verify active drive, and block access to system/app secrets.
  */
 async function validatePath(targetPath) {
   if (!targetPath) {
@@ -32,15 +151,22 @@ async function validatePath(targetPath) {
 
   // Handle RAID volume references (e.g. 'raid:vol_...', 'raid:myNAS', or volume name with subfolder)
   if (formatted.startsWith('raid:')) {
-    const parts = formatted.replace(/^raid:/, '').split(/[\\\/]/).filter(Boolean);
+    const rawRaid = formatted.replace(/^raid:/, '');
+    const parts = rawRaid.split(/[\\\/]/).filter(Boolean);
     const volKey = parts[0] || '';
-    const subfolder = parts.slice(1).join(path.sep);
+    for (const part of parts) {
+      if (part === '..' || part.includes(':')) {
+        throw new Error('Access Denied: Directory traversal sequences (..) are forbidden');
+      }
+    }
     const volumes = dbService.getAllVolumes();
     const raidVol = volumes.find(v => v.id === volKey || v.name.toLowerCase() === volKey.toLowerCase());
-    if (raidVol && Array.isArray(raidVol.member_disks) && raidVol.member_disks.length > 0) {
-      const primaryDisk = raidVol.member_disks[0].replace(/[\/\\]+$/, '');
-      formatted = path.join(primaryDisk + '\\', raidVol.name, subfolder);
+    if (!raidVol || !Array.isArray(raidVol.member_disks) || raidVol.member_disks.length === 0) {
+      throw new Error(`Access Denied: RAID volume "${volKey}" not found`);
     }
+    const primaryDisk = raidVol.member_disks[0].replace(/[\/\\]+$/, '');
+    const subfolder = parts.slice(1).join(path.sep);
+    formatted = path.join(primaryDisk + '\\', raidVol.name, subfolder);
   } else {
     // Check if path matches a RAID volume mount point or name
     const volumes = dbService.getAllVolumes();
@@ -55,23 +181,76 @@ async function validatePath(targetPath) {
     formatted += '\\';
   }
 
-  const resolvedPath = path.resolve(formatted);
-
   // Enforce Path Traversal Check: Reject any path containing '..' traversal segments
-  const pathSegments = targetPath.split(/[\\\/]/);
+  const pathSegments = formatted.split(/[\\\/]/);
   if (pathSegments.some(segment => segment.trim() === '..')) {
     throw new Error('Access Denied: Directory traversal sequences (..) are forbidden');
   }
 
+  const canonical = getCanonicalPath(formatted);
+
+  // Security Hardening: Block sensitive files (.env, nas_data.db, system files, etc.)
+  const baseName = path.basename(canonical).toLowerCase();
+  if (SENSITIVE_FILENAMES.has(baseName)) {
+    throw new Error(`Access Denied: Access to sensitive system or application file "${baseName}" is forbidden`);
+  }
+
+  // Security Hardening: Block protected system roots, app source directory, and data directories
+  for (const root of SYSTEM_ROOTS) {
+    if (isContainedWithin(canonical, root)) {
+      throw new Error('Access Denied: Access to protected system or application directory is forbidden');
+    }
+  }
+
   const drives = await getDrives();
   const driveLetters = drives.map(d => d.letter.toUpperCase().replace(/[\/\\]+$/, ''));
-  const targetDrive = resolvedPath.substring(0, 2).toUpperCase();
-  
+  const targetDrive = canonical.substring(0, 2).toUpperCase();
+
   if (!driveLetters.includes(targetDrive)) {
     throw new Error(`Access Denied: Drive "${targetDrive}" is not an active storage drive.`);
   }
-  
-  return resolvedPath;
+
+  const allowedPaths = driveConfig.getAllowedPaths();
+  const inRaid = dbService.getAllVolumes().some(vol => {
+    if (!Array.isArray(vol.member_disks)) return false;
+    return vol.member_disks.some(disk => {
+      const volPath = path.join(disk.replace(/[\/\\]+$/, '') + '\\', vol.name).toLowerCase();
+      return isContainedWithin(canonical, volPath);
+    });
+  });
+
+  // Security Hardening: Block System Drive (C:) by default
+  const isCDrive = targetDrive === 'C:';
+  if (isCDrive && !inRaid) {
+    if (!Array.isArray(allowedPaths) || allowedPaths.length === 0) {
+      throw new Error('Access Denied: System drive (C:) is blocked by default. Only explicitly configured storage drives or subfolders are allowed.');
+    }
+    const isExplicitlyAllowedOnC = allowedPaths.some(p => {
+      const norm = path.resolve(p).toLowerCase();
+      // Restrict access to root C:\ even if registered; only dedicated subfolders allowed
+      if (norm === 'c:\\' || norm === 'c:') {
+        return false;
+      }
+      return isContainedWithin(canonical, norm);
+    });
+    if (!isExplicitlyAllowedOnC) {
+      throw new Error('Access Denied: System drive (C:) root is restricted. Only explicitly registered subfolders on C: are permitted.');
+    }
+  }
+
+  // Check against explicitly configured allowed paths in driveConfig
+  if (allowedPaths !== null && Array.isArray(allowedPaths)) {
+    const isAllowed = allowedPaths.some(p => {
+      const norm = path.resolve(p).toLowerCase();
+      return isContainedWithin(canonical, norm);
+    });
+
+    if (!isAllowed && !inRaid) {
+      throw new Error(`Access Denied: Path "${canonical}" is not within an authorized storage drive.`);
+    }
+  }
+
+  return canonical;
 }
 
 /**
@@ -106,7 +285,6 @@ async function listFiles(dirPath) {
   });
 }
 
-const BASE_DIR = process.pkg ? path.dirname(process.execPath) : __dirname;
 const CACHE_DIR = path.join(BASE_DIR, '.nas_cache');
 const MEDIA_CACHE_FILE = path.join(CACHE_DIR, 'media_cache.json');
 
@@ -407,16 +585,19 @@ async function deleteFilesAndFolders(inputPaths) {
     if (!rawPath || typeof rawPath !== 'string') continue;
     const cleanPath = rawPath.trim();
 
-    // 1. Safety Guard: Never delete drive root (e.g. C:\, I:\, K:, K:\) or core system roots
+    // 1. Safety Guard: Validate through strict validatePath first (blocks .env, app dir, system roots, traversal)
+    try {
+      await validatePath(cleanPath);
+    } catch (vErr) {
+      results.failed.push({ path: cleanPath, error: vErr.message });
+      continue;
+    }
+
+    // Never delete drive root (e.g. C:\, I:\, K:, K:\)
     const cleanNoSlash = cleanPath.replace(/[\/\\]+$/, '');
     const norm = path.normalize(cleanPath).replace(/[\/\\]+$/, '');
     if (/^[a-zA-Z]:\.?$/.test(cleanNoSlash) || /^[a-zA-Z]:\.?$/.test(norm)) {
       results.failed.push({ path: cleanPath, error: 'Cannot delete drive root' });
-      continue;
-    }
-    const lowerNorm = norm.toLowerCase();
-    if (lowerNorm.endsWith(':\\windows') || lowerNorm.endsWith(':\\program files') || lowerNorm.endsWith(':\\program files (x86)')) {
-      results.failed.push({ path: cleanPath, error: 'Cannot delete protected system directory' });
       continue;
     }
 
@@ -464,6 +645,7 @@ async function deleteFilesAndFolders(inputPaths) {
     let anyDeleted = false;
     for (const p of pathsToDelete) {
       try {
+        await validatePath(p);
         const stats = await fs.stat(p).catch(() => null);
         if (stats) {
           if (stats.isDirectory()) {
@@ -492,6 +674,7 @@ async function deleteFilesAndFolders(inputPaths) {
 
 module.exports = {
   validatePath,
+  resolveSafeTarget,
   listFiles,
   getMediaGallery,
   rescanMediaGallery,

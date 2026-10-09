@@ -25,11 +25,6 @@
       <h2 id="auth-heading">Welcome back</h2>
       <p class="login-subtitle">Enter your passcode to access the dashboard</p>
       
-      <div class="auth-tabs">
-        <div class="auth-tab active" data-tab="login">Login</div>
-        <div class="auth-tab" data-tab="register">Create Account</div>
-      </div>
-
       <div id="login-error" class="login-error hidden"></div>
       <div id="register-error" class="login-error hidden"></div>
 
@@ -64,24 +59,6 @@
         </div>
         <button type="button" id="user-login-btn" class="btn btn-ghost btn-full">
           <span>Login with Password</span>
-        </button>
-      </div>
-
-      <div id="tab-register" class="auth-tab-content">
-        <label for="reg-username">Username</label>
-        <div class="input-group">
-          <input id="reg-username" class="input" type="text" placeholder="Choose a username" autocomplete="username" />
-        </div>
-        <label for="reg-password">Password</label>
-        <div class="input-group">
-          <input id="reg-password" class="input" type="password" placeholder="Min 6 characters" autocomplete="new-password" />
-        </div>
-        <label for="reg-confirm">Confirm Password</label>
-        <div class="input-group">
-          <input id="reg-confirm" class="input" type="password" placeholder="Confirm password" autocomplete="new-password" style="margin-bottom: 20px" />
-        </div>
-        <button type="button" id="register-btn" class="btn btn-primary btn-full">
-          <span>Create Account & Login</span>
         </button>
       </div>
     </div>

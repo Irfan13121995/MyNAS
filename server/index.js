@@ -9,6 +9,7 @@ const jwt = require('jsonwebtoken');
 const { Bonjour } = require('bonjour-service');
 const multer = require('multer');
 const bcrypt = require('bcryptjs');
+const cookieParser = require('cookie-parser');
 
 const rateLimit = require('express-rate-limit');
 
@@ -59,7 +60,7 @@ REQUIRE_EMAIL_VERIFICATION=false
 require('dotenv').config({ path: envPath });
 
 const { getDrives, getAvailableRaidDisks } = require('./driveService');
-const { listFiles, validatePath, getMediaGallery, rescanMediaGallery, searchFiles, deleteFilesAndFolders } = require('./fileService');
+const { listFiles, validatePath, resolveSafeTarget, getMediaGallery, rescanMediaGallery, searchFiles, deleteFilesAndFolders } = require('./fileService');
 const { streamFile } = require('./streamService');
 const tunnelService = require('./tunnelService');
 const { startTunnel, stopTunnel, getTunnelStatus, getNamedTunnelConfig, saveNamedTunnelConfig } = tunnelService;
@@ -69,9 +70,12 @@ const dbService = require('./dbService');
 const thumbnailService = require('./thumbnailService');
 const trashService = require('./trashService');
 const archiver = require('archiver');
+const QRCode = require('qrcode');
+
+const ALLOW_PUBLIC_REGISTRATION = process.env.ALLOW_PUBLIC_REGISTRATION === 'true';
 
 const app = express();
-app.set('trust proxy', 1);
+app.set('trust proxy', 'loopback');
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex');
 
@@ -128,15 +132,17 @@ app.use(cors({
     if (!origin) return callback(null, true);
 
     const savedConfig = tunnelService.getNamedTunnelConfig();
-    const customHost = savedConfig?.customUrl ? savedConfig.customUrl.replace(/^https?:\/\//, '').split('/')[0].split(':')[0] : '';
+    const customHost = savedConfig?.customUrl ? savedConfig.customUrl.replace(/^https?:\/\//, '').split('/')[0].split(':')[0].toLowerCase() : '';
 
-    // Allow localhost, LAN IPs (192.168.x.x, 10.x.x.x, 172.16-31.x.x, [::1]), Cloudflare domains, and custom tunnel domains
+    // Allow localhost, LAN IPs, exact active tunnel URL, and exact custom domain
     const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(origin);
     const isLan = /^https?:\/\/(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/.test(origin);
-    const isCloudflare = origin.endsWith('.trycloudflare.com') || origin.endsWith('.cloudflare.com');
-    const isCustomHost = customHost && (origin === `https://${customHost}` || origin === `http://${customHost}` || origin.includes(`://${customHost}`));
+    const activeTunnel = tunnelService.getStatus();
+    const activeTunnelUrl = activeTunnel?.url ? activeTunnel.url.replace(/\/+$/, '').toLowerCase() : null;
+    const isCurrentTunnel = activeTunnelUrl && origin.toLowerCase() === activeTunnelUrl;
+    const isCustomHost = customHost && (origin.toLowerCase() === `https://${customHost}` || origin.toLowerCase() === `http://${customHost}`);
 
-    if (isLocalhost || isLan || isCloudflare || isCustomHost) {
+    if (isLocalhost || isLan || isCurrentTunnel || isCustomHost) {
       return callback(null, true);
     }
     // Block unauthorized origins
@@ -145,7 +151,41 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json());
+app.use(cookieParser());
 app.use('/api/', globalApiLimiter);
+
+// Network / LAN Request Verifier
+function isLocalOrLanRequest(req) {
+  // Cloudflare tunnel headers indicate public internet origin
+  if (req.headers['cf-connecting-ip'] || req.headers['cf-ray'] || req.headers['cf-visitor']) {
+    return false;
+  }
+  const rawIp = req.ip || req.connection?.remoteAddress || req.socket?.remoteAddress || '';
+  const cleanIp = rawIp.replace(/^.*:/, '');
+  const isLocal = rawIp === '127.0.0.1' || rawIp === '::1' || rawIp === '::ffff:127.0.0.1';
+  const isLan = cleanIp.startsWith('192.168.') || cleanIp.startsWith('10.') || /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(cleanIp);
+  return isLocal || isLan;
+}
+
+// Session Cookie Helpers (HttpOnly, SameSite, Secure)
+function setAuthCookie(req, res, token) {
+  const isSecure = req.secure || req.headers['x-forwarded-proto'] === 'https' || !!req.headers['cf-connecting-ip'];
+  res.cookie('nas_token', token, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: isSecure,
+    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+  });
+}
+
+function clearAuthCookie(req, res) {
+  const isSecure = req.secure || req.headers['x-forwarded-proto'] === 'https' || !!req.headers['cf-connecting-ip'];
+  res.clearCookie('nas_token', {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: isSecure
+  });
+}
 
 console.log('====================================');
 console.log('  Personal NAS Server Status: Active');
@@ -154,7 +194,10 @@ console.log('====================================');
 
 // 2. Authentication Middleware
 const authenticateToken = (req, res, next) => {
-  let token = req.headers['authorization']?.split(' ')[1];
+  let token = req.cookies?.nas_token;
+  if (!token && req.headers['authorization']) {
+    token = req.headers['authorization'].split(' ')[1];
+  }
   if (!token && req.query.token) token = req.query.token;
   if (!token) return res.status(401).json({ error: 'Authentication token required' });
 
@@ -166,6 +209,9 @@ const authenticateToken = (req, res, next) => {
       const dbUser = usersService.getUserByUsername(decoded.username);
       if (!dbUser) return res.status(403).json({ error: 'User account no longer exists' });
       if (dbUser.status === 'disabled') return res.status(403).json({ error: 'Your account has been disabled by an administrator.' });
+      if (decoded.tokenVersion && dbUser.tokenVersion && decoded.tokenVersion !== dbUser.tokenVersion) {
+        return res.status(401).json({ error: 'Session invalidated. Please log in again.' });
+      }
       
       req.user = {
         ...decoded,
@@ -173,7 +219,8 @@ const authenticateToken = (req, res, next) => {
         username: dbUser.username,
         role: dbUser.role || 'user',
         isReadonly: Boolean(dbUser.isReadonly),
-        allowedDisks: dbUser.allowedDisks
+        allowedDisks: dbUser.allowedDisks,
+        tokenVersion: dbUser.tokenVersion
       };
     } else if (decoded.username === 'Passcode Admin' || decoded.role === 'admin') {
       req.user = {
@@ -211,8 +258,11 @@ const checkReadWrite = (req, res, next) => {
 };
 
 function isPathAllowed(targetPath, allowedDisks) {
-  if (!allowedDisks || !Array.isArray(allowedDisks) || allowedDisks.length === 0) return true;
-  if (!targetPath) return true;
+  // If allowedDisks is null or undefined: unrestricted (admin or default full access)
+  if (allowedDisks === null || allowedDisks === undefined) return true;
+  // If allowedDisks is an explicit array, an empty array means ZERO allowed disks!
+  if (!Array.isArray(allowedDisks) || allowedDisks.length === 0) return false;
+  if (!targetPath) return false;
 
   let cleanTarget = String(targetPath).replace(/::+/g, ':').trim().toUpperCase();
   if (/^[A-Z]:?$/.test(cleanTarget)) {
@@ -236,8 +286,9 @@ function isPathAllowed(targetPath, allowedDisks) {
 app.get('/api/setup/status', async (req, res) => {
   try {
     const hasUsers = usersService.hasAnyUsers();
-    const drives = await getDrives();
     const tunnelConfig = getNamedTunnelConfig();
+    // Security: Do not expose drive layout to unauthenticated callers if setup is already complete
+    const drives = hasUsers ? [] : await getDrives();
     res.json({
       needsSetup: !hasUsers,
       hasUsers,
@@ -255,6 +306,11 @@ app.post('/api/setup/complete', authLimiter, async (req, res) => {
       return res.status(403).json({ error: 'Setup has already been completed. Please log in.' });
     }
 
+    // Security Hardening: Initial setup must not be claimed over public Cloudflare tunnel
+    if (req.headers['cf-connecting-ip'] || req.headers['cf-ray']) {
+      return res.status(403).json({ error: 'Setup wizard can only be accessed locally on this machine or your local LAN, not through a public tunnel.' });
+    }
+
     const { username, email, password, storageDrive, tunnelToken, customUrl } = req.body;
     if (!username || username.length < 3) {
       return res.status(400).json({ error: 'Username must be at least 3 characters' });
@@ -263,7 +319,7 @@ app.post('/api/setup/complete', authLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 6 characters' });
     }
 
-    // 1. Create first user as Admin (always verified when created during initial setup)
+    // 1. Create first user as Admin
     const result = await usersService.createUser({ username, email, password, role: 'admin' });
     logActivity('auth', 'Initial Admin account configured via Setup Wizard: ' + username, username);
 
@@ -284,8 +340,11 @@ app.post('/api/setup/complete', authLimiter, async (req, res) => {
       username: result.user.username,
       role: 'admin',
       isReadonly: false,
-      allowedDisks: null
+      allowedDisks: null,
+      tokenVersion: result.user.tokenVersion || 1
     }, JWT_SECRET, { expiresIn: '7d' });
+
+    setAuthCookie(req, res, token);
 
     res.json({
       success: true,
@@ -305,53 +364,158 @@ app.post('/api/setup/complete', authLimiter, async (req, res) => {
 app.get('/api/auth/status', (req, res) => {
   res.json({ 
     hasUsers: usersService.hasAnyUsers(),
+    allowPublicRegistration: false,
     requireEmailVerification: process.env.REQUIRE_EMAIL_VERIFICATION !== 'false'
   });
 });
 
 app.post('/api/auth/register', authLimiter, async (req, res) => {
-  const { username, email, password } = req.body;
+  // Security Hardening: Public self-registration is permanently disabled. Admin-invite only.
+  return res.status(403).json({ 
+    error: 'Public registration is disabled. User accounts must be created by an administrator in the Admin Panel.' 
+  });
+});
+
+// Admin-Only User Creation Endpoint
+app.post('/api/admin/users/create', authenticateToken, requireAdmin, async (req, res) => {
+  const { username, email, password, role, isReadonly, allowedDisks } = req.body;
   if (!username || username.length < 3) {
     return res.status(400).json({ error: 'Username must be at least 3 characters' });
   }
   if (!password || password.length < 6) {
     return res.status(400).json({ error: 'Password must be at least 6 characters' });
   }
-  if (email && (!email.includes('@') || !email.includes('.'))) {
-    return res.status(400).json({ error: 'Please enter a valid email address' });
-  }
   try {
-    const protocol = req.protocol;
-    const host = req.get('host');
-    const baseUrl = `${protocol}://${host}`;
-
-    const result = await usersService.createUser({ username, email, password, baseUrl });
-    logActivity('auth', 'New account created: ' + username, username);
-    
-    // Check if email verification is required and pending
-    const requireVerification = process.env.REQUIRE_EMAIL_VERIFICATION !== 'false';
-    if (requireVerification && email && !result.user.emailVerified) {
-      return res.json({ 
-        message: 'Account created! Please check your email to verify your account before logging in.',
-        requireEmailVerification: true,
-        devLink: result.emailResult?.devLink
-      });
-    }
-
-    const token = jwt.sign({
-      authenticated: true,
-      id: result.user.id,
-      username: result.user.username,
-      role: result.user.role,
-      isReadonly: result.user.isReadonly,
-      allowedDisks: result.user.allowedDisks
-    }, JWT_SECRET, { expiresIn: '7d' });
-    return res.json({ token, username: result.user.username, user: result.user });
+    const result = await usersService.createUser({
+      username,
+      email: email || null,
+      password,
+      role: role || 'user',
+      isReadonly: Boolean(isReadonly),
+      allowedDisks: Array.isArray(allowedDisks) ? allowedDisks : []
+    });
+    logActivity('admin', `Admin created user account "${username}" [role: ${role || 'user'}]`, req.user?.username);
+    res.json({ success: true, user: result.user });
   } catch (err) {
     if (err.code === 'USER_EXISTS') {
       return res.status(400).json({ error: 'Username or email is already taken' });
     }
-    return res.status(400).json({ error: err.message || 'Registration failed' });
+    return res.status(400).json({ error: err.message || 'Failed to create user' });
+  }
+});
+
+// User Session Invalidation / Logout
+app.post('/api/auth/logout', authenticateToken, async (req, res) => {
+  try {
+    if (req.user?.username && req.user.username !== 'Passcode Admin') {
+      usersService.incrementTokenVersion(req.user.username);
+    }
+    clearAuthCookie(req, res);
+    logActivity('auth', 'Logged out session', req.user?.username);
+    res.json({ success: true, message: 'Logged out successfully' });
+  } catch (err) {
+    clearAuthCookie(req, res);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── MOBILE PAIRING CODE ENDPOINTS (OFFLINE QR & SINGLE-USE CODES) ───────────
+
+app.post('/api/pairing/create', authenticateToken, async (req, res) => {
+  try {
+    const { pairingCode, expiresAt } = usersService.createPairingCode(req.user.username);
+    const namedConfig = tunnelService.getNamedTunnelConfig();
+    const tunnelStatus = tunnelService.getStatus();
+    let serverUrl = tunnelStatus?.url || namedConfig?.customUrl || `http://${req.get('host')}`;
+    serverUrl = serverUrl.replace(/\/+$/, '');
+
+    res.json({
+      success: true,
+      url: serverUrl,
+      pairingCode,
+      expiresAt,
+      username: req.user.username
+    });
+  } catch (err) {
+    res.status(500).json({ error: `Failed to create pairing code: ${err.message}` });
+  }
+});
+
+app.get('/api/pairing/qr', authenticateToken, async (req, res) => {
+  try {
+    const { pairingCode, expiresAt } = usersService.createPairingCode(req.user.username);
+    const namedConfig = tunnelService.getNamedTunnelConfig();
+    const tunnelStatus = tunnelService.getStatus();
+    let serverUrl = tunnelStatus?.url || namedConfig?.customUrl || `http://${req.get('host')}`;
+    serverUrl = serverUrl.replace(/\/+$/, '');
+
+    const payload = JSON.stringify({
+      url: serverUrl,
+      pairingCode,
+      username: req.user.username
+    });
+
+    const qrDataUrl = await QRCode.toDataURL(payload, {
+      width: 280,
+      margin: 2,
+      color: { dark: '#0F172A', light: '#FFFFFF' }
+    });
+
+    res.json({
+      success: true,
+      qrDataUrl,
+      serverUrl,
+      pairingCode,
+      expiresAt,
+      username: req.user.username
+    });
+  } catch (err) {
+    res.status(500).json({ error: `Failed to generate pairing QR: ${err.message}` });
+  }
+});
+
+app.post('/api/pairing/redeem', authLimiter, async (req, res) => {
+  const { code, deviceName } = req.body || {};
+  if (!code) {
+    return res.status(400).json({ error: 'Pairing code is required' });
+  }
+
+  try {
+    const user = usersService.redeemPairingCode(code);
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid or expired pairing code. Please generate a new QR code on your PC.' });
+    }
+
+    if (user.status === 'disabled') {
+      return res.status(403).json({ error: 'This user account is currently disabled.' });
+    }
+
+    const token = jwt.sign({
+      authenticated: true,
+      id: user.id,
+      username: user.username,
+      role: user.role || 'user',
+      isReadonly: user.isReadonly,
+      allowedDisks: user.allowedDisks,
+      tokenVersion: user.tokenVersion || 1,
+      device: deviceName || 'Mobile App'
+    }, JWT_SECRET, { expiresIn: '7d' });
+
+    logActivity('auth', `Mobile paired device [${deviceName || 'Mobile App'}]`, user.username);
+    return res.json({
+      success: true,
+      token,
+      username: user.username,
+      user: {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+        isReadonly: user.isReadonly,
+        allowedDisks: user.allowedDisks
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ error: `Pairing failed: ${err.message}` });
   }
 });
 
@@ -359,9 +523,13 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
   const { passcode, username, password } = req.body;
   
   if (passcode) {
+    if (!isLocalOrLanRequest(req)) {
+      return res.status(403).json({ error: 'Passcode login is only permitted from the local network (LAN / localhost) for emergency recovery.' });
+    }
     if (PASSCODE_HASH && bcrypt.compareSync(passcode.toString(), PASSCODE_HASH)) {
-      const token = jwt.sign({ authenticated: true, role: 'admin', username: 'Passcode Admin' }, JWT_SECRET, { expiresIn: '7d' });
-      logActivity('auth', 'Dashboard login via passcode', 'Passcode Admin');
+      const token = jwt.sign({ authenticated: true, role: 'admin', username: 'Passcode Admin', tokenVersion: 1 }, JWT_SECRET, { expiresIn: '7d' });
+      logActivity('auth', 'Dashboard recovery login via passcode', 'Passcode Admin');
+      setAuthCookie(req, res, token);
       return res.json({ token, username: 'Passcode Admin', user: { username: 'Passcode Admin', role: 'admin', isReadonly: false, allowedDisks: null } });
     }
     return res.status(401).json({ error: 'Incorrect passcode' });
@@ -376,9 +544,11 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
         username: result.user.username,
         role: result.user.role || 'user',
         isReadonly: result.user.isReadonly,
-        allowedDisks: result.user.allowedDisks
+        allowedDisks: result.user.allowedDisks,
+        tokenVersion: result.user.tokenVersion || 1
       }, JWT_SECRET, { expiresIn: '7d' });
       logActivity('auth', 'Dashboard login: ' + result.user.username, result.user.username);
+      setAuthCookie(req, res, token);
       return res.json({ token, username: result.user.username, user: result.user });
     }
 
@@ -401,10 +571,22 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
   return res.status(400).json({ error: 'Credentials required' });
 });
 
+const escapeHtml = (str) => {
+  if (!str || typeof str !== 'string') return '';
+  return str.replace(/[&<>"']/g, (m) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  })[m]);
+};
+
 app.get('/api/auth/verify-email', (req, res) => {
   const { token } = req.query;
   const result = usersService.verifyEmail(token);
   if (result.success) {
+    const safeUsername = escapeHtml(result.username);
     logActivity('auth', `Email verified for user: ${result.username}`, result.username);
     return res.send(`
       <!DOCTYPE html>
@@ -422,7 +604,7 @@ app.get('/api/auth/verify-email', (req, res) => {
       <body>
         <div class="card">
           <h1>✅ Email Verified!</h1>
-          <p>Account <strong>${result.username}</strong> has been successfully verified.</p>
+          <p>Account <strong>${safeUsername}</strong> has been successfully verified.</p>
           <p>You can now log in using the Personal NAS Android App or Web Dashboard.</p>
           <a class="btn" href="/">Return to Dashboard</a>
         </div>
@@ -430,6 +612,7 @@ app.get('/api/auth/verify-email', (req, res) => {
       </html>
     `);
   }
+  const safeMessage = escapeHtml(result.message || 'Invalid or expired token');
   return res.status(400).send(`
     <!DOCTYPE html>
     <html>
@@ -437,7 +620,7 @@ app.get('/api/auth/verify-email', (req, res) => {
     <body style="background:#0f172a;color:#f8fafc;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
       <div style="background:#1e293b;padding:36px;border-radius:16px;text-align:center;max-width:400px;border:1px solid #334155;">
         <h2 style="color:#ef4444;margin-top:0;">❌ Verification Failed</h2>
-        <p style="color:#94a3b8;line-height:1.5;">${result.message || 'Invalid or expired token'}</p>
+        <p style="color:#94a3b8;line-height:1.5;">${safeMessage}</p>
       </div>
     </body>
     </html>
@@ -582,8 +765,8 @@ app.get('/api/drives', authenticateToken, async (req, res) => {
 
     let drives;
     if (allowedPaths === null) {
-      // First run: all auto-detected drives are allowed
-      drives = allDrives;
+      // First run: auto-detected storage drives, excluding system drive C: by default
+      drives = allDrives.filter(d => !d.letter.toUpperCase().startsWith('C:'));
     } else {
       // Filter auto-detected to only allowed
       drives = allDrives.filter(d =>
@@ -606,7 +789,7 @@ app.get('/api/drives', authenticateToken, async (req, res) => {
     }
 
     // Apply user disk permission filter
-    if (req.user?.allowedDisks && Array.isArray(req.user.allowedDisks) && req.user.allowedDisks.length > 0) {
+    if (req.user && req.user.role !== 'admin' && req.user.allowedDisks !== null && req.user.allowedDisks !== undefined) {
       drives = drives.filter(d => isPathAllowed(d.letter, req.user.allowedDisks));
     }
 
@@ -624,7 +807,9 @@ app.get('/api/drives/available', authenticateToken, requireAdmin, async (req, re
 
     const drivesWithStatus = allDrives.map(d => ({
       ...d,
-      isRegistered: allowedPaths === null || allowedPaths.includes(d.letter) || allowedPaths.includes(d.letter + '\\')
+      isRegistered: allowedPaths === null 
+        ? !d.letter.toUpperCase().startsWith('C:') 
+        : (allowedPaths.includes(d.letter) || allowedPaths.includes(d.letter + '\\') || allowedPaths.includes(d.letter + '/'))
     }));
 
     res.json(drivesWithStatus);
@@ -844,6 +1029,11 @@ app.get('/api/files', authenticateToken, async (req, res) => {
     if (targetPath.startsWith('raid:')) {
       const parts = targetPath.replace(/^raid:/, '').split(/[\\\/]/).filter(Boolean);
       const volKey = parts[0] || '';
+      for (const p of parts) {
+        if (p === '..' || p.includes(':')) {
+          return res.status(403).json({ error: 'Access Denied: Directory traversal sequences (..) are forbidden' });
+        }
+      }
       raidSubfolder = parts.slice(1).join(path.sep);
       raidVol = volumes.find(v => v.id === volKey || v.name.toLowerCase() === volKey.toLowerCase());
     } else {
@@ -852,7 +1042,13 @@ app.get('/api/files', authenticateToken, async (req, res) => {
 
     if (raidVol && Array.isArray(raidVol.member_disks) && raidVol.member_disks.length > 0) {
       const cleanPrimary = raidVol.member_disks[0].replace(/[\/\\]+$/, '');
-      const raidDir = path.join(cleanPrimary + '\\', raidVol.name, raidSubfolder);
+      if (!isPathAllowed(cleanPrimary + '\\', req.user?.allowedDisks)) {
+        return res.status(403).json({ error: 'Access Denied: You do not have permission to access this RAID volume.' });
+      }
+
+      const volRoot = path.join(cleanPrimary + '\\', raidVol.name);
+      await safeEnsureDir(volRoot);
+      const raidDir = raidSubfolder ? resolveSafeTarget(volRoot, raidSubfolder) : volRoot;
       await safeEnsureDir(raidDir);
 
       const files = await listFiles(raidDir);
@@ -891,10 +1087,15 @@ app.post('/api/files/delete', authenticateToken, checkReadWrite, async (req, res
     return res.status(400).json({ error: 'No files or folders specified for deletion' });
   }
 
-  // Check disk permissions
+  // Check disk permissions and validate paths
   for (const p of itemsToDelete) {
     if (!isPathAllowed(p, req.user?.allowedDisks)) {
       return res.status(403).json({ error: `Access Denied: You do not have permission to delete "${p}"` });
+    }
+    try {
+      await validatePath(p);
+    } catch (vErr) {
+      return res.status(403).json({ error: `Access Denied: ${vErr.message}` });
     }
   }
 
@@ -928,6 +1129,11 @@ app.delete('/api/files', authenticateToken, checkReadWrite, async (req, res) => 
   for (const p of itemsToDelete) {
     if (!isPathAllowed(p, req.user?.allowedDisks)) {
       return res.status(403).json({ error: `Access Denied: You do not have permission to delete "${p}"` });
+    }
+    try {
+      await validatePath(p);
+    } catch (vErr) {
+      return res.status(403).json({ error: `Access Denied: ${vErr.message}` });
     }
   }
 
@@ -1073,6 +1279,12 @@ app.post('/api/upload', authenticateToken, checkReadWrite, upload.single('file')
   if (destinationDir.startsWith('raid:')) {
     const parts = destinationDir.replace(/^raid:/, '').split(/[\\\/]/).filter(Boolean);
     const volKey = parts[0] || '';
+    for (const p of parts) {
+      if (p === '..' || p.includes(':')) {
+        try { await fs.promises.unlink(req.file.path); } catch {}
+        return res.status(403).json({ error: 'Access Denied: Directory traversal sequences (..) are forbidden' });
+      }
+    }
     raidSubfolder = parts.slice(1).join(path.sep);
     raidVol = volumes.find(v => v.id === volKey || v.name.toLowerCase() === volKey.toLowerCase());
   } else {
@@ -1085,20 +1297,20 @@ app.post('/api/upload', authenticateToken, checkReadWrite, upload.single('file')
 
     if (raidVol && Array.isArray(raidVol.member_disks) && raidVol.member_disks.length > 0) {
       // ── RAID 1 MIRRORED UPLOAD ──
-      // Write to primary member disk and automatically mirror to all other member disks
       const memberPaths = [];
       for (const disk of raidVol.member_disks) {
         const cleanDisk = disk.replace(/[\/\\]+$/, '');
-        let targetDir = path.join(cleanDisk + '\\', raidVol.name, raidSubfolder);
+        if (!isPathAllowed(cleanDisk + '\\', req.user?.allowedDisks)) {
+          try { await fs.promises.unlink(req.file.path); } catch {}
+          return res.status(403).json({ error: 'Access Denied: You do not have permission to upload to this RAID volume.' });
+        }
+
+        const volRoot = path.join(cleanDisk + '\\', raidVol.name);
+        await safeEnsureDir(volRoot);
+        const targetDir = raidSubfolder ? resolveSafeTarget(volRoot, raidSubfolder) : volRoot;
         await safeEnsureDir(targetDir);
 
-        let targetFile;
-        if (relativePath) {
-          const cleanRel = relativePath.replace(/\\/g, '/').split('/').filter(p => p !== '' && p !== '..').join(path.sep);
-          targetFile = path.join(targetDir, cleanRel);
-        } else {
-          targetFile = path.join(targetDir, req.file.originalname);
-        }
+        const targetFile = resolveSafeTarget(targetDir, relativePath || req.file.originalname);
         await safeEnsureDir(path.dirname(targetFile));
         memberPaths.push(targetFile);
       }
@@ -1114,7 +1326,7 @@ app.post('/api/upload', authenticateToken, checkReadWrite, upload.single('file')
         } else throw renameErr;
       }
 
-      // Mirror file to all remaining member disks (e.g. Disk 2 / K:)
+      // Mirror file to all remaining member disks
       for (let i = 1; i < memberPaths.length; i++) {
         try {
           await fs.promises.copyFile(primaryPath, memberPaths[i]);
@@ -1135,13 +1347,7 @@ app.post('/api/upload', authenticateToken, checkReadWrite, upload.single('file')
       const validatedDir = await validatePath(destinationDir);
       await safeEnsureDir(validatedDir);
 
-      if (relativePath) {
-        const cleanRelPath = relativePath.replace(/\\/g, '/').split('/').filter(p => p !== '' && p !== '..').join(path.sep);
-        finalPath = path.join(validatedDir, cleanRelPath);
-      } else {
-        finalPath = path.join(validatedDir, req.file.originalname);
-      }
-
+      finalPath = resolveSafeTarget(validatedDir, relativePath || req.file.originalname);
       await safeEnsureDir(path.dirname(finalPath));
 
       try {
@@ -1172,12 +1378,21 @@ app.post('/api/upload/chunk', authenticateToken, checkReadWrite, upload.single('
   const fileId = String(rawFileId).replace(/[^a-zA-Z0-9_-]/g, '');
   const chunkIndex = parseInt(req.headers['x-chunk-index'] || req.query.chunkIndex || req.body?.chunkIndex || '0', 10);
   const totalChunks = parseInt(req.headers['x-total-chunks'] || req.query.totalChunks || req.body?.totalChunks || '1', 10);
-  const originalName = req.headers['x-filename'] || req.query.filename || req.body?.fileName || req.file.originalname;
+  const rawOriginalName = req.headers['x-filename'] || req.query.filename || req.body?.fileName || req.file.originalname;
   const destinationDir = req.query.destination || req.body?.destination;
+
+  // Sanitize filename to strict base name
+  const originalName = path.basename(String(rawOriginalName || '')).replace(/[\x00-\x1f\x7f:*?"<>|]/g, '').trim();
 
   if (!fileId || !destinationDir || !originalName) {
     try { await fs.promises.unlink(req.file.path); } catch {}
-    return res.status(400).json({ error: 'Missing fileId, destination, or fileName parameter' });
+    return res.status(400).json({ error: 'Missing or invalid fileId, destination, or fileName parameter' });
+  }
+
+  // Validate chunk ranges
+  if (isNaN(chunkIndex) || isNaN(totalChunks) || chunkIndex < 0 || totalChunks <= 0 || chunkIndex >= totalChunks || totalChunks > 50000) {
+    try { await fs.promises.unlink(req.file.path); } catch {}
+    return res.status(400).json({ error: 'Invalid chunkIndex or totalChunks parameter' });
   }
 
   // Check if destination is a RAID volume
@@ -1187,13 +1402,33 @@ app.post('/api/upload/chunk', authenticateToken, checkReadWrite, upload.single('
   if (destinationDir.startsWith('raid:')) {
     const parts = destinationDir.replace(/^raid:/, '').split(/[\\\/]/).filter(Boolean);
     const volKey = parts[0] || '';
+    for (const p of parts) {
+      if (p === '..' || p.includes(':')) {
+        try { await fs.promises.unlink(req.file.path); } catch {}
+        return res.status(403).json({ error: 'Access Denied: Directory traversal sequences (..) are forbidden' });
+      }
+    }
     raidSubfolder = parts.slice(1).join(path.sep);
     raidVol = volumes.find(v => v.id === volKey || v.name.toLowerCase() === volKey.toLowerCase());
   } else {
     raidVol = volumes.find(v => v.name.toLowerCase() === destinationDir.toLowerCase() || (v.mount_point && v.mount_point.toUpperCase() === destinationDir.toUpperCase()));
   }
 
-  const chunkDir = path.join(__dirname, 'temp_uploads', 'chunks', fileId);
+  // Pre-validate ACL permissions before writing chunk
+  if (raidVol && Array.isArray(raidVol.member_disks) && raidVol.member_disks.length > 0) {
+    const cleanPrimary = raidVol.member_disks[0].replace(/[\/\\]+$/, '');
+    if (!isPathAllowed(cleanPrimary + '\\', req.user?.allowedDisks)) {
+      try { await fs.promises.unlink(req.file.path); } catch {}
+      return res.status(403).json({ error: 'Access Denied: You do not have permission to upload to this RAID volume.' });
+    }
+  } else {
+    if (!isPathAllowed(destinationDir, req.user?.allowedDisks)) {
+      try { await fs.promises.unlink(req.file.path); } catch {}
+      return res.status(403).json({ error: 'Access Denied: You do not have permission to upload to this drive or directory.' });
+    }
+  }
+
+  const chunkDir = path.join(uploadTempDir, 'chunks', fileId);
 
   try {
     await safeEnsureDir(chunkDir);
@@ -1209,9 +1444,12 @@ app.post('/api/upload/chunk', authenticateToken, checkReadWrite, upload.single('
         const memberPaths = [];
         for (const disk of raidVol.member_disks) {
           const cleanDisk = disk.replace(/[\/\\]+$/, '');
-          const targetDir = path.join(cleanDisk + '\\', raidVol.name, raidSubfolder);
+          const volRoot = path.join(cleanDisk + '\\', raidVol.name);
+          await safeEnsureDir(volRoot);
+          const targetDir = raidSubfolder ? resolveSafeTarget(volRoot, raidSubfolder) : volRoot;
           await safeEnsureDir(targetDir);
-          memberPaths.push(path.join(targetDir, originalName));
+          const targetFile = resolveSafeTarget(targetDir, originalName);
+          memberPaths.push(targetFile);
         }
 
         const primaryPath = memberPaths[0];
@@ -1242,13 +1480,9 @@ app.post('/api/upload/chunk', authenticateToken, checkReadWrite, upload.single('
         finalPath = primaryPath;
         logActivity('upload', `Uploaded (chunked) to RAID 1 [${raidVol.name}]: ${originalName}`, req.user?.username);
       } else {
-        if (!isPathAllowed(destinationDir, req.user?.allowedDisks)) {
-          return res.status(403).json({ error: 'Access Denied: You do not have permission to upload to this drive or directory.' });
-        }
-
         const validatedDir = await validatePath(destinationDir);
         await safeEnsureDir(validatedDir);
-        finalPath = path.join(validatedDir, originalName);
+        finalPath = resolveSafeTarget(validatedDir, originalName);
 
         const writeStream = fs.createWriteStream(finalPath);
         for (let i = 0; i < totalChunks; i++) {
@@ -1269,7 +1503,7 @@ app.post('/api/upload/chunk', authenticateToken, checkReadWrite, upload.single('
       }
 
       // Clean up chunk directory
-      await fs.promises.rmdir(chunkDir).catch(() => {});
+      await fs.promises.rm(chunkDir, { recursive: true, force: true }).catch(() => {});
 
       return res.json({ success: true, completed: true, complete: true, path: finalPath });
     }
@@ -1381,12 +1615,12 @@ app.get('/api/thumbnail', authenticateToken, async (req, res) => {
 });
 
 app.get('/api/trash', authenticateToken, (req, res) => {
-  res.json(trashService.listTrash());
+  res.json(trashService.listTrash(req.user));
 });
 
 app.post('/api/trash/restore', authenticateToken, checkReadWrite, (req, res) => {
   try {
-    const item = trashService.restoreFromTrash(req.body.id);
+    const item = trashService.restoreFromTrash(req.body.id, req.user);
     logActivity('trash', `Restored: ${item.fileName}`, req.user?.username);
     res.json({ success: true, item });
   } catch (err) {
@@ -1396,7 +1630,7 @@ app.post('/api/trash/restore', authenticateToken, checkReadWrite, (req, res) => 
 
 app.delete('/api/trash/purge', authenticateToken, checkReadWrite, (req, res) => {
   try {
-    trashService.purgeTrash(req.query.id);
+    trashService.purgeTrash(req.query.id, req.user);
     logActivity('trash', 'Purged trash item', req.user?.username);
     res.json({ success: true });
   } catch (err) {
@@ -1443,7 +1677,8 @@ app.post('/api/files/rename', authenticateToken, checkReadWrite, async (req, res
           for (let i = 0; i < vol.member_disks.length; i++) {
             const d = vol.member_disks[i].replace(/[\/\\]+$/, '');
             const memberOld = path.join(d + '\\', vol.name, relWithinVol);
-            const memberNew = path.join(d + '\\', vol.name, parentRel, cleanNewName);
+            const vRoot = path.join(d + '\\', vol.name);
+            const memberNew = resolveSafeTarget(vRoot, parentRel ? path.join(parentRel, cleanNewName) : cleanNewName);
             if (fs.existsSync(memberOld)) {
               await fs.promises.rename(memberOld, memberNew);
             }
@@ -1458,7 +1693,8 @@ app.post('/api/files/rename', authenticateToken, checkReadWrite, async (req, res
     if (!foundRaid) {
       const validatedOld = await validatePath(oldPath);
       const parentDir = path.dirname(validatedOld);
-      const validatedNew = path.join(parentDir, cleanNewName);
+      const validatedNew = resolveSafeTarget(parentDir, cleanNewName);
+      await validatePath(validatedNew);
       await fs.promises.rename(validatedOld, validatedNew);
       finalPath = validatedNew;
     }
@@ -1500,7 +1736,8 @@ app.post('/api/files/mkdir', authenticateToken, checkReadWrite, async (req, res)
           // Create across all member disks
           for (let i = 0; i < vol.member_disks.length; i++) {
             const d = vol.member_disks[i].replace(/[\/\\]+$/, '');
-            const memberDir = path.join(d + '\\', vol.name, relWithinVol);
+            const vRoot = path.join(d + '\\', vol.name);
+            const memberDir = resolveSafeTarget(vRoot, relWithinVol);
             await safeEnsureDir(memberDir);
             if (i === 0) finalPath = memberDir;
           }
@@ -1635,6 +1872,7 @@ app.get('/api/sync/synced-filenames', authenticateToken, async (req, res) => {
 
     const addFilesFromDir = (dirPath) => {
       try {
+        if (!dirPath || !isPathAllowed(dirPath, req.user?.allowedDisks)) return;
         if (!fsSync.existsSync(dirPath)) return;
         const entries = fsSync.readdirSync(dirPath, { withFileTypes: true });
         for (const entry of entries) {
@@ -1650,48 +1888,52 @@ app.get('/api/sync/synced-filenames', authenticateToken, async (req, res) => {
 
     let primaryFolder = 'MobileUploads';
 
-    // 1. If explicit folder passed, scan it first
+    // 1. If explicit folder passed, check ACL and scan it first
     if (folder) {
       try {
-        const validated = await validatePath(folder);
-        addFilesFromDir(validated);
-        primaryFolder = path.basename(validated);
+        if (isPathAllowed(folder, req.user?.allowedDisks)) {
+          const validated = await validatePath(folder);
+          addFilesFromDir(validated);
+          primaryFolder = path.basename(validated);
+        }
       } catch (e) {}
     }
 
-    // 2. Scan standard RAID member disks for MobileUploads and NAS_Backup
+    // 2. Scan standard RAID member disks for MobileUploads and NAS_Backup (ACL filtered)
     try {
       const volumes = dbService.getAllVolumes();
       for (const vol of volumes) {
         if (Array.isArray(vol.member_disks)) {
           for (const disk of vol.member_disks) {
             const cleanDisk = disk.replace(/[\/\\]+$/, '');
-            addFilesFromDir(path.join(cleanDisk + '\\', vol.name, 'MobileUploads'));
-            addFilesFromDir(path.join(cleanDisk + '\\', vol.name, 'NAS_Backup'));
-            addFilesFromDir(path.join(cleanDisk + '\\', 'MobileUploads'));
-            addFilesFromDir(path.join(cleanDisk + '\\', 'NAS_Backup'));
+            const p1 = path.join(cleanDisk + '\\', vol.name, 'MobileUploads');
+            const p2 = path.join(cleanDisk + '\\', vol.name, 'NAS_Backup');
+            if (isPathAllowed(p1, req.user?.allowedDisks)) addFilesFromDir(p1);
+            if (isPathAllowed(p2, req.user?.allowedDisks)) addFilesFromDir(p2);
           }
         }
       }
     } catch (e) {}
 
-    // 3. Scan physical drives for MobileUploads and NAS_Backup
+    // 3. Scan physical drives for MobileUploads and NAS_Backup (ACL filtered)
     try {
       const drives = await getDrives();
       for (const d of drives) {
         const dPath = (d.letter || '').replace(/[\/\\]+$/, '') + '\\';
-        addFilesFromDir(path.join(dPath, 'MobileUploads'));
-        addFilesFromDir(path.join(dPath, 'NAS_Backup'));
-        addFilesFromDir(path.join(dPath, 'myNAS', 'MobileUploads'));
-        addFilesFromDir(path.join(dPath, 'myNAS', 'NAS_Backup'));
+        if (isPathAllowed(dPath, req.user?.allowedDisks)) {
+          addFilesFromDir(path.join(dPath, 'MobileUploads'));
+          addFilesFromDir(path.join(dPath, 'NAS_Backup'));
+          addFilesFromDir(path.join(dPath, 'myNAS', 'MobileUploads'));
+          addFilesFromDir(path.join(dPath, 'myNAS', 'NAS_Backup'));
+        }
       }
     } catch (e) {}
 
-    // 4. Incorporate gallery items
+    // 4. Incorporate gallery items (ACL filtered)
     try {
       const galleryItems = await getMediaGallery();
       for (const item of galleryItems) {
-        if (item.name) {
+        if (item.name && item.path && isPathAllowed(item.path, req.user?.allowedDisks)) {
           const lower = item.name.toLowerCase();
           if (!filenameMap.has(lower)) {
             filenameMap.set(lower, item.name);

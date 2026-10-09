@@ -40,10 +40,11 @@ export default function ConnectionScreen({ onConnect }) {
   };
 
   const parseQrPayload = (rawData) => {
-    if (!rawData) return { url: '', token: null, username: null };
+    if (!rawData) return { url: '', token: null, pairingCode: null, username: null };
     let trimmed = rawData.trim();
     let url = trimmed;
     let token = null;
+    let pairingCode = null;
     let usernameVal = null;
 
     try {
@@ -52,11 +53,12 @@ export default function ConnectionScreen({ onConnect }) {
         const parsed = JSON.parse(decoded);
         if (parsed.url) url = parsed.url;
         if (parsed.token) token = parsed.token;
+        if (parsed.pairingCode) pairingCode = parsed.pairingCode;
         if (parsed.username || parsed.user?.username) usernameVal = parsed.username || parsed.user?.username;
       }
     } catch (e) {}
 
-    return { url, token, username: usernameVal };
+    return { url, token, pairingCode, username: usernameVal };
   };
 
   const openQrScanner = async () => {
@@ -67,15 +69,37 @@ export default function ConnectionScreen({ onConnect }) {
     }
   };
 
-  const handleBarCodeScanned = ({ data }) => {
+  const handleBarCodeScanned = async ({ data }) => {
     if (scanned || !data) return;
     setScanned(true);
 
-    const { url, token: targetToken, username: targetUser } = parseQrPayload(data);
+    const { url, token: targetToken, pairingCode, username: targetUser } = parseQrPayload(data);
     const cleanUrl = getCleanUrl(url);
     setQrModalVisible(false);
 
-    if (targetToken) {
+    if (pairingCode && cleanUrl) {
+      setLoading(true);
+      try {
+        const resp = await fetch(`${cleanUrl}/api/pairing/redeem`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: pairingCode, deviceName: `${Platform.OS} Phone` })
+        });
+        const result = await resp.json();
+        setLoading(false);
+        if (resp.ok && result.token) {
+          onConnect(cleanUrl, result.token, result.username || targetUser || 'NAS User');
+          return;
+        } else {
+          Alert.alert('Pairing Failed', result.error || 'The pairing code could not be verified or has expired. Please refresh the QR code on your PC.');
+          return;
+        }
+      } catch (err) {
+        setLoading(false);
+        Alert.alert('Connection Error', `Failed to reach NAS server at:\n${cleanUrl}\n\nPlease check network or tunnel connection.`);
+        return;
+      }
+    } else if (targetToken) {
       onConnect(cleanUrl, targetToken, targetUser || 'NAS User');
     } else if (cleanUrl) {
       Alert.alert(
@@ -88,16 +112,38 @@ export default function ConnectionScreen({ onConnect }) {
     }
   };
 
-  const handleManualPairSubmit = () => {
+  const handleManualPairSubmit = async () => {
     if (!manualCode.trim()) {
       Alert.alert('Pairing Code Required', 'Please paste the pairing code or URL from your myNAS web dashboard.');
       return;
     }
 
-    const { url, token: targetToken, username: targetUser } = parseQrPayload(manualCode.trim());
+    const { url, token: targetToken, pairingCode, username: targetUser } = parseQrPayload(manualCode.trim());
     const cleanUrl = getCleanUrl(url);
 
-    if (targetToken) {
+    if (pairingCode && cleanUrl) {
+      setLoading(true);
+      try {
+        const resp = await fetch(`${cleanUrl}/api/pairing/redeem`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: pairingCode, deviceName: `${Platform.OS} Phone` })
+        });
+        const result = await resp.json();
+        setLoading(false);
+        if (resp.ok && result.token) {
+          onConnect(cleanUrl, result.token, result.username || targetUser || 'NAS User');
+          return;
+        } else {
+          Alert.alert('Pairing Failed', result.error || 'Invalid or expired pairing code.');
+          return;
+        }
+      } catch (err) {
+        setLoading(false);
+        Alert.alert('Connection Error', `Failed to reach server at ${cleanUrl}.`);
+        return;
+      }
+    } else if (targetToken) {
       onConnect(cleanUrl, targetToken, targetUser || 'NAS User');
     } else {
       Alert.alert(

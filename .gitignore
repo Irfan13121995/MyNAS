@@ -14,6 +14,8 @@ web-build/
 nas_data.db
 temp_uploads/
 Mobile Backups/
+MobileUploads/
+server/MobileUploads/
 *.bak
 cloudflared/
 users.json

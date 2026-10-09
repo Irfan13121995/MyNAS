@@ -1,5 +1,6 @@
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const Database = require('better-sqlite3');
 
@@ -31,6 +32,14 @@ db.exec(`
     username TEXT NOT NULL,
     expires_at INTEGER NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS pairing_codes (
+    code_hash TEXT PRIMARY KEY,
+    username TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_pairing_codes_expires ON pairing_codes(expires_at);
 
   CREATE TABLE IF NOT EXISTS sync_settings (
     user_id TEXT PRIMARY KEY,
@@ -83,6 +92,9 @@ if (!columns.includes('allowed_disks')) {
 }
 if (!columns.includes('status')) {
   db.exec("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'");
+}
+if (!columns.includes('token_version')) {
+  db.exec("ALTER TABLE users ADD COLUMN token_version INTEGER DEFAULT 1");
 }
 
 // Auto-migrate legacy users.json if exists
@@ -141,6 +153,7 @@ function mapUserRow(row) {
     isReadonly: Boolean(row.is_readonly),
     allowedDisks: Array.isArray(parsedDisks) ? parsedDisks : null,
     status: row.status || 'active',
+    tokenVersion: row.token_version || 1,
     failedAttempts: row.failed_attempts,
     lockUntil: row.lock_until,
     createdAt: row.created_at
@@ -187,7 +200,7 @@ function getUserByEmail(email) {
   return mapUserRow(row);
 }
 
-async function createUser({ username, email, password, role }) {
+async function createUser({ username, email, password, role, isReadonly, allowedDisks }) {
   if (getUserByUsername(username) || getUserByEmail(email)) {
     const err = new Error('Username or email is already taken');
     err.code = 'USER_EXISTS';
@@ -197,21 +210,25 @@ async function createUser({ username, email, password, role }) {
   // First user is automatically admin unless specified otherwise
   const isFirst = !hasAnyUsers();
   const assignedRole = role || (isFirst ? 'admin' : 'user');
+  const assignedReadonly = isReadonly !== undefined ? (isReadonly ? 1 : 0) : (isFirst ? 0 : 1);
+  const assignedDisks = allowedDisks !== undefined
+    ? (Array.isArray(allowedDisks) ? JSON.stringify(allowedDisks) : null)
+    : (isFirst ? null : '[]');
 
-  const id = Math.random().toString(36).substring(2) + Date.now().toString(36);
+  const id = crypto.randomUUID();
   const passwordHash = await bcrypt.hash(password, 10);
   const createdAt = new Date().toISOString();
 
   db.prepare(`
-    INSERT INTO users (id, username, email, password_hash, email_verified, role, is_readonly, allowed_disks, status, failed_attempts, lock_until, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, 0, NULL, 'active', 0, 0, ?)
-  `).run(id, username, email || null, passwordHash, email ? 0 : 1, assignedRole, createdAt);
+    INSERT INTO users (id, username, email, password_hash, email_verified, role, is_readonly, allowed_disks, status, failed_attempts, lock_until, created_at, token_version)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?, 1)
+  `).run(id, username, email || null, passwordHash, email ? 0 : 1, assignedRole, assignedReadonly, assignedDisks, createdAt);
 
   const user = getUserByUsername(username);
 
   let emailResult = null;
   if (email) {
-    const token = Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2);
+    const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = Date.now() + 24 * 60 * 60 * 1000;
     db.prepare('INSERT INTO verification_tokens (token, username, expires_at) VALUES (?, ?, ?)').run(token, username, expiresAt);
     emailResult = { success: true, token };
@@ -311,7 +328,7 @@ function updateUserPermissions(id, { role, isReadonly, allowedDisks, status }) {
 
   db.prepare(`
     UPDATE users
-    SET role = ?, is_readonly = ?, allowed_disks = ?, status = ?
+    SET role = ?, is_readonly = ?, allowed_disks = ?, status = ?, token_version = COALESCE(token_version, 1) + 1
     WHERE id = ?
   `).run(newRole, newReadonly, newAllowedDisksJson, newStatus, id);
 
@@ -322,8 +339,47 @@ async function resetUserPassword(id, newPassword) {
   const user = getUserById(id);
   if (!user) throw new Error('User not found');
   const passwordHash = await bcrypt.hash(newPassword, 10);
-  db.prepare('UPDATE users SET password_hash = ?, failed_attempts = 0, lock_until = 0 WHERE id = ?').run(passwordHash, id);
+  db.prepare('UPDATE users SET password_hash = ?, failed_attempts = 0, lock_until = 0, token_version = COALESCE(token_version, 1) + 1 WHERE id = ?').run(passwordHash, id);
   return true;
+}
+
+function incrementTokenVersion(usernameOrId) {
+  db.prepare('UPDATE users SET token_version = COALESCE(token_version, 1) + 1 WHERE id = ? OR LOWER(username) = LOWER(?)').run(usernameOrId, usernameOrId);
+}
+
+function createPairingCode(username) {
+  const cleanCode = crypto.randomBytes(24).toString('base64url');
+  const codeHash = crypto.createHash('sha256').update(cleanCode).digest('hex');
+  const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes
+  const createdAt = new Date().toISOString();
+
+  try {
+    db.prepare('DELETE FROM pairing_codes WHERE expires_at < ?').run(Date.now());
+  } catch (e) {}
+
+  db.prepare(`
+    INSERT INTO pairing_codes (code_hash, username, expires_at, created_at)
+    VALUES (?, ?, ?, ?)
+  `).run(codeHash, username, expiresAt, createdAt);
+
+  return { pairingCode: cleanCode, expiresAt };
+}
+
+function redeemPairingCode(code) {
+  if (!code || typeof code !== 'string') return null;
+  const codeHash = crypto.createHash('sha256').update(code.trim()).digest('hex');
+  const now = Date.now();
+
+  const row = db.prepare(`
+    SELECT * FROM pairing_codes WHERE code_hash = ? AND expires_at > ?
+  `).get(codeHash, now);
+
+  if (!row) return null;
+
+  // Single-use: delete immediately
+  db.prepare('DELETE FROM pairing_codes WHERE code_hash = ?').run(codeHash);
+
+  return getUserByUsername(row.username);
 }
 
 function unlockUserAccount(id) {
@@ -533,5 +589,8 @@ module.exports = {
   createVolume,
   getVolumeById,
   getAllVolumes,
-  deleteVolume
+  deleteVolume,
+  createPairingCode,
+  redeemPairingCode,
+  incrementTokenVersion
 };
