@@ -11,6 +11,7 @@
     "icons": "node build-assets/generate-icons.js",
     "dist": "npm run icons && electron-builder --win nsis",
     "dist:exe": "npm run icons && electron-builder --win nsis",
+    "build:exe": "npm run dist:exe",
     "dist:store": "npm run icons && electron-builder --win appx",
     "dist:all": "npm run icons && electron-builder --win nsis appx"
   },
