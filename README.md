@@ -57,7 +57,13 @@ Personal NAS can be deployed on any PC running **Windows 10 / 11** (or macOS / L
 
 Zero prerequisites needed! No Node.js, Python, or Git required.
 
-1. Download **`Personal NAS Setup 1.0.0.exe`** from the [Releases page](https://github.com/Irfan13121995/MyNAS/releases) or build it locally with `npm run build:exe`.
+1. **Download or Build the Installer**:
+   - Download **`Personal NAS Setup 1.0.0.exe`** from the [GitHub Releases page](https://github.com/Irfan13121995/MyNAS/releases).
+   - Or compile it locally from source by running:
+     ```powershell
+     npm run build:exe
+     ```
+     The generated installer executable will be created in `server/dist/Personal NAS Setup 1.0.0.exe`.
 2. Run the installer:
    - Installs Personal NAS to your user directory.
    - Automatically configures Windows Firewall (TCP port 3000).
@@ -141,7 +147,7 @@ If you prefer using the terminal (PowerShell, Command Prompt, or Terminal on Lin
 
 ---
 
-### ⚙️ Method 3: Automated Windows Service (Runs in Background on PC Boot)
+### ⚙️ Method 5: Automated Windows Service (Runs in Background on PC Boot)
 
 If you want Personal NAS to run permanently in the background as a Windows Service (starting automatically whenever your computer turns on without needing a terminal open):
 
@@ -166,23 +172,62 @@ If you want Personal NAS to run permanently in the background as a Windows Servi
 
 ---
 
-## 🔑 First-Time Login & Admin Account Setup
+## 🚀 First-Run 5-Step Windows Setup & Configuration Wizard
 
-When you open `http://localhost:3000` for the first time, you have two ways to log in:
+When Personal NAS is installed or started on a clean machine for the first time, it automatically presents the **5-Step Setup Wizard** guiding users through full storage, security, remote access, and phone pairing:
 
-### Option A: Register an Admin Account (Recommended)
-1. On the login page, click **"Create an Account"** (or switch to the Register tab).
-2. Enter your desired **Username**, **Email**, and **Password**.
-3. Click **Register**.
-4. **The very first account registered on Personal NAS is automatically granted full Administrator privileges** with zero email verification barriers! You can immediately manage users, storage disks, RAID pools, and system settings.
+```mermaid
+flowchart LR
+    S1["1. System Diagnostics"] --> S2["2. Storage Allocation"]
+    S2 --> S3["3. Admin Account"]
+    S3 --> S4["4. Remote Access"]
+    S4 --> S5["5. Mobile QR Pairing"]
+```
 
-### Option B: Quick Passcode Login
-1. When the server starts for the first time, check your terminal output or open `server/.env`.
-2. Look for the line:
-   ```env
-   PASSCODE=123456
-   ```
-3. Enter that 6-digit passcode on the dashboard login screen to instantly log in as the Master Admin.
+### 🖥️ Step 1: System Environment & Host Diagnostics
+- **Windows Environment Scan**: Auto-detects the host PC name, OS platform (`Windows x64`), active local LAN IPv4 addresses (e.g. `192.168.1.x`), and active HTTP port.
+- **NAS Identity**: Customize your friendly NAS server name (default: `MyPersonalNAS`) and server port (default: `3000`).
+
+### 💾 Step 2: Storage Selection & Allocation
+- **Windows Drive Detection**: Automatically scans and lists all attached drives (`C:`, `D:`, `E:`, external USB hard drives) with drive labels, total capacity, and free space.
+- **Dedicated Storage Root Directory**: Defaults intelligently to non-system disks (e.g. `D:\NAS_Storage` or `C:\NAS_Storage`). Auto-creates and registers standard storage folders:
+  - 📷 `MobileUploads` — Auto-sync photos & videos from phones
+  - 💾 `NAS_Backup` — Full device backups
+  - 📁 `Documents` — General documents and files
+  - 🎬 `Media` — Home movies, music, and streaming content
+- **🛡️ Optional RAID 1 Mirrored Pool**: Automatically surfaces when 2 or more physical drives are detected, allowing 1-click redundant mirroring (`myNAS_RAID`).
+
+### 👤 Step 3: Master Admin Account & Emergency Passcode
+- **Master Admin Account**: Configures the primary administrator account (`admin`) with full system privileges.
+- **Emergency Recovery Passcode**: Securely displays the emergency recovery passcode with a 1-click **Copy** button for offline recovery.
+
+### 🌐 Step 4: Remote Access & Connectivity Mode
+- **🏠 Local Network Only (Private & Fast)**: Safe for home Wi-Fi. Access across all devices at `http://<your-lan-ip>:3000`.
+- **⚡ Free Quick Tunnel (Instant Public Link)**: Generates a secure, temporary `*.trycloudflare.com` URL on demand with zero account configuration.
+- **🌐 Permanent Custom Domain (Cloudflare Zero Trust)**: Connect your custom domain (e.g. `https://mynas-hi.online`) using your free Cloudflare Tunnel token.
+
+### 📱 Step 5: Setup Completion & Instant Mobile App Pairing
+- Automatically persists all drive permissions and custom directories to `drives_config.json`.
+- Generates a **live Mobile Pairing QR code** containing the server URL and a secure, single-use mobile pairing code.
+- Scan the QR code using the **MyNAS** mobile app on Android or iOS for instant 1-tap login and auto-sync!
+- Displays summary details and an **Enter Web Dashboard** button that transitions directly into the authenticated NAS workspace.
+
+---
+
+### 🔄 Resetting Setup State for Fresh Testing
+
+On Windows, Personal NAS stores its persistent SQLite database in:
+```text
+%APPDATA%\PersonalNAS\nas_data.db
+```
+If you ever want to reset Personal NAS to test the 5-Step Setup Wizard from scratch on an existing PC:
+```powershell
+# Stop any running Personal NAS instance
+Stop-Process -Name 'Personal NAS' -Force -ErrorAction SilentlyContinue
+
+# Clear the database (forces the app to return to the First-Run Setup Wizard)
+Remove-Item "$env:APPDATA\PersonalNAS\nas_data.db*" -Force -ErrorAction SilentlyContinue
+```
 
 ---
 

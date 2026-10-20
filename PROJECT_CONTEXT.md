@@ -10,7 +10,12 @@ A self-hosted, enterprise-grade Personal NAS ecosystem providing unified private
 
 ## 3. Key Features & Capability Matrix
 - **Web Dashboard & Desktop Shell:**
-  - **First-Run Onboarding Wizard:** 3-step Liquid Glass setup card automatically launched on clean machines to initialize Admin credentials, select storage disks, and configure Cloudflare remote tunnels with live test.
+  - **First-Run 5-Step Windows Setup Wizard:** Comprehensive interactive wizard automatically launched on clean installations:
+    1. **System Environment & Host Diagnostics**: Auto-detects host PC name, Windows x64 platform, local LAN IPv4 addresses, customizable NAS friendly name, and server port.
+    2. **Storage Selection & Allocation**: Auto-detects Windows drives (C:, D:, E:), allocates dedicated storage directories (e.g. `D:\NAS_Storage` with auto-created subfolders `MobileUploads`, `NAS_Backup`, `Documents`, `Media`), and optional RAID 1 redundant mirroring.
+    3. **Master Admin Account Setup**: Configures admin credentials and displays offline emergency recovery passcode with 1-click copy.
+    4. **Remote Access & Connectivity**: Choose between Local LAN, Quick Tunnel (*.trycloudflare.com), or Cloudflare Zero Trust custom domain.
+    5. **Setup Completion & Mobile QR Pairing**: Displays live QR code for instant 1-tap mobile auto-login and background photo sync.
   - **Electron Desktop Wrapper:** Native Windows shell with background System Tray integration, minimize-to-tray behavior, auto-start on boot (`openAtLogin`), and automatic Windows Firewall rule creation (`PersonalNAS_HTTP` TCP 3000).
   - **Data Persistence Routing:** Fully isolated in `%APPDATA%\PersonalNAS\` (`nas_data.db`, `.env`, `.nas_cache`, `.nas_trash`, `temp_uploads`, and `tunnel_config.json`) for seamless UWP/MSIX compliance.
   - 6-Digit PIN passcode & user account authentication with bcrypt hashing.
