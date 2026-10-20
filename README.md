@@ -35,7 +35,7 @@ The **Personal NAS** is a private, self-hosted cloud storage and media server de
 
 ### 3. 🌐 Zero-Cost Remote Access & Cloudflare Tunnels
 - **Quick Tunnels:** Instant temporary remote URLs (`*.trycloudflare.com`).
-- **Permanent Named Custom Domains:** Full support for custom domains (e.g. `https://mynas-hi.online`), allowing non-admin and admin users to start/stop tunnels and access data anywhere without opening home router ports.
+- **Permanent Named Custom Domains:** Full support for custom domains (e.g. `https://mynas.com`), allowing non-admin and admin users to start/stop tunnels and access data anywhere without opening home router ports.
 
 ---
 
