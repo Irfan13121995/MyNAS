@@ -2151,13 +2151,10 @@ async function renderFiles(container) {
 
   // Build Left Navigation Sidebar Tree
   const quickAccessItems = [
-    { label: 'Home', icon: '🏠', path: [] },
-    { label: 'Gallery', icon: '🖼️', action: () => navigate('gallery') },
-    { label: 'Desktop', icon: '💻', drive: 'C:\\Users\\irfan\\Desktop' },
-    { label: 'Downloads', icon: '📥', drive: 'C:\\Users\\irfan\\Downloads' },
-    { label: 'Documents', icon: '📄', drive: 'C:\\Users\\irfan\\Documents' },
-    { label: 'Pictures', icon: '📷', drive: 'C:\\Users\\irfan\\Pictures' },
-    { label: 'Videos', icon: '🎬', drive: 'C:\\Users\\irfan\\Videos' },
+    { label: 'This PC', icon: '🏠', path: [] },
+    { label: 'Media Gallery', icon: '🖼️', action: () => navigate('gallery') },
+    { label: 'Recycle Bin', icon: '🗑️', action: () => navigate('trash') },
+    { label: 'Storage Pools', icon: '💾', action: () => navigate('storage') },
   ];
 
   const quickAccessHtml = quickAccessItems.map(item => `

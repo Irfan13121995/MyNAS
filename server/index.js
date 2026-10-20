@@ -38,6 +38,26 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 * 1024 } // 5 GB max upload size
 });
 
+// Background Worker: Automatically prune stale chunked uploads older than 2 hours
+setInterval(async () => {
+  const chunksParent = path.join(uploadTempDir, 'chunks');
+  if (!fs.existsSync(chunksParent)) return;
+  try {
+    const dirs = await fs.promises.readdir(chunksParent);
+    const now = Date.now();
+    const MAX_CHUNK_AGE = 2 * 60 * 60 * 1000; // 2 hours
+    for (const d of dirs) {
+      const fullDir = path.join(chunksParent, d);
+      const stat = await fs.promises.stat(fullDir).catch(() => null);
+      if (stat && now - stat.mtimeMs > MAX_CHUNK_AGE) {
+        await fs.promises.rm(fullDir, { recursive: true, force: true }).catch(() => {});
+      }
+    }
+  } catch (e) {
+    console.warn('[Cleanup] Error pruning stale chunks:', e.message);
+  }
+}, 60 * 60 * 1000);
+
 // 1. Auto-generate .env on first run if it doesn't exist
 const envPath = path.join(DATA_DIR, '.env');
 let isFirstRunSetup = false;
@@ -50,7 +70,6 @@ if (!fs.existsSync(envPath)) {
   const envContent = `# Personal NAS Server Configuration
 PORT=3000
 JWT_SECRET=${secret}
-PASSCODE=${initialGeneratedPasscode}
 PASSCODE_HASH=${passcodeHash}
 REQUIRE_EMAIL_VERIFICATION=false
 `;
@@ -112,9 +131,22 @@ const globalApiLimiter = rateLimit({
 // Enable Gzip/Brotli HTTP response compression for static assets and API payloads
 app.use(compression());
 
-// Serve the Windows Dashboard UI as static files with HTTP cache headers
+// Serve the Windows Dashboard UI as static files with HTTP cache headers and fine-grained CSP
 app.use(helmet({
-  contentSecurityPolicy: false, // Allows media streaming & blobs
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "blob:"],
+      mediaSrc: ["'self'", "blob:"],
+      connectSrc: ["'self'", "https://mynas-hi.online"],
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"],
+      frameAncestors: ["'none'"]
+    }
+  },
+  crossOriginEmbedderPolicy: false,
   crossOriginResourcePolicy: false
 }));
 app.use(express.static(path.join(__dirname, 'public'), {
@@ -196,9 +228,17 @@ console.log('====================================');
 const authenticateToken = (req, res, next) => {
   let token = req.cookies?.nas_token;
   if (!token && req.headers['authorization']) {
-    token = req.headers['authorization'].split(' ')[1];
+    const parts = req.headers['authorization'].split(' ');
+    if (parts.length === 2 && parts[0] === 'Bearer') {
+      token = parts[1];
+    } else {
+      token = parts[0];
+    }
   }
-  if (!token && req.query.token) token = req.query.token;
+  // Security Hardening: Permit query string token ONLY for media streaming & thumbnails (required by native mobile players)
+  if (!token && req.query.token && (req.path === '/stream' || req.path === '/thumbnail')) {
+    token = req.query.token;
+  }
   if (!token) return res.status(401).json({ error: 'Authentication token required' });
 
   jwt.verify(token, JWT_SECRET, (err, decoded) => {
@@ -306,9 +346,9 @@ app.post('/api/setup/complete', authLimiter, async (req, res) => {
       return res.status(403).json({ error: 'Setup has already been completed. Please log in.' });
     }
 
-    // Security Hardening: Initial setup must not be claimed over public Cloudflare tunnel
-    if (req.headers['cf-connecting-ip'] || req.headers['cf-ray']) {
-      return res.status(403).json({ error: 'Setup wizard can only be accessed locally on this machine or your local LAN, not through a public tunnel.' });
+    // Security Hardening: Initial setup must only be claimed from local machine or private LAN
+    if (!isLocalOrLanRequest(req)) {
+      return res.status(403).json({ error: 'Setup wizard can only be accessed locally on this machine or your local LAN, not through the public internet or external proxies.' });
     }
 
     const { username, email, password, storageDrive, tunnelToken, customUrl } = req.body;
@@ -648,20 +688,6 @@ app.get('/api/admin/users', authenticateToken, requireAdmin, (req, res) => {
     res.json({ success: true, count: users.length, users });
   } catch (err) {
     res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/admin/users/create', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    const { username, email, password, role } = req.body;
-    if (!username || username.length < 3) return res.status(400).json({ error: 'Username must be at least 3 characters' });
-    if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
-
-    const result = await usersService.createUser({ username, email, password, role });
-    logActivity('admin', `Admin created user: ${username} (Role: ${result.user.role})`, req.user?.username);
-    res.json({ success: true, user: result.user });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
   }
 });
 
@@ -1600,17 +1626,39 @@ app.post('/api/drives/refresh', authenticateToken, requireAdmin, async (req, res
 
 // ─── 10.8. THUMBNAIL, TRASH & BATCH FILES ENDPOINTS ────────────────────────────
 
+const ALLOWED_THUMB_EXTS = new Set([
+  '.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif', '.heic', '.heif', '.tif', '.tiff', '.avif'
+]);
+
 app.get('/api/thumbnail', authenticateToken, async (req, res) => {
   const targetPath = req.query.path;
   if (!targetPath) return res.status(400).json({ error: 'Path is required' });
-  if (!isPathAllowed(targetPath, req.user?.allowedDisks)) {
-    return res.status(403).json({ error: 'Access Denied: Unauthorized file path' });
-  }
+
   try {
-    const thumbPath = await thumbnailService.getOrGenerateThumbnail(targetPath, 250);
-    res.sendFile(thumbPath);
+    const validatedPath = await validatePath(targetPath);
+    if (!isPathAllowed(validatedPath, req.user?.allowedDisks)) {
+      return res.status(403).json({ error: 'Access Denied: Unauthorized file path' });
+    }
+
+    const ext = path.extname(validatedPath).toLowerCase();
+    if (!ALLOWED_THUMB_EXTS.has(ext)) {
+      return res.status(400).json({ error: 'Thumbnails are only available for supported image formats' });
+    }
+
+    const thumbPath = await thumbnailService.getOrGenerateThumbnail(validatedPath, 250);
+    if (!thumbPath || !fs.existsSync(thumbPath)) {
+      return res.status(404).json({ error: 'Thumbnail not available' });
+    }
+
+    const resolvedThumb = path.resolve(thumbPath);
+    const cacheDir = path.resolve(DATA_DIR, '.nas_cache', 'thumbnails');
+    if (!resolvedThumb.toLowerCase().startsWith(cacheDir.toLowerCase())) {
+      return res.status(403).json({ error: 'Invalid thumbnail cache location' });
+    }
+
+    res.sendFile(resolvedThumb);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(403).json({ error: err.message });
   }
 });
 

@@ -7,20 +7,28 @@ const MIME_TYPES = {
   '.mkv': 'video/x-matroska',
   '.avi': 'video/x-msvideo',
   '.mov': 'video/quicktime',
+  '.webm': 'video/webm',
+  '.m4v': 'video/x-m4v',
   '.mp3': 'audio/mpeg',
   '.wav': 'audio/wav',
   '.ogg': 'audio/ogg',
+  '.m4a': 'audio/mp4',
+  '.flac': 'audio/flac',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.png': 'image/png',
   '.gif': 'image/gif',
   '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
   '.pdf': 'application/pdf',
   '.txt': 'text/plain',
   '.html': 'text/html',
   '.json': 'application/json',
   '.zip': 'application/zip'
 };
+
+// Files that can contain active scripts or executable markup
+const DANGEROUS_INLINE_EXTS = new Set(['.html', '.htm', '.xhtml', '.svg', '.xml', '.pdf']);
 
 /**
  * Streams a file supporting HTTP Range requests for media players.
@@ -45,8 +53,18 @@ async function streamFile(filePath, req, res) {
     
     // Determine content type based on extension
     const ext = path.extname(validatedPath).toLowerCase();
+    const baseName = path.basename(validatedPath);
     const contentType = MIME_TYPES[ext] || 'application/octet-stream';
     res.setHeader('Content-Type', contentType);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+
+    // Security Hardening: Defend against Stored XSS via scriptable media uploads
+    if (DANGEROUS_INLINE_EXTS.has(ext)) {
+      res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(baseName)}"`);
+    } else {
+      res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(baseName)}"`);
+    }
 
     if (range) {
       // Parse Range header format: "bytes=start-end"

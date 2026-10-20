@@ -16,19 +16,29 @@ function ensureCacheDir() {
   }
 }
 
+const ALLOWED_IMAGE_EXTS = new Set([
+  '.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif', '.heic', '.heif', '.tif', '.tiff', '.avif'
+]);
+
 async function getOrGenerateThumbnail(filePath, size = 250) {
+  if (!filePath || typeof filePath !== 'string') return null;
   ensureCacheDir();
   
+  const ext = path.extname(filePath).toLowerCase();
+  if (!ALLOWED_IMAGE_EXTS.has(ext)) {
+    return null;
+  }
+
   let mtimeMs = 0;
   try {
     const stat = fs.statSync(filePath);
-    if (!stat.isFile()) return filePath;
+    if (!stat.isFile()) return null;
     mtimeMs = stat.mtimeMs;
   } catch (err) {
-    return filePath;
+    return null;
   }
 
-  const cacheKey = crypto.createHash('md5').update(`${filePath}_${mtimeMs}`).digest('hex') + '.webp';
+  const cacheKey = crypto.createHash('md5').update(`${filePath}_${mtimeMs}_${size}`).digest('hex') + '.webp';
   const cachePath = path.join(CACHE_DIR, cacheKey);
 
   // Return cached thumbnail if exists
@@ -49,8 +59,8 @@ async function getOrGenerateThumbnail(filePath, size = 250) {
     }
   }
 
-  // Fallback: return original file path
-  return filePath;
+  // Security Hardening: Never return raw arbitrary file as thumbnail fallback
+  return null;
 }
 
 module.exports = {

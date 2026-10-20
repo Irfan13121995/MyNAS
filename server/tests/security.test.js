@@ -176,3 +176,49 @@ test('Defense: isLocalOrLanRequest correctly detects Cloudflare and external IPs
   // Public IP
   assert.equal(isLocalOrLanRequest({ headers: {}, ip: '198.51.100.22' }), false);
 });
+
+test('Defense: thumbnailService strictly rejects non-image files and prevents arbitrary file disclosure', async () => {
+  const thumbnailService = require('../thumbnailService');
+  
+  // Non-image file extensions must return null
+  const nonImageResult = await thumbnailService.getOrGenerateThumbnail('C:\\test\\secret.env');
+  assert.equal(nonImageResult, null);
+
+  const scriptResult = await thumbnailService.getOrGenerateThumbnail('C:\\test\\exploit.html');
+  assert.equal(scriptResult, null);
+
+  const textResult = await thumbnailService.getOrGenerateThumbnail('C:\\test\\notes.txt');
+  assert.equal(textResult, null);
+});
+
+test('Defense: trashService restoreFromTrash resolves filename collisions safely', () => {
+  const trashService = require('../trashService');
+  const tempTestDir = path.join(__dirname, 'trash_test_' + Date.now());
+  fs.mkdirSync(tempTestDir, { recursive: true });
+
+  const originalFile = path.join(tempTestDir, 'document.pdf');
+  fs.writeFileSync(originalFile, 'Original v1 content', 'utf8');
+
+  // Move to trash
+  const item = trashService.moveToTrash(originalFile, 'testuser');
+  assert.ok(item && item.id);
+  assert.ok(!fs.existsSync(originalFile));
+
+  // Now create a NEW file with the same name at the original location
+  fs.writeFileSync(originalFile, 'New conflicting content v2', 'utf8');
+
+  // Restore from trash
+  const restored = trashService.restoreFromTrash(item.id, { username: 'testuser', role: 'user' });
+  assert.ok(restored);
+  
+  // Conflicting file must NOT have been destroyed
+  assert.equal(fs.readFileSync(originalFile, 'utf8'), 'New conflicting content v2');
+
+  // Restored file must be saved under collision-avoidance name
+  const collisionPath = path.join(tempTestDir, 'document_restored_1.pdf');
+  assert.ok(fs.existsSync(collisionPath));
+  assert.equal(fs.readFileSync(collisionPath, 'utf8'), 'Original v1 content');
+
+  // Clean up
+  try { fs.rmSync(tempTestDir, { recursive: true, force: true }); } catch {}
+});

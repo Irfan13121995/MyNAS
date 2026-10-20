@@ -115,18 +115,30 @@ function restoreFromTrash(id, user = null) {
   }
 
   // Ensure parent target directory exists
-  const parentDir = path.dirname(item.originalPath);
+  let targetPath = path.resolve(item.originalPath);
+  const parentDir = path.dirname(targetPath);
   if (!fs.existsSync(parentDir)) {
     fs.mkdirSync(parentDir, { recursive: true });
   }
 
-  // Move back
-  fs.renameSync(item.trashPath, item.originalPath);
+  // Prevent clobbering: If a file already exists at targetPath, append a restore counter
+  if (fs.existsSync(targetPath)) {
+    const ext = path.extname(targetPath);
+    const base = path.basename(targetPath, ext);
+    let counter = 1;
+    while (fs.existsSync(path.join(parentDir, `${base}_restored_${counter}${ext}`))) {
+      counter++;
+    }
+    targetPath = path.join(parentDir, `${base}_restored_${counter}${ext}`);
+  }
+
+  // Move back safely
+  fs.renameSync(item.trashPath, targetPath);
 
   // Remove from manifest
   manifest.splice(index, 1);
   saveManifest(manifest);
-  return item;
+  return { ...item, originalPath: targetPath };
 }
 
 /**
