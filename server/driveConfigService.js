@@ -1,8 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const BASE_DIR = process.pkg ? path.dirname(process.execPath) : __dirname;
-const CONFIG_PATH = path.join(BASE_DIR, 'drives_config.json');
+const DATA_DIR = process.env.NAS_DATA_DIR || (process.pkg ? path.dirname(process.execPath) : __dirname);
+const CONFIG_PATH = path.join(DATA_DIR, 'drives_config.json');
 
 /**
  * Reads configuration from drives_config.json.
@@ -111,10 +111,25 @@ function initializeWithDrives(driveLetters) {
   }
 }
 
+/**
+ * Explicitly replaces or configures the entire allowed storage paths list.
+ * @param {Array<string>} paths
+ * @param {Array<object>} customPaths
+ */
+function setAllowedPaths(paths, customPaths = []) {
+  const config = {
+    allowedPaths: Array.isArray(paths) ? paths.map(p => p.trim().replace(/[/\\]+$/, '')) : null,
+    customPaths: Array.isArray(customPaths) ? customPaths : []
+  };
+  saveConfig(config);
+  return config;
+}
+
 module.exports = {
   getAllowedPaths,
   getCustomPaths,
   addPath,
   removePath,
   initializeWithDrives,
+  setAllowedPaths
 };

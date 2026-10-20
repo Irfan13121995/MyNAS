@@ -66,81 +66,204 @@
 
   <!-- ── FIRST-RUN SETUP WIZARD OVERLAY ── -->
   <div id="setup-wizard-overlay" class="login-overlay hidden">
-    <div class="login-card" style="max-width: 520px; width: 90%;">
+    <div class="login-card" style="max-width: 580px; width: 92%;">
       <div class="login-logo">
         <img src="/assets/logo.png" style="width:56px;height:56px;object-fit:cover;border-radius:14px;box-shadow:0 0 20px rgba(0,212,255,0.4)" alt="myNAS Logo" />
       </div>
       <h2 style="font-size: 22px; font-weight: 800; margin-bottom: 4px;">Personal NAS Setup Wizard</h2>
-      <p class="login-subtitle" style="margin-bottom: 16px;">Complete these quick steps to initialize your personal cloud</p>
+      <p class="login-subtitle" style="margin-bottom: 16px;">Configure your storage, admin account, remote access, and phone sync</p>
 
-      <!-- Step Indicator -->
-      <div style="display:flex; justify-content:space-between; margin-bottom: 20px; gap: 8px;">
-        <div id="wizard-step-pill-1" style="flex:1; padding: 6px; text-align:center; border-radius: 8px; font-size: 11px; font-weight: 700; background: rgba(0,212,255,0.2); color: #00D4FF; border: 1px solid #00D4FF;">1. Admin Account</div>
-        <div id="wizard-step-pill-2" style="flex:1; padding: 6px; text-align:center; border-radius: 8px; font-size: 11px; font-weight: 700; background: rgba(255,255,255,0.05); color: #94A3B8; border: 1px solid rgba(255,255,255,0.1);">2. Storage Drive</div>
-        <div id="wizard-step-pill-3" style="flex:1; padding: 6px; text-align:center; border-radius: 8px; font-size: 11px; font-weight: 700; background: rgba(255,255,255,0.05); color: #94A3B8; border: 1px solid rgba(255,255,255,0.1);">3. Remote Tunnel</div>
+      <!-- Step Indicator (5 Interactive Pills) -->
+      <div style="display:flex; justify-content:space-between; margin-bottom: 20px; gap: 6px; overflow-x:auto;">
+        <div id="wizard-step-pill-1" style="flex:1; padding: 6px 4px; text-align:center; border-radius: 8px; font-size: 11px; font-weight: 700; background: rgba(0,212,255,0.2); color: #00D4FF; border: 1px solid #00D4FF; white-space:nowrap;">1. System</div>
+        <div id="wizard-step-pill-2" style="flex:1; padding: 6px 4px; text-align:center; border-radius: 8px; font-size: 11px; font-weight: 700; background: rgba(255,255,255,0.05); color: #94A3B8; border: 1px solid rgba(255,255,255,0.1); white-space:nowrap;">2. Storage</div>
+        <div id="wizard-step-pill-3" style="flex:1; padding: 6px 4px; text-align:center; border-radius: 8px; font-size: 11px; font-weight: 700; background: rgba(255,255,255,0.05); color: #94A3B8; border: 1px solid rgba(255,255,255,0.1); white-space:nowrap;">3. Admin</div>
+        <div id="wizard-step-pill-4" style="flex:1; padding: 6px 4px; text-align:center; border-radius: 8px; font-size: 11px; font-weight: 700; background: rgba(255,255,255,0.05); color: #94A3B8; border: 1px solid rgba(255,255,255,0.1); white-space:nowrap;">4. Remote</div>
+        <div id="wizard-step-pill-5" style="flex:1; padding: 6px 4px; text-align:center; border-radius: 8px; font-size: 11px; font-weight: 700; background: rgba(255,255,255,0.05); color: #94A3B8; border: 1px solid rgba(255,255,255,0.1); white-space:nowrap;">5. Pairing</div>
       </div>
 
       <div id="wizard-error" class="login-error hidden" style="margin-bottom: 14px;"></div>
 
-      <!-- Step 1: Admin Account -->
+      <!-- Step 1: System Diagnostics & Identity -->
       <div id="wizard-step-1" class="wizard-step-content">
-        <label for="wiz-username">Admin Username</label>
+        <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:14px; margin-bottom:16px;">
+          <div style="font-size:12px; font-weight:700; color:#00D4FF; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px;">🖥️ Windows Environment Check</div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:12px;">
+            <div><span style="color:#94A3B8;">Host PC:</span> <strong id="wiz-host-name" style="color:#F8FAFC;">Windows PC</strong></div>
+            <div><span style="color:#94A3B8;">OS Platform:</span> <strong id="wiz-os-platform" style="color:#F8FAFC;">Windows x64</strong></div>
+            <div><span style="color:#94A3B8;">Local Network:</span> <strong id="wiz-lan-ip" style="color:#00D4FF;">Detecting...</strong></div>
+            <div><span style="color:#94A3B8;">HTTP Port:</span> <strong id="wiz-detected-port" style="color:#F8FAFC;">3000</strong></div>
+          </div>
+        </div>
+
+        <label for="wiz-server-name">NAS Server Friendly Name</label>
+        <div class="input-group">
+          <input id="wiz-server-name" class="input" type="text" placeholder="e.g. MyPersonalNAS" value="MyPersonalNAS" />
+        </div>
+
+        <label for="wiz-server-port">Server Port</label>
+        <div class="input-group" style="margin-bottom:20px;">
+          <input id="wiz-server-port" class="input" type="number" placeholder="3000" value="3000" />
+        </div>
+
+        <button type="button" id="wiz-next-1" class="btn btn-primary btn-full">
+          <span>Next: Configure Storage Disks →</span>
+        </button>
+      </div>
+
+      <!-- Step 2: Storage Selection & Folder Allocation -->
+      <div id="wizard-step-2" class="wizard-step-content hidden">
+        <label style="margin-bottom: 4px; display:block;">Select Storage Drives</label>
+        <p style="font-size: 12px; color: #94A3B8; margin-bottom: 12px;">Choose which local drive(s) to allocate for file storage and photo backups:</p>
+        <div id="wiz-drives-container" style="display:flex; flex-direction:column; gap:8px; margin-bottom: 16px; max-height: 180px; overflow-y:auto;">
+          <!-- Populated dynamically with detected drives -->
+        </div>
+
+        <label for="wiz-storage-path">Dedicated Storage Root Folder</label>
+        <div class="input-group" style="margin-bottom:12px;">
+          <input id="wiz-storage-path" class="input" type="text" placeholder="e.g. D:\NAS_Storage" value="D:\NAS_Storage" />
+        </div>
+        <p style="font-size:11px; color:#94A3B8; margin-bottom:16px;">Folders will be organized inside for: 📷 <code>MobileUploads</code>, 💾 <code>NAS_Backup</code>, and 📁 <code>Documents</code>.</p>
+
+        <!-- Optional RAID 1 Mirroring -->
+        <div id="wiz-raid-section" class="hidden" style="background:rgba(0,212,255,0.06); border:1px solid rgba(0,212,255,0.25); border-radius:12px; padding:12px; margin-bottom:16px;">
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:13px; font-weight:700; color:#00D4FF;">
+            <input type="checkbox" id="wiz-enable-raid" style="accent-color:#00D4FF;" />
+            <span>🛡️ Enable RAID 1 Mirrored Storage Pool (Recommended for 2 Disks)</span>
+          </label>
+          <div id="wiz-raid-disks-picker" class="hidden" style="margin-top:10px; display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+            <div>
+              <span style="font-size:11px; color:#94A3B8;">Member Disk 1:</span>
+              <select id="wiz-raid-disk-1" class="input" style="font-size:12px; padding:6px;"></select>
+            </div>
+            <div>
+              <span style="font-size:11px; color:#94A3B8;">Member Disk 2:</span>
+              <select id="wiz-raid-disk-2" class="input" style="font-size:12px; padding:6px;"></select>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex; gap: 10px;">
+          <button type="button" id="wiz-back-2" class="btn btn-ghost" style="flex:1;">← Back</button>
+          <button type="button" id="wiz-next-2" class="btn btn-primary" style="flex:2;">Next: Admin Account →</button>
+        </div>
+      </div>
+
+      <!-- Step 3: Admin Account & Emergency Passcode -->
+      <div id="wizard-step-3" class="wizard-step-content hidden">
+        <label for="wiz-username">Master Admin Username</label>
         <div class="input-group">
           <input id="wiz-username" class="input" type="text" placeholder="e.g. admin" autocomplete="username" />
         </div>
-        <label for="wiz-password">Admin Password</label>
+        <label for="wiz-email">Email Address (Optional)</label>
+        <div class="input-group">
+          <input id="wiz-email" class="input" type="email" placeholder="admin@example.com" />
+        </div>
+        <label for="wiz-password">Master Password</label>
         <div class="input-group">
           <input id="wiz-password" class="input" type="password" placeholder="Min 6 characters" autocomplete="new-password" />
         </div>
         <label for="wiz-confirm">Confirm Password</label>
-        <div class="input-group">
+        <div class="input-group" style="margin-bottom:14px;">
           <input id="wiz-confirm" class="input" type="password" placeholder="Re-enter password" autocomplete="new-password" />
         </div>
-        <label for="wiz-email">Email (Optional)</label>
-        <div class="input-group" style="margin-bottom: 20px;">
-          <input id="wiz-email" class="input" type="email" placeholder="admin@example.com" />
+
+        <!-- Emergency Passcode Info Box -->
+        <div id="wiz-passcode-box" style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:10px 14px; margin-bottom:18px; display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <div style="font-size:11px; color:#94A3B8;">Emergency Local Recovery Passcode:</div>
+            <div id="wiz-passcode-display" style="font-family:monospace; font-size:15px; font-weight:800; color:#22c55e; letter-spacing:1px;">------</div>
+          </div>
+          <button type="button" id="wiz-copy-passcode" class="btn btn-ghost btn-sm" style="font-size:11px;">📋 Copy</button>
         </div>
-        <button type="button" id="wiz-next-1" class="btn btn-primary btn-full">
-          <span>Next: Select Storage Drive →</span>
+
+        <div style="display:flex; gap: 10px;">
+          <button type="button" id="wiz-back-3" class="btn btn-ghost" style="flex:1;">← Back</button>
+          <button type="button" id="wiz-next-3" class="btn btn-primary" style="flex:2;">Next: Remote Access →</button>
+        </div>
+      </div>
+
+      <!-- Step 4: Remote Access / Cloudflare Tunnel -->
+      <div id="wizard-step-4" class="wizard-step-content hidden">
+        <label style="margin-bottom: 4px; display:block;">Select Access & Connectivity Mode</label>
+        <p style="font-size: 12px; color: #94A3B8; margin-bottom: 14px;">Choose how you want to reach your Personal NAS:</p>
+
+        <!-- Connectivity Choice Cards -->
+        <div style="display:flex; flex-direction:column; gap:8px; margin-bottom:16px;">
+          <label class="wiz-mode-card" style="display:flex; align-items:flex-start; gap:10px; padding:12px; background:rgba(0,212,255,0.08); border:1px solid #00D4FF; border-radius:10px; cursor:pointer;">
+            <input type="radio" name="wiz_tunnel_mode" value="none" checked style="accent-color:#00D4FF; margin-top:2px;" />
+            <div>
+              <div style="font-size:13px; font-weight:700; color:#F8FAFC;">🏠 Local Network Only (Private & Fast)</div>
+              <div style="font-size:11.5px; color:#94A3B8; margin-top:2px;">Safe for private home Wi-Fi. Access across all devices at <code>http://&lt;your-lan-ip&gt;:3000</code>.</div>
+            </div>
+          </label>
+
+          <label class="wiz-mode-card" style="display:flex; align-items:flex-start; gap:10px; padding:12px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:10px; cursor:pointer;">
+            <input type="radio" name="wiz_tunnel_mode" value="quick" style="accent-color:#00D4FF; margin-top:2px;" />
+            <div>
+              <div style="font-size:13px; font-weight:700; color:#F8FAFC;">⚡ Free Quick Tunnel (Instant Public Link)</div>
+              <div style="font-size:11.5px; color:#94A3B8; margin-top:2px;">Generates a secure, temporary <code>*.trycloudflare.com</code> URL on demand with zero account configuration.</div>
+            </div>
+          </label>
+
+          <label class="wiz-mode-card" style="display:flex; align-items:flex-start; gap:10px; padding:12px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:10px; cursor:pointer;">
+            <input type="radio" name="wiz_tunnel_mode" value="named" style="accent-color:#00D4FF; margin-top:2px;" />
+            <div>
+              <div style="font-size:13px; font-weight:700; color:#F8FAFC;">🌐 Permanent Custom Domain (Cloudflare Zero Trust)</div>
+              <div style="font-size:11.5px; color:#94A3B8; margin-top:2px;">Connect your custom domain (e.g. <code>https://mynas-hi.online</code>) with your free Cloudflare Tunnel token.</div>
+            </div>
+          </label>
+        </div>
+
+        <!-- Custom Domain Fields (shown only when 'named' selected) -->
+        <div id="wiz-named-fields" class="hidden" style="margin-bottom:16px;">
+          <label for="wiz-tunnel-token">Cloudflare Zero Trust Tunnel Token</label>
+          <div class="input-group">
+            <input id="wiz-tunnel-token" class="input" type="password" placeholder="Paste Tunnel Token" />
+          </div>
+          <label for="wiz-tunnel-url">Custom Domain URL</label>
+          <div class="input-group">
+            <input id="wiz-tunnel-url" class="input" type="text" value="https://mynas-hi.online" placeholder="https://mynas-hi.online" />
+          </div>
+        </div>
+
+        <div style="display:flex; gap: 10px;">
+          <button type="button" id="wiz-back-4" class="btn btn-ghost" style="flex:1;">← Back</button>
+          <button type="button" id="wiz-finish-btn" class="btn btn-primary" style="flex:2;">
+            <span id="wiz-finish-text">🚀 Finish Setup & Initialize NAS</span>
+            <span id="wiz-finish-spinner" class="spinner hidden"></span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Step 5: Setup Complete & Instant Mobile Pairing -->
+      <div id="wizard-step-5" class="wizard-step-content hidden" style="text-align:center;">
+        <div style="font-size:42px; margin-bottom:8px;">🎉</div>
+        <h3 style="font-size:18px; font-weight:800; color:#00D4FF; margin-bottom:6px;">Personal NAS Initialized!</h3>
+        <p style="font-size:12px; color:#94A3B8; margin-bottom:16px;">Your private cloud is live and running on this Windows PC.</p>
+
+        <!-- Live Mobile Pairing QR Box -->
+        <div style="background:rgba(255,255,255,0.04); border:1px solid rgba(0,212,255,0.3); border-radius:16px; padding:16px; margin-bottom:18px; display:inline-block;">
+          <div id="wiz-qr-wrapper" style="display:flex; justify-content:center; margin-bottom:10px;">
+            <img id="wiz-pairing-qr-img" src="" alt="Mobile Pairing QR" style="width:200px; height:200px; border-radius:12px; background:#fff; padding:6px;" />
+          </div>
+          <div style="font-size:13px; font-weight:700; color:#F8FAFC; margin-bottom:4px;">📱 Pair Mobile App</div>
+          <div style="font-size:11.5px; color:#94A3B8; max-width:280px; margin:auto;">
+            Open the <strong>MyNAS</strong> app on Android or iOS, tap <strong>Scan QR Code</strong>, and scan this code for instant login and auto-sync!
+          </div>
+        </div>
+
+        <div style="background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.06); border-radius:10px; padding:10px 14px; margin-bottom:18px; text-align:left; font-size:12px;">
+          <div><span style="color:#94A3B8;">Web Dashboard:</span> <strong id="wiz-summary-url" style="color:#00D4FF;">http://localhost:3000</strong></div>
+          <div><span style="color:#94A3B8;">Storage Folder:</span> <strong id="wiz-summary-path" style="color:#F8FAFC;">D:\NAS_Storage</strong></div>
+          <div><span style="color:#94A3B8;">Master Admin:</span> <strong id="wiz-summary-user" style="color:#F8FAFC;">admin</strong></div>
+        </div>
+
+        <button type="button" id="wiz-open-dash-btn" class="btn btn-primary btn-full">
+          <span>Enter Web Dashboard →</span>
         </button>
       </div>
 
-      <!-- Step 2: Storage Selection -->
-      <div id="wizard-step-2" class="wizard-step-content hidden">
-        <label style="margin-bottom: 8px; display:block;">Select Primary Storage Drive</label>
-        <p style="font-size: 12px; color: #94A3B8; margin-bottom: 12px;">Choose which local drive to use for file storage and mobile photo backups:</p>
-        <div id="wiz-drives-container" style="display:flex; flex-direction:column; gap:8px; margin-bottom: 20px; max-height: 180px; overflow-y:auto;">
-          <!-- Populated dynamically with detected drives -->
-        </div>
-        <div style="display:flex; gap: 10px;">
-          <button type="button" id="wiz-back-2" class="btn btn-ghost" style="flex:1;">← Back</button>
-          <button type="button" id="wiz-next-2" class="btn btn-primary" style="flex:2;">Next: Remote Access →</button>
-        </div>
-      </div>
-
-      <!-- Step 3: Remote Access / Cloudflare Tunnel -->
-      <div id="wizard-step-3" class="wizard-step-content hidden">
-        <label style="margin-bottom: 4px; display:block;">Cloudflare Remote Tunnel (Optional)</label>
-        <p style="font-size: 12px; color: #94A3B8; margin-bottom: 12px;">Access your files securely from anywhere via custom domain without router port forwarding.</p>
-        <label for="wiz-tunnel-token">Tunnel Token</label>
-        <div class="input-group">
-          <input id="wiz-tunnel-token" class="input" type="password" placeholder="Paste Cloudflare Zero Trust Token" />
-        </div>
-        <label for="wiz-tunnel-url">Custom Public Domain URL</label>
-        <div class="input-group" style="margin-bottom: 20px;">
-          <input id="wiz-tunnel-url" class="input" type="text" value="https://mynas-hi.online" placeholder="https://mynas-hi.online" />
-        </div>
-        <div style="display:flex; flex-direction:column; gap: 10px;">
-          <button type="button" id="wiz-finish-btn" class="btn btn-primary btn-full">
-            <span id="wiz-finish-text">🚀 Finish Setup & Open Dashboard</span>
-            <span id="wiz-finish-spinner" class="spinner hidden"></span>
-          </button>
-          <button type="button" id="wiz-skip-btn" class="btn btn-ghost btn-full" style="font-size: 12px; padding: 8px;">
-            Skip Remote Access for now (Local Network Only)
-          </button>
-          <button type="button" id="wiz-back-3" class="btn btn-ghost" style="font-size: 12px;">← Back to Storage</button>
-        </div>
-      </div>
     </div>
   </div>
 

@@ -327,12 +327,30 @@ app.get('/api/setup/status', async (req, res) => {
   try {
     const hasUsers = usersService.hasAnyUsers();
     const tunnelConfig = getNamedTunnelConfig();
-    // Security: Do not expose drive layout to unauthenticated callers if setup is already complete
     const drives = hasUsers ? [] : await getDrives();
+    const raidDisks = hasUsers ? [] : await getAvailableRaidDisks();
+
+    // Get host machine local network IPs
+    const interfaces = os.networkInterfaces();
+    const lanIps = [];
+    for (const iface of Object.values(interfaces)) {
+      for (const addr of iface) {
+        if (addr.family === 'IPv4' && !addr.internal) lanIps.push(addr.address);
+      }
+    }
+
+    const initialPasscode = process.env.PASSCODE || (isFirstRunSetup ? initialGeneratedPasscode : null);
+
     res.json({
       needsSetup: !hasUsers,
       hasUsers,
+      hostname: os.hostname(),
+      platform: os.platform(),
+      lanIps,
+      port: PORT,
       drives,
+      raidDisks,
+      recoveryPasscode: initialPasscode,
       defaultTunnelUrl: tunnelConfig.customUrl || 'https://mynas-hi.online'
     });
   } catch (err) {
@@ -351,7 +369,21 @@ app.post('/api/setup/complete', authLimiter, async (req, res) => {
       return res.status(403).json({ error: 'Setup wizard can only be accessed locally on this machine or your local LAN, not through the public internet or external proxies.' });
     }
 
-    const { username, email, password, storageDrive, tunnelToken, customUrl } = req.body;
+    const {
+      username,
+      email,
+      password,
+      serverName,
+      storageDrives,
+      storageDrive,
+      customStoragePath,
+      createRaidMirror,
+      raidMemberDisks,
+      tunnelMode,
+      tunnelToken,
+      customUrl
+    } = req.body;
+
     if (!username || username.length < 3) {
       return res.status(400).json({ error: 'Username must be at least 3 characters' });
     }
@@ -359,21 +391,127 @@ app.post('/api/setup/complete', authLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 6 characters' });
     }
 
-    // 1. Create first user as Admin
+    // 1. Create first user as Master Admin
     const result = await usersService.createUser({ username, email, password, role: 'admin' });
-    logActivity('auth', 'Initial Admin account configured via Setup Wizard: ' + username, username);
+    logActivity('auth', 'Master Admin account configured via Setup Wizard: ' + username, username);
 
-    // 2. Configure Cloudflare Tunnel if token provided
-    if (tunnelToken && tunnelToken.trim().length > 10) {
-      const cleanUrl = customUrl ? customUrl.trim() : 'https://mynas-hi.online';
-      saveNamedTunnelConfig({ mode: 'named', token: tunnelToken.trim(), customUrl: cleanUrl });
-      startTunnel({ mode: 'named', token: tunnelToken.trim(), customUrl: cleanUrl }).catch(e => {
-        console.warn('[Setup] Background tunnel launch notice:', e.message);
-      });
-      logActivity('system', `Cloudflare Tunnel configured with domain ${cleanUrl}`, username);
+    // 2. Configure Storage Drives & Storage Directory
+    let configuredAllowedPaths = [];
+    let customPaths = [];
+
+    // Parse selected drives
+    let selectedLetters = [];
+    if (Array.isArray(storageDrives) && storageDrives.length > 0) {
+      selectedLetters = storageDrives.map(d => String(d).trim().replace(/[\/\\]+$/, ''));
+    } else if (storageDrive && typeof storageDrive === 'string') {
+      selectedLetters = [storageDrive.trim().replace(/[\/\\]+$/, '')];
     }
 
-    // 3. Issue Admin JWT Session Token
+    if (selectedLetters.length > 0) {
+      configuredAllowedPaths = [...selectedLetters];
+    } else {
+      // Auto-detect non-system drives if none explicitly selected
+      const allDrives = await getDrives();
+      configuredAllowedPaths = allDrives
+        .filter(d => !d.letter.toUpperCase().startsWith('C:'))
+        .map(d => d.letter.replace(/[\/\\]+$/, ''));
+    }
+
+    // Handle dedicated custom storage folder (e.g. D:\NAS_Storage or C:\NAS_Storage)
+    let finalStoragePath = '';
+    if (customStoragePath && typeof customStoragePath === 'string' && customStoragePath.trim()) {
+      const cleanCustom = path.resolve(customStoragePath.trim());
+      await safeEnsureDir(cleanCustom);
+      await safeEnsureDir(path.join(cleanCustom, 'MobileUploads'));
+      await safeEnsureDir(path.join(cleanCustom, 'NAS_Backup'));
+      await safeEnsureDir(path.join(cleanCustom, 'Documents'));
+      await safeEnsureDir(path.join(cleanCustom, 'Media'));
+
+      customPaths.push({
+        path: cleanCustom,
+        label: 'Primary NAS Storage',
+        addedAt: new Date().toISOString()
+      });
+      if (!configuredAllowedPaths.includes(cleanCustom)) {
+        configuredAllowedPaths.push(cleanCustom);
+      }
+      finalStoragePath = cleanCustom;
+    } else if (selectedLetters.length > 0) {
+      const primaryDrive = selectedLetters[0];
+      const defaultFolder = path.join(primaryDrive + '\\', 'NAS_Storage');
+      try {
+        await safeEnsureDir(defaultFolder);
+        await safeEnsureDir(path.join(defaultFolder, 'MobileUploads'));
+        await safeEnsureDir(path.join(defaultFolder, 'NAS_Backup'));
+      } catch (e) {}
+      finalStoragePath = defaultFolder;
+    }
+
+    // Persist storage paths in driveConfig
+    if (configuredAllowedPaths.length > 0) {
+      driveConfig.setAllowedPaths(configuredAllowedPaths, customPaths);
+      logActivity('storage', `Initial storage configured with: ${configuredAllowedPaths.join(', ')}`, username);
+    }
+
+    // 3. Optional RAID 1 Mirrored Storage Pool Setup
+    let createdRaidVolume = null;
+    if (createRaidMirror && Array.isArray(raidMemberDisks) && raidMemberDisks.length === 2) {
+      try {
+        const [d1, d2] = raidMemberDisks;
+        const availableDisks = await getAvailableRaidDisks();
+        const disk1 = availableDisks.find(d => d.path === d1 || d.id === d1) || { sizeBytes: 1000202039296, size: '931.5 GB' };
+        const disk2 = availableDisks.find(d => d.path === d2 || d.id === d2) || { sizeBytes: 1000202039296, size: '931.5 GB' };
+        const usableBytes = Math.min(disk1.sizeBytes || 1000202039296, disk2.sizeBytes || 1000202039296);
+        const usableFormatted = disk1.size && disk2.size ? (disk1.sizeBytes <= disk2.sizeBytes ? disk1.size : disk2.size) : ((usableBytes / (1024 ** 3)).toFixed(1) + ' GB');
+        const raidName = 'myNAS_RAID';
+        const mountPoint = process.platform === 'win32' ? `R:\\${raidName}` : `/mnt/storage/${raidName}`;
+        const mdDevice = process.platform === 'win32' ? `\\\\.\\${raidName}` : '/dev/md0';
+
+        createdRaidVolume = dbService.createVolume({
+          id: 'vol_' + crypto.randomBytes(6).toString('hex'),
+          name: raidName,
+          raidLevel: 1,
+          memberDisks: [d1, d2],
+          usableCapacityBytes: usableBytes,
+          usableCapacityFormatted: usableFormatted,
+          filesystem: 'ext4',
+          mountPoint,
+          devicePath: mdDevice
+        });
+
+        for (const md of [d1, d2]) {
+          const rootDir = path.join(md.replace(/[\/\\]+$/, '') + '\\', raidName);
+          await safeEnsureDir(rootDir);
+          await safeEnsureDir(path.join(rootDir, 'MobileUploads'));
+          await safeEnsureDir(path.join(rootDir, 'NAS_Backup'));
+        }
+        logActivity('storage', `Initial RAID 1 Mirrored Array configured: ${raidName} (${d1}, ${d2})`, username);
+      } catch (raidErr) {
+        console.warn('[Setup] RAID initialization notice:', raidErr.message);
+      }
+    }
+
+    // 4. Configure Remote Access Tunnel
+    let activeServerUrl = `http://${req.get('host')}`;
+    const cleanUrl = customUrl ? customUrl.trim() : 'https://mynas-hi.online';
+
+    if (tunnelMode === 'named' && tunnelToken && tunnelToken.trim().length > 10) {
+      saveNamedTunnelConfig({ mode: 'named', token: tunnelToken.trim(), customUrl: cleanUrl });
+      startTunnel(PORT, 'named', tunnelToken.trim(), cleanUrl).catch(e => {
+        console.warn('[Setup] Named tunnel launch notice:', e.message);
+      });
+      activeServerUrl = cleanUrl;
+      logActivity('system', `Cloudflare Named Tunnel configured: ${cleanUrl}`, username);
+    } else if (tunnelMode === 'quick') {
+      startTunnel(PORT, 'quick').then(qUrl => {
+        if (qUrl) activeServerUrl = qUrl;
+      }).catch(e => {
+        console.warn('[Setup] Quick tunnel launch notice:', e.message);
+      });
+      logActivity('system', 'Cloudflare Quick Tunnel activated', username);
+    }
+
+    // 5. Issue Admin JWT Session Token
     const token = jwt.sign({
       authenticated: true,
       id: result.user.id,
@@ -386,12 +524,40 @@ app.post('/api/setup/complete', authLimiter, async (req, res) => {
 
     setAuthCookie(req, res, token);
 
+    // 6. Pre-generate Mobile Pairing QR Code for instant phone pairing
+    let pairingData = null;
+    try {
+      const { pairingCode, expiresAt } = usersService.createPairingCode(result.user.username);
+      const pairingPayload = JSON.stringify({
+        url: activeServerUrl.replace(/\/+$/, ''),
+        pairingCode,
+        username: result.user.username
+      });
+      const qrDataUrl = await QRCode.toDataURL(pairingPayload, {
+        width: 280,
+        margin: 2,
+        color: { dark: '#0F172A', light: '#FFFFFF' }
+      });
+      pairingData = {
+        pairingCode,
+        qrDataUrl,
+        expiresAt,
+        serverUrl: activeServerUrl
+      };
+    } catch (qrErr) {
+      console.warn('[Setup] QR generation notice:', qrErr.message);
+    }
+
     res.json({
       success: true,
-      message: 'Setup completed successfully!',
+      message: 'Personal NAS configured successfully!',
       token,
       username: result.user.username,
-      user: result.user
+      user: result.user,
+      storagePath: finalStoragePath,
+      raidVolume: createdRaidVolume,
+      pairing: pairingData,
+      serverUrl: activeServerUrl
     });
   } catch (err) {
     console.error('Setup wizard error:', err);

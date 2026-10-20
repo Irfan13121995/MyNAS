@@ -3834,12 +3834,25 @@ async function init() {
 
 // ─── FIRST-RUN SETUP WIZARD CONTROLLER ────────────────────────
 let wizardState = {
+  serverName: 'MyPersonalNAS',
+  serverPort: 3000,
+  storageDrives: [],
+  customStoragePath: '',
+  createRaidMirror: false,
+  raidDisk1: '',
+  raidDisk2: '',
   username: '',
   email: '',
   password: '',
-  storageDrive: 'C:\\',
+  tunnelMode: 'none',
+  tunnelToken: '',
   customUrl: 'https://mynas-hi.online',
-  drives: []
+  drives: [],
+  raidDisks: [],
+  lanIps: [],
+  recoveryPasscode: '',
+  pairingData: null,
+  activeStep: 1
 };
 
 async function openSetupWizard() {
@@ -3854,42 +3867,144 @@ async function openSetupWizard() {
     const res = await fetch('/api/setup/status');
     const data = await res.json();
     wizardState.drives = data.drives || [];
+    wizardState.raidDisks = data.raidDisks || [];
+    wizardState.lanIps = data.lanIps || [];
+    wizardState.recoveryPasscode = data.recoveryPasscode || '';
     if (data.defaultTunnelUrl) wizardState.customUrl = data.defaultTunnelUrl;
+    if (data.port) wizardState.serverPort = data.port;
+
+    // 1. Populate System Diagnostics
+    const hostEl = document.getElementById('wiz-host-name');
+    if (hostEl) hostEl.textContent = data.hostname || 'Windows PC';
+
+    const platEl = document.getElementById('wiz-os-platform');
+    if (platEl) platEl.textContent = (data.platform === 'win32' ? 'Windows' : data.platform) + ' (x64)';
+
+    const lanEl = document.getElementById('wiz-lan-ip');
+    if (lanEl) {
+      if (data.lanIps && data.lanIps.length > 0) {
+        lanEl.textContent = data.lanIps.join(', ');
+      } else {
+        lanEl.textContent = '127.0.0.1 (Localhost)';
+      }
+    }
+
+    const portEl = document.getElementById('wiz-detected-port');
+    if (portEl) portEl.textContent = data.port || '3000';
+
+    const serverPortInput = document.getElementById('wiz-server-port');
+    if (serverPortInput && data.port) serverPortInput.value = data.port;
+
+    // 2. Populate Emergency Recovery Passcode
+    const passcodeEl = document.getElementById('wiz-passcode-display');
+    if (passcodeEl && data.recoveryPasscode) {
+      passcodeEl.textContent = data.recoveryPasscode;
+    }
+
+    // 3. Populate Drives and RAID
     renderWizardDrives();
+    renderWizardRaid();
   } catch (err) {
-    console.warn('Failed to fetch setup drives:', err);
+    console.warn('Failed to fetch setup diagnostics:', err);
+    renderWizardDrives();
   }
+
+  showWizardStep(1);
 }
 
 function renderWizardDrives() {
   const container = document.getElementById('wiz-drives-container');
+  const storagePathInput = document.getElementById('wiz-storage-path');
   if (!container) return;
 
-  if (wizardState.drives.length === 0) {
-    container.innerHTML = '<div style="color:#94A3B8; font-size:12px; padding:8px;">Drive C: (Default Storage)</div>';
-    wizardState.storageDrive = 'C:\\';
+  if (!wizardState.drives || wizardState.drives.length === 0) {
+    container.innerHTML = `
+      <label style="display:flex; align-items:center; gap:10px; padding:10px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:10px; cursor:pointer;">
+        <input type="checkbox" value="C:\\" checked style="accent-color:#00D4FF;" />
+        <div style="font-size:13px; font-weight:600; color:#F8FAFC;">
+          💾 Local Disk (C:) <span style="font-size:11px; color:#94A3B8;">— System Drive (Default)</span>
+        </div>
+      </label>
+    `;
+    wizardState.storageDrives = ['C:\\'];
+    if (storagePathInput && !storagePathInput.value) {
+      storagePathInput.value = 'C:\\NAS_Storage';
+      wizardState.customStoragePath = 'C:\\NAS_Storage';
+    }
     return;
   }
 
+  // Find non-system drive if available (e.g., D: or E:)
+  const nonSystem = wizardState.drives.find(d => {
+    const letter = (d.letter || d.mounted || '').toUpperCase();
+    return !letter.startsWith('C:');
+  });
+  const defaultDrive = nonSystem ? (nonSystem.letter || nonSystem.mounted) : (wizardState.drives[0].letter || wizardState.drives[0].mounted);
+  const cleanDefaultDrive = String(defaultDrive).trim().replace(/[\/\\]+$/, '');
+
+  wizardState.storageDrives = [cleanDefaultDrive + '\\'];
+  if (storagePathInput && (!storagePathInput.value || storagePathInput.value.startsWith('D:\\') || storagePathInput.value.startsWith('C:\\'))) {
+    storagePathInput.value = cleanDefaultDrive + '\\NAS_Storage';
+    wizardState.customStoragePath = cleanDefaultDrive + '\\NAS_Storage';
+  }
+
   container.innerHTML = wizardState.drives.map((d, i) => {
-    const letter = d.letter || d.mounted || 'C:';
-    const isChecked = i === 0 ? 'checked' : '';
-    if (i === 0) wizardState.storageDrive = letter;
-    const label = d.name ? `${d.name} (${letter})` : `Local Disk (${letter})`;
+    const letter = (d.letter || d.mounted || 'C:').replace(/[\/\\]+$/, '');
+    const isChecked = letter.toUpperCase() === cleanDefaultDrive.toUpperCase();
+    const label = d.name ? `${d.name} (${letter}:)` : `Local Disk (${letter}:)`;
     const size = d.size ? ` — ${d.size}` : '';
+    const free = d.free ? ` (${d.free} free)` : '';
     return `
       <label style="display:flex; align-items:center; gap:10px; padding:10px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:10px; cursor:pointer;">
-        <input type="radio" name="wiz_drive" value="${letter}" ${isChecked} onchange="wizardState.storageDrive = this.value" style="accent-color:#00D4FF;" />
+        <input type="checkbox" class="wiz-drive-checkbox" value="${letter}\\" ${isChecked ? 'checked' : ''} style="accent-color:#00D4FF;" />
         <div style="font-size:13px; font-weight:600; color:#F8FAFC;">
-          💾 ${label} <span style="font-size:11px; color:#94A3B8;">${size}</span>
+          💾 ${label} <span style="font-size:11px; color:#94A3B8;">${size}${free}</span>
         </div>
       </label>
     `;
   }).join('');
+
+  // Handle drive checkbox toggles
+  container.querySelectorAll('.wiz-drive-checkbox').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const selected = Array.from(container.querySelectorAll('.wiz-drive-checkbox:checked')).map(c => c.value);
+      wizardState.storageDrives = selected;
+      if (selected.length > 0 && storagePathInput) {
+        const firstLetter = selected[0].replace(/[\/\\]+$/, '');
+        storagePathInput.value = firstLetter + '\\NAS_Storage';
+        wizardState.customStoragePath = storagePathInput.value;
+      }
+    });
+  });
+}
+
+function renderWizardRaid() {
+  const raidSection = document.getElementById('wiz-raid-section');
+  const d1Select = document.getElementById('wiz-raid-disk-1');
+  const d2Select = document.getElementById('wiz-raid-disk-2');
+  if (!raidSection || !d1Select || !d2Select) return;
+
+  const disks = wizardState.raidDisks || [];
+  if (disks.length >= 2) {
+    raidSection.classList.remove('hidden');
+    const optionsHtml = disks.map((d, idx) => {
+      const label = `${d.model || 'Disk ' + idx} (${d.size || 'Auto'}) [${d.path || d.id}]`;
+      return `<option value="${d.path || d.id}">${label}</option>`;
+    }).join('');
+
+    d1Select.innerHTML = optionsHtml;
+    d2Select.innerHTML = optionsHtml;
+    if (disks.length > 1) {
+      d2Select.selectedIndex = 1;
+    }
+  } else {
+    raidSection.classList.add('hidden');
+  }
 }
 
 function showWizardStep(stepNum) {
-  [1, 2, 3].forEach(n => {
+  wizardState.activeStep = stepNum;
+  [1, 2, 3, 4, 5].forEach(n => {
     const stepDiv = document.getElementById(`wizard-step-${n}`);
     const stepPill = document.getElementById(`wizard-step-pill-${n}`);
     if (stepDiv) stepDiv.classList.toggle('hidden', n !== stepNum);
@@ -3898,10 +4013,17 @@ function showWizardStep(stepNum) {
         stepPill.style.background = 'rgba(0,212,255,0.2)';
         stepPill.style.color = '#00D4FF';
         stepPill.style.borderColor = '#00D4FF';
+        stepPill.style.cursor = 'default';
+      } else if (n < stepNum) {
+        stepPill.style.background = 'rgba(34,197,94,0.15)';
+        stepPill.style.color = '#22C55E';
+        stepPill.style.borderColor = 'rgba(34,197,94,0.3)';
+        stepPill.style.cursor = 'pointer';
       } else {
         stepPill.style.background = 'rgba(255,255,255,0.05)';
         stepPill.style.color = '#94A3B8';
         stepPill.style.borderColor = 'rgba(255,255,255,0.1)';
+        stepPill.style.cursor = 'default';
       }
     }
   });
@@ -3918,76 +4040,191 @@ function bindSetupWizardEvents() {
     }
   };
 
-  // Step 1 -> Step 2
+  // Allow clicking earlier pills to navigate back
+  [1, 2, 3, 4, 5].forEach(n => {
+    document.getElementById(`wizard-step-pill-${n}`)?.addEventListener('click', () => {
+      if (n < wizardState.activeStep && wizardState.activeStep < 5) {
+        showWizardStep(n);
+      }
+    });
+  });
+
+  // Step 1 -> Step 2 (System & Identity)
   document.getElementById('wiz-next-1')?.addEventListener('click', () => {
+    const sName = document.getElementById('wiz-server-name')?.value.trim() || 'MyPersonalNAS';
+    const sPort = parseInt(document.getElementById('wiz-server-port')?.value, 10) || 3000;
+    wizardState.serverName = sName;
+    wizardState.serverPort = sPort;
+    showWizardStep(2);
+  });
+
+  // Step 2 Back & Next (Storage Allocation)
+  document.getElementById('wiz-back-2')?.addEventListener('click', () => showWizardStep(1));
+  document.getElementById('wiz-next-2')?.addEventListener('click', () => {
+    const storagePathInput = document.getElementById('wiz-storage-path')?.value.trim();
+    if (!storagePathInput) {
+      return showErr('Please specify a valid dedicated storage root folder.');
+    }
+    wizardState.customStoragePath = storagePathInput;
+
+    const raidCb = document.getElementById('wiz-enable-raid');
+    if (raidCb && raidCb.checked) {
+      const d1 = document.getElementById('wiz-raid-disk-1')?.value;
+      const d2 = document.getElementById('wiz-raid-disk-2')?.value;
+      if (!d1 || !d2 || d1 === d2) {
+        return showErr('Please choose two distinct physical disks for RAID 1 mirroring.');
+      }
+      wizardState.createRaidMirror = true;
+      wizardState.raidDisk1 = d1;
+      wizardState.raidDisk2 = d2;
+    } else {
+      wizardState.createRaidMirror = false;
+    }
+
+    showWizardStep(3);
+  });
+
+  // RAID Checkbox toggle
+  document.getElementById('wiz-enable-raid')?.addEventListener('change', (e) => {
+    const picker = document.getElementById('wiz-raid-disks-picker');
+    if (picker) picker.classList.toggle('hidden', !e.target.checked);
+  });
+
+  // Step 3 Back & Next (Master Admin Account)
+  document.getElementById('wiz-back-3')?.addEventListener('click', () => showWizardStep(2));
+  document.getElementById('wiz-next-3')?.addEventListener('click', () => {
     const u = document.getElementById('wiz-username')?.value.trim();
     const p = document.getElementById('wiz-password')?.value;
     const c = document.getElementById('wiz-confirm')?.value;
     const e = document.getElementById('wiz-email')?.value.trim();
 
-    if (!u || u.length < 3) return showErr('Username must be at least 3 characters.');
-    if (!p || p.length < 6) return showErr('Password must be at least 6 characters.');
+    if (!u || u.length < 3) return showErr('Admin username must be at least 3 characters.');
+    if (!p || p.length < 6) return showErr('Master password must be at least 6 characters.');
     if (p !== c) return showErr('Passwords do not match.');
 
     wizardState.username = u;
     wizardState.password = p;
     wizardState.email = e;
-    showWizardStep(2);
+    showWizardStep(4);
   });
 
-  // Step 2 Back & Next
-  document.getElementById('wiz-back-2')?.addEventListener('click', () => showWizardStep(1));
-  document.getElementById('wiz-next-2')?.addEventListener('click', () => showWizardStep(3));
+  // Copy Emergency Passcode Button
+  document.getElementById('wiz-copy-passcode')?.addEventListener('click', () => {
+    const code = document.getElementById('wiz-passcode-display')?.textContent.trim();
+    if (code && code !== '------') {
+      navigator.clipboard.writeText(code).then(() => {
+        const btn = document.getElementById('wiz-copy-passcode');
+        if (btn) {
+          const oldText = btn.textContent;
+          btn.textContent = '✅ Copied!';
+          setTimeout(() => { btn.textContent = oldText; }, 2500);
+        }
+      }).catch(() => {});
+    }
+  });
 
-  // Step 3 Back
-  document.getElementById('wiz-back-3')?.addEventListener('click', () => showWizardStep(2));
+  // Step 4 Mode Cards Selection
+  document.querySelectorAll('input[name="wiz_tunnel_mode"]').forEach(radio => {
+    radio.addEventListener('change', (e) => {
+      wizardState.tunnelMode = e.target.value;
+      const namedFields = document.getElementById('wiz-named-fields');
+      if (namedFields) {
+        namedFields.classList.toggle('hidden', wizardState.tunnelMode !== 'named');
+      }
+      // Highlight selected mode card
+      document.querySelectorAll('.wiz-mode-card').forEach(card => {
+        const checked = card.querySelector('input[type="radio"]')?.checked;
+        if (checked) {
+          card.style.background = 'rgba(0,212,255,0.08)';
+          card.style.borderColor = '#00D4FF';
+        } else {
+          card.style.background = 'rgba(255,255,255,0.03)';
+          card.style.borderColor = 'rgba(255,255,255,0.08)';
+        }
+      });
+    });
+  });
 
-  // Step 3 Finish
-  const finishSetup = async (skipTunnel = false) => {
+  // Step 4 Back
+  document.getElementById('wiz-back-4')?.addEventListener('click', () => showWizardStep(3));
+
+  // Step 4 Finish (Execute Setup)
+  document.getElementById('wiz-finish-btn')?.addEventListener('click', async () => {
     const spinner = document.getElementById('wiz-finish-spinner');
     const text = document.getElementById('wiz-finish-text');
+    const finishBtn = document.getElementById('wiz-finish-btn');
     if (spinner) spinner.classList.remove('hidden');
     if (text) text.style.opacity = '0.5';
+    if (finishBtn) finishBtn.disabled = true;
 
-    const token = skipTunnel ? '' : (document.getElementById('wiz-tunnel-token')?.value.trim() || '');
-    const url = document.getElementById('wiz-tunnel-url')?.value.trim() || 'https://mynas-hi.online';
+    const token = document.getElementById('wiz-tunnel-token')?.value.trim() || '';
+    const customUrl = document.getElementById('wiz-tunnel-url')?.value.trim() || 'https://mynas-hi.online';
 
     try {
+      const payload = {
+        username: wizardState.username,
+        password: wizardState.password,
+        email: wizardState.email,
+        serverName: wizardState.serverName,
+        storageDrives: wizardState.storageDrives,
+        customStoragePath: wizardState.customStoragePath,
+        createRaidMirror: wizardState.createRaidMirror,
+        raidMemberDisks: wizardState.createRaidMirror ? [wizardState.raidDisk1, wizardState.raidDisk2] : undefined,
+        tunnelMode: wizardState.tunnelMode,
+        tunnelToken: token,
+        customUrl: customUrl
+      };
+
       const resp = await fetch('/api/setup/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: wizardState.username,
-          password: wizardState.password,
-          email: wizardState.email,
-          storageDrive: wizardState.storageDrive,
-          tunnelToken: token,
-          customUrl: url
-        })
+        body: JSON.stringify(payload)
       });
 
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || 'Setup failed');
 
-      Auth.setToken(data.token);
+      // Save credentials & token
+      if (data.token) Auth.setToken(data.token);
       localStorage.setItem('nas_user', data.username);
       if (data.user) localStorage.setItem('nas_user_info', JSON.stringify(data.user));
 
-      document.getElementById('setup-wizard-overlay')?.classList.add('hidden');
-      bindThemeSwitches();
-      showApp();
-      await loadSystemInfo();
-      navigate('dashboard');
+      // Advance to Step 5: Mobile QR Pairing
+      showWizardStep(5);
+
+      // Render QR Code
+      const qrImg = document.getElementById('wiz-pairing-qr-img');
+      if (qrImg && data.pairing && data.pairing.qrDataUrl) {
+        qrImg.src = data.pairing.qrDataUrl;
+      }
+
+      // Render Summary info
+      const sumUrl = document.getElementById('wiz-summary-url');
+      if (sumUrl) sumUrl.textContent = data.serverUrl || window.location.origin;
+
+      const sumPath = document.getElementById('wiz-summary-path');
+      if (sumPath) sumPath.textContent = data.storagePath || wizardState.customStoragePath;
+
+      const sumUser = document.getElementById('wiz-summary-user');
+      if (sumUser) sumUser.textContent = data.username;
+
     } catch (e) {
       showErr(e.message || 'Setup completion failed');
     } finally {
       if (spinner) spinner.classList.add('hidden');
       if (text) text.style.opacity = '1';
+      if (finishBtn) finishBtn.disabled = false;
     }
-  };
+  });
 
-  document.getElementById('wiz-finish-btn')?.addEventListener('click', () => finishSetup(false));
-  document.getElementById('wiz-skip-btn')?.addEventListener('click', () => finishSetup(true));
+  // Step 5: Enter Web Dashboard
+  document.getElementById('wiz-open-dash-btn')?.addEventListener('click', async () => {
+    document.getElementById('setup-wizard-overlay')?.classList.add('hidden');
+    bindThemeSwitches();
+    showApp();
+    await loadSystemInfo();
+    navigate('dashboard');
+  });
 }
 
 document.addEventListener('DOMContentLoaded', init);
