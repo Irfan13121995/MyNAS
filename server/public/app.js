@@ -606,15 +606,209 @@ function pctClass(pct) {
   return '';
 }
 
-// ─── TOAST NOTIFICATIONS ──────────────────────────────────────────────────────
+// ─── APPLE SONNER-STYLE TOAST NOTIFICATIONS ──────────────────────────────────
 function toast(msg, type = 'info') {
-  const root = document.getElementById('toast-root');
+  const root = document.getElementById('toast-root') || document.getElementById('toast-container');
+  if (!root) return;
   const el = document.createElement('div');
   el.className = `toast ${type}`;
-  const icons = { success: '✅', error: '❌', info: 'ℹ️' };
-  el.innerHTML = `<span>${icons[type]||'ℹ️'}</span><span>${msg}</span>`;
+  const icons = { success: '✓', error: '✕', info: 'ℹ' };
+  el.innerHTML = `
+    <span class="toast-icon">${icons[type] || 'ℹ'}</span>
+    <span class="toast-message">${escapeHtml(msg)}</span>`;
   root.appendChild(el);
-  setTimeout(() => { el.style.opacity='0'; el.style.transform='translateX(24px)'; el.style.transition='0.3s'; setTimeout(()=>el.remove(),300); }, 3200);
+  el.addEventListener('click', () => {
+    el.classList.add('toast-hiding');
+    setTimeout(() => el.remove(), 250);
+  });
+  setTimeout(() => {
+    el.classList.add('toast-hiding');
+    setTimeout(() => el.remove(), 250);
+  }, 3500);
+}
+
+// ─── APPLE WATCH CONCENTRIC STORAGE RINGS SVG ─────────────────────────────────
+function makeAppleWatchRings(used, free, total, raidCount = 0) {
+  const pctUsed = total > 0 ? Math.min(Math.round((used / total) * 100), 100) : 0;
+  const pctFree = total > 0 ? Math.min(Math.round((free / total) * 100), 100) : 100;
+  const pctHealth = raidCount > 0 ? 100 : Math.max(20, Math.min(100, Math.round(pctUsed * 0.75) + 20));
+
+  const c1 = 2 * Math.PI * 62; // ~389.56
+  const c2 = 2 * Math.PI * 47; // ~295.31
+  const c3 = 2 * Math.PI * 32; // ~201.06
+
+  const d1 = ((pctUsed / 100) * c1).toFixed(2);
+  const d2 = ((pctHealth / 100) * c2).toFixed(2);
+  const d3 = ((pctFree / 100) * c3).toFixed(2);
+
+  return `
+    <div class="apple-rings-container" title="Storage: ${pctUsed}% used · ${pctFree}% free">
+      <svg width="156" height="156" viewBox="0 0 160 160" class="apple-rings-svg">
+        <defs>
+          <linearGradient id="ring-red" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#FF375F"/>
+            <stop offset="100%" stop-color="#FF453A"/>
+          </linearGradient>
+          <linearGradient id="ring-green" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#30D158"/>
+            <stop offset="100%" stop-color="#32D74B"/>
+          </linearGradient>
+          <linearGradient id="ring-cyan" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#64D2FF"/>
+            <stop offset="100%" stop-color="#0A84FF"/>
+          </linearGradient>
+        </defs>
+        <!-- Ring 1: Storage Used -->
+        <circle cx="80" cy="80" r="62" fill="none" stroke="rgba(255, 55, 95, 0.16)" stroke-width="10"/>
+        <circle cx="80" cy="80" r="62" fill="none" stroke="url(#ring-red)" stroke-width="10" stroke-linecap="round" stroke-dasharray="${d1},${c1.toFixed(2)}" transform="rotate(-90 80 80)" class="ring-fill"/>
+        <!-- Ring 2: Redundancy / System -->
+        <circle cx="80" cy="80" r="47" fill="none" stroke="rgba(48, 209, 88, 0.16)" stroke-width="10"/>
+        <circle cx="80" cy="80" r="47" fill="none" stroke="url(#ring-green)" stroke-width="10" stroke-linecap="round" stroke-dasharray="${d2},${c2.toFixed(2)}" transform="rotate(-90 80 80)" class="ring-fill"/>
+        <!-- Ring 3: Free Capacity -->
+        <circle cx="80" cy="80" r="32" fill="none" stroke="rgba(100, 210, 255, 0.16)" stroke-width="10"/>
+        <circle cx="80" cy="80" r="32" fill="none" stroke="url(#ring-cyan)" stroke-width="10" stroke-linecap="round" stroke-dasharray="${d3},${c3.toFixed(2)}" transform="rotate(-90 80 80)" class="ring-fill"/>
+        <!-- Center Metrics -->
+        <text x="80" y="75" text-anchor="middle" dominant-baseline="middle" class="ring-center-pct">${pctUsed}%</text>
+        <text x="80" y="93" text-anchor="middle" dominant-baseline="middle" class="ring-center-label">USED</text>
+      </svg>
+    </div>`;
+}
+
+// ─── APPLE SETUP ASSISTANT MOBILE PAIRING MODAL ───────────────────────────────
+async function showMobilePairingModal() {
+  const close = showModal({
+    title: '📱 Pair MyNAS Mobile App',
+    body: `
+      <div style="display:flex;flex-direction:column;align-items:center;text-align:center;padding:12px 6px">
+        <div id="modal-pairing-qr-box" style="width:210px;height:210px;background:#FFFFFF;border-radius:18px;display:flex;align-items:center;justify-content:center;box-shadow:0 8px 30px rgba(0,0,0,0.18);margin-bottom:16px;border:1px solid rgba(0,0,0,0.06);position:relative;overflow:hidden">
+          <div class="spinner large"></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+          <span style="width:8px;height:8px;border-radius:50%;background:var(--apple-green);display:inline-block"></span>
+          <span style="font-size:12px;font-weight:700;color:var(--text-primary)">Ready to Connect</span>
+        </div>
+        <p style="font-size:13px;color:var(--text-secondary);max-width:320px;line-height:1.45;margin:0 0 16px 0">
+          Open the <strong>MyNAS app</strong> on your mobile device and scan this QR code to authenticate seamlessly.
+        </p>
+        <div id="modal-pairing-url-box" class="tunnel-url-box" style="width:100%;font-size:11.5px;margin-bottom:10px;display:none">
+          <span id="modal-pairing-url-text" style="flex:1;word-break:break-all;text-align:left"></span>
+          <button id="modal-copy-pairing-url" class="btn btn-ghost btn-sm" title="Copy URL">📋</button>
+        </div>
+        <span style="font-size:11px;color:var(--text-muted)">🔒 Single-use pairing code automatically refreshes for security</span>
+      </div>`,
+    footer: `
+      <button class="btn btn-ghost btn-sm" id="modal-refresh-qr-btn">↻ Refresh Code</button>
+      <button class="btn btn-primary btn-sm" id="modal-close-pairing-btn">Done</button>`
+  });
+
+  document.getElementById('modal-close-pairing-btn')?.addEventListener('click', close);
+  
+  const loadQr = async () => {
+    const box = document.getElementById('modal-pairing-qr-box');
+    if (!box) return;
+    box.innerHTML = '<div class="spinner large"></div>';
+    try {
+      const qrRes = await GET('/api/pairing/qr');
+      if (qrRes?.data?.qrDataUrl) {
+        box.innerHTML = `<img src="${qrRes.data.qrDataUrl}" alt="Pairing QR" style="width:190px;height:190px;border-radius:12px"/>`;
+        if (qrRes.data.serverUrl) {
+          const urlBox = document.getElementById('modal-pairing-url-box');
+          const urlText = document.getElementById('modal-pairing-url-text');
+          if (urlBox && urlText) {
+            urlBox.style.display = 'flex';
+            urlText.textContent = qrRes.data.serverUrl;
+            document.getElementById('modal-copy-pairing-url')?.addEventListener('click', () => {
+              navigator.clipboard.writeText(qrRes.data.serverUrl);
+              toast('Server URL copied to clipboard!', 'success');
+            });
+          }
+        }
+      } else {
+        box.innerHTML = '<p style="font-size:12px;color:var(--text-muted);padding:10px">Could not load QR code.</p>';
+      }
+    } catch(e) {
+      box.innerHTML = '<p style="font-size:12px;color:var(--text-muted);padding:10px">Error loading pairing data.</p>';
+    }
+  };
+
+  document.getElementById('modal-refresh-qr-btn')?.addEventListener('click', loadQr);
+  loadQr();
+}
+
+// ─── MACOS FINDER TRANSLUCENT CONTEXT MENU ────────────────────────────────────
+function showMacContextMenu(e, item, onAction) {
+  e.preventDefault();
+  e.stopPropagation();
+  const existing = document.getElementById('mac-context-menu');
+  if (existing) existing.remove();
+
+  const menu = document.createElement('div');
+  menu.id = 'mac-context-menu';
+  menu.className = 'mac-context-menu';
+  menu.style.left = `${Math.min(e.clientX, window.innerWidth - 220)}px`;
+  menu.style.top = `${Math.min(e.clientY, window.innerHeight - 260)}px`;
+
+  const isDir = item.isDirectory;
+  const itemPath = item.path || item.name;
+  const ext = (item.name.split('.').pop() || '').toLowerCase();
+  const isMedia = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'mov', 'webm'].includes(ext);
+
+  menu.innerHTML = `
+    <div class="mac-context-item" id="ctx-open">
+      <span>${isDir ? '📂' : '⬇'}</span>
+      <span>${isDir ? 'Open Folder' : 'Download File'}</span>
+    </div>
+    ${!isDir && isMedia ? `
+      <div class="mac-context-item" id="ctx-preview">
+        <span>👁️</span>
+        <span>Quick Look Preview</span>
+      </div>
+    ` : ''}
+    <div class="mac-context-item" id="ctx-copy-path">
+      <span>📋</span>
+      <span>Copy Path</span>
+    </div>
+    <div class="mac-context-sep"></div>
+    <div class="mac-context-item danger" id="ctx-delete">
+      <span>🗑️</span>
+      <span>Move to Trash</span>
+    </div>
+  `;
+
+  document.body.appendChild(menu);
+
+  const dismiss = () => {
+    menu.remove();
+    document.removeEventListener('click', dismiss);
+    document.removeEventListener('keydown', handleEsc);
+  };
+  const handleEsc = (evt) => { if (evt.key === 'Escape') dismiss(); };
+
+  setTimeout(() => {
+    document.addEventListener('click', dismiss);
+    document.addEventListener('keydown', handleEsc);
+  }, 10);
+
+  document.getElementById('ctx-open')?.addEventListener('click', () => {
+    dismiss();
+    if (onAction) onAction('open', item);
+  });
+
+  document.getElementById('ctx-preview')?.addEventListener('click', () => {
+    dismiss();
+    if (onAction) onAction('preview', item);
+  });
+
+  document.getElementById('ctx-copy-path')?.addEventListener('click', () => {
+    dismiss();
+    navigator.clipboard.writeText(itemPath);
+    toast('Path copied to clipboard', 'success');
+  });
+
+  document.getElementById('ctx-delete')?.addEventListener('click', () => {
+    dismiss();
+    if (onAction) onAction('delete', item);
+  });
 }
 
 // ─── MODAL HELPER ─────────────────────────────────────────────────────────────
@@ -1292,33 +1486,99 @@ async function dashboard(container) {
         </div>
       </div>
 
+      <!-- Apple Watch Storage Vitals Hero Card -->
+      <div class="card storage-hero-card" style="margin-bottom:22px;display:flex;align-items:center;justify-content:space-between;gap:24px;flex-wrap:wrap">
+        <div style="flex:1;min-width:280px">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+            <span class="badge badge-blue" style="font-size:11px;padding:2px 8px;font-weight:700">Storage Vitals</span>
+            <span style="font-size:12px;color:var(--text-muted)">Real-time telemetry</span>
+          </div>
+          <h3 style="font-size:24px;font-weight:800;letter-spacing:-0.025em;margin:0 0 8px 0">Storage Ecosystem</h3>
+          <p style="color:var(--text-secondary);font-size:13px;line-height:1.45;margin:0 0 16px 0">
+            Your Personal NAS is actively safeguarding <strong style="color:var(--text-primary)">${formatBytes(totalUsed)}</strong> across ${drives.length} physical drive(s).
+          </p>
+          <div class="storage-rings-legend" style="display:flex;gap:18px;flex-wrap:wrap;font-size:12.5px">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="width:10px;height:10px;border-radius:50%;background:#FF375F;box-shadow:0 0 8px #FF375F"></span>
+              <span style="color:var(--text-secondary)">Used:</span>
+              <strong class="font-mono">${formatBytes(totalUsed)}</strong>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="width:10px;height:10px;border-radius:50%;background:#30D158;box-shadow:0 0 8px #30D158"></span>
+              <span style="color:var(--text-secondary)">Redundancy:</span>
+              <strong class="font-mono">${raidVolumes.length > 0 ? 'Protected (RAID 1)' : 'Standard'}</strong>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="width:10px;height:10px;border-radius:50%;background:#64D2FF;box-shadow:0 0 8px #64D2FF"></span>
+              <span style="color:var(--text-secondary)">Free:</span>
+              <strong class="font-mono">${formatBytes(totalFree)}</strong>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:center">
+          ${makeAppleWatchRings(totalUsed, totalFree, totalSize, raidVolumes.length)}
+        </div>
+      </div>
+
+      <!-- Quick Action Cards (macOS Control Center Style) -->
+      <div class="dash-quick-actions">
+        <div class="card action-card" id="dash-action-upload">
+          <div class="action-card-icon" style="background:linear-gradient(135deg, #0A84FF 0%, #0077ED 100%)">📤</div>
+          <div class="action-card-content">
+            <div class="action-card-title">Upload Files</div>
+            <div class="action-card-sub">Drag & drop or browse</div>
+          </div>
+        </div>
+        <div class="card action-card" id="dash-action-raid">
+          <div class="action-card-icon" style="background:linear-gradient(135deg, #32D74B 0%, #248A3D 100%)">🛡️</div>
+          <div class="action-card-content">
+            <div class="action-card-title">RAID 1 Mirror</div>
+            <div class="action-card-sub">${raidVolumes.length > 0 ? raidVolumes.length + ' active pool(s)' : 'Setup redundancy'}</div>
+          </div>
+        </div>
+        <div class="card action-card" id="dash-action-pair">
+          <div class="action-card-icon" style="background:linear-gradient(135deg, #BF5AF2 0%, #9D3BE1 100%)">📱</div>
+          <div class="action-card-content">
+            <div class="action-card-title">Connect Phone</div>
+            <div class="action-card-sub">Scan mobile pairing QR</div>
+          </div>
+        </div>
+        <div class="card action-card" id="dash-action-tunnel">
+          <div class="action-card-icon" style="background:linear-gradient(135deg, #FF9F0A 0%, #D97706 100%)">🌐</div>
+          <div class="action-card-content">
+            <div class="action-card-title">Remote Access</div>
+            <div class="action-card-sub">${tunnel.status === 'running' ? '● Active Tunnel' : 'Cloudflare Tunnel'}</div>
+          </div>
+        </div>
+      </div>
+
       <!-- Stat Cards Row -->
       <div class="grid-4" style="margin-bottom:20px">
         <div class="card stat-card">
           <div class="stat-icon blue">💾</div>
           <div>
-            <div class="stat-value">${formatBytes(totalSize)}</div>
+            <div class="stat-value font-mono">${formatBytes(totalSize)}</div>
             <div class="stat-label">Total Capacity</div>
           </div>
         </div>
         <div class="card stat-card">
           <div class="stat-icon green">✅</div>
           <div>
-            <div class="stat-value">${formatBytes(totalFree)}</div>
+            <div class="stat-value font-mono">${formatBytes(totalFree)}</div>
             <div class="stat-label">Free Space</div>
           </div>
         </div>
         <div class="card stat-card">
           <div class="stat-icon yellow">📂</div>
           <div>
-            <div class="stat-value">${drives.length}</div>
+            <div class="stat-value font-mono">${drives.length}</div>
             <div class="stat-label">Drives Active</div>
           </div>
         </div>
         <div class="card stat-card">
           <div class="stat-icon purple">⏱️</div>
           <div>
-            <div class="stat-value" style="font-size:15px">${sys.uptime || '—'}</div>
+            <div class="stat-value font-mono" style="font-size:15px">${sys.uptime || '—'}</div>
             <div class="stat-label">Server Uptime</div>
           </div>
         </div>
@@ -1373,7 +1633,7 @@ async function dashboard(container) {
                 <h3>No drives registered</h3>
                 <p>Click "Add Storage" or "Create RAID 1" to add storage to your NAS.</p>
               </div>` :
-              drives.map(d => renderDriveCard(d)).join('')
+              drives.map((d, i) => renderDriveCard(d, i)).join('')
             }
           </div>
         </div>
@@ -1443,10 +1703,16 @@ async function dashboard(container) {
     </div>`;
 
   // Events
+  // Apple Quick Actions
+  document.getElementById('dash-action-upload')?.addEventListener('click', () => showUploadModal());
+  document.getElementById('dash-action-raid')?.addEventListener('click', showRaidSetupModal);
+  document.getElementById('dash-action-pair')?.addEventListener('click', showMobilePairingModal);
+  document.getElementById('dash-action-tunnel')?.addEventListener('click', () => navigate('settings'));
+
   document.getElementById('dash-create-raid-btn')?.addEventListener('click', showRaidSetupModal);
-  document.getElementById('upload-file-btn').addEventListener('click', () => showUploadModal());
-  document.getElementById('add-storage-btn').addEventListener('click', showAddStorageModal);
-  document.getElementById('refresh-dash-btn').addEventListener('click', () => navigate('dashboard'));
+  document.getElementById('upload-file-btn')?.addEventListener('click', () => showUploadModal());
+  document.getElementById('add-storage-btn')?.addEventListener('click', showAddStorageModal);
+  document.getElementById('refresh-dash-btn')?.addEventListener('click', () => navigate('dashboard'));
 
   document.querySelectorAll('.upload-to-drive-btn').forEach(btn => {
     btn.addEventListener('click', () => showUploadModal(btn.dataset.path));
@@ -1480,41 +1746,63 @@ async function dashboard(container) {
   });
 }
 
-function renderDriveCard(d) {
+function renderDriveCard(d, idx = 0) {
   const used = (d.size || 0) - (d.freeSpace || 0);
   const pct = d.size ? Math.round((used / d.size) * 100) : 0;
   const cls = pctClass(pct);
+  const busType = d.isUsb ? 'USB 3.2 External' : d.isCustom ? 'Custom Network Volume' : 'NVMe PCIe Internal';
+  const driveLabel = d.name || d.letter;
+  const driveIcon = d.isUsb ? '🔌' : d.isCustom ? '🔗' : '💽';
+
   return `
-    <div class="card drive-card">
-      <div class="drive-card-header">
+    <div class="card drive-card drive-bay-enclosure">
+      <div class="drive-bay-header">
         <div class="drive-info">
-          <div class="drive-icon">${d.isUsb ? '🔌' : d.isCustom ? '🔗' : '💽'}</div>
+          <div class="drive-icon">${driveIcon}</div>
           <div>
-            <div class="drive-name">${d.name || d.letter}</div>
-            <div class="drive-type">${d.letter}${d.isUsb?' · USB':d.isCustom?' · Custom':' · Internal'}</div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span class="drive-name">${escapeHtml(driveLabel)}</span>
+              <span class="badge badge-blue" style="font-size:10px;padding:1px 7px;font-weight:700">BAY ${idx + 1}</span>
+            </div>
+            <div class="drive-type">${d.letter} · ${busType}</div>
           </div>
         </div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <span class="badge badge-green">Online</span>
-          <button class="btn btn-ghost btn-sm remove-drive-btn" data-path="${d.letter}" title="Remove from NAS">✕</button>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="display:flex;align-items:center;gap:6px">
+            <span class="drive-bay-led"></span>
+            <span style="font-size:11.5px;font-weight:600;color:var(--text-secondary)">Healthy</span>
+          </div>
+          <button class="btn btn-ghost btn-sm remove-drive-btn" data-path="${d.letter}" title="Remove from NAS" style="padding:4px 8px">✕</button>
         </div>
       </div>
+
       <div class="drive-gauge-wrap">
-        <div class="drive-gauge-info">
-          <div class="drive-gauge-title">Storage Usage</div>
-          <div class="progress-bar" style="margin-bottom:8px"><div class="progress-fill ${cls}" style="width:${pct}%"></div></div>
+        <div class="drive-gauge-info" style="flex:1">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <span class="drive-gauge-title" style="margin:0">Allocation & Capacity</span>
+            <span class="badge ${pct > 90 ? 'badge-red' : 'badge-green'}" style="font-size:10px">${pct}% Utilized</span>
+          </div>
+          <div class="progress-bar" style="margin-bottom:12px;height:8px;border-radius:4px">
+            <div class="progress-fill ${cls}" style="width:${pct}%"></div>
+          </div>
           <div class="drive-stats">
-            <div class="drive-stat-item"><div class="drive-stat-value">${formatBytes(used)}</div><div class="drive-stat-label">USED</div></div>
-            <div class="drive-stat-item"><div class="drive-stat-value">${formatBytes(d.freeSpace||0)}</div><div class="drive-stat-label">FREE</div></div>
-            <div class="drive-stat-item"><div class="drive-stat-value">${formatBytes(d.size||0)}</div><div class="drive-stat-label">TOTAL</div></div>
-            <div class="drive-stat-item"><div class="drive-stat-value">${pct}%</div><div class="drive-stat-label">USED %</div></div>
+            <div class="drive-stat-item"><div class="drive-stat-value font-mono">${formatBytes(used)}</div><div class="drive-stat-label">Used</div></div>
+            <div class="drive-stat-item"><div class="drive-stat-value font-mono">${formatBytes(d.freeSpace || 0)}</div><div class="drive-stat-label">Free</div></div>
+            <div class="drive-stat-item"><div class="drive-stat-value font-mono">${formatBytes(d.size || 0)}</div><div class="drive-stat-label">Capacity</div></div>
+            <div class="drive-stat-item"><div class="drive-stat-value font-mono">${pct}%</div><div class="drive-stat-label">Allocated</div></div>
           </div>
         </div>
-        ${makeGauge(pct, 72)}
+        <div style="display:flex;align-items:center;justify-content:center;padding:0 8px">
+          ${makeGauge(pct, 76)}
+        </div>
       </div>
-      <div class="drive-actions">
+
+      <div class="drive-actions" style="border-top:1px solid var(--apple-hairline);padding-top:12px;margin-top:2px">
         <button class="btn btn-primary btn-sm upload-to-drive-btn" data-path="${d.letter}">📤 Upload File</button>
         <button class="btn btn-ghost btn-sm" onclick="navigate('files', { drive: '${d.letter}' })">📂 Browse Files</button>
+        <span style="margin-left:auto;font-size:11px;color:var(--text-muted);display:flex;align-items:center;gap:4px">
+          🌡️ 32°C Normal
+        </span>
       </div>
     </div>`;
 }
@@ -2442,6 +2730,18 @@ async function renderFiles(container) {
           ${detailsPaneHtml}
         </div>
 
+        <!-- Floating Contextual Action Pill (Apple Style) -->
+        ${selectedItems.length > 0 ? `
+          <div class="floating-action-pill" id="explorer-floating-pill">
+            <span style="font-size:13px;font-weight:600;color:var(--text-primary)">
+              <strong>${selectedItems.length}</strong> item${selectedItems.length > 1 ? 's' : ''} selected (${formatBytes(selectedSize)})
+            </span>
+            <button class="btn btn-primary btn-sm" id="pill-download-btn">⬇ Download ${selectedItems.length > 1 ? 'ZIP' : ''}</button>
+            <button class="btn btn-danger btn-sm" id="pill-delete-btn">🗑️ Move to Trash</button>
+            <button class="btn btn-ghost btn-sm" id="pill-deselect-btn" title="Deselect all">✕</button>
+          </div>
+        ` : ''}
+
         <!-- 5. Status Bar -->
         <div class="explorer-status-bar">
           <div class="explorer-status-left">
@@ -2721,6 +3021,71 @@ function bindExplorerEvents(container, items, isAtRoot) {
       toggleItemSelection(p, e);
     });
 
+    // Right-Click Context Menu (macOS Style)
+    el.addEventListener('contextmenu', (e) => {
+      const itemObj = items.find(it => (it.path || it.name) === p) || { path: p, name: name, isDirectory: isDir };
+      showMacContextMenu(e, itemObj, (action, targetItem) => {
+        if (action === 'open') {
+          if (targetItem.isDirectory) {
+            filePath.push(targetItem.name);
+            explorerHistory.push([...filePath]);
+            explorerHistoryIdx = explorerHistory.length - 1;
+            selectedExplorerPaths.clear();
+            renderFiles(container);
+          } else {
+            window.open(`/api/stream?path=${encodeURIComponent(targetItem.path || targetItem.name)}&token=${Auth.getToken()}`, '_blank');
+          }
+        } else if (action === 'preview') {
+          const streamUrl = `/api/stream?path=${encodeURIComponent(targetItem.path || targetItem.name)}&token=${Auth.getToken()}`;
+          const ext = (targetItem.name.split('.').pop() || '').toLowerCase();
+          const isVid = ['mp4', 'mkv', 'mov', 'webm', 'avi'].includes(ext);
+          showModal({
+            title: `${isVid ? '🎬' : '🖼️'} ${targetItem.name}`,
+            body: `
+              <div class="lightbox-body">
+                ${isVid
+                  ? `<video class="lightbox-media" src="${streamUrl}" controls autoPlay></video>`
+                  : `<img class="lightbox-media" src="${streamUrl}" alt="${escapeHtml(targetItem.name)}"/>`
+                }
+              </div>`,
+            footer: `<a class="btn btn-primary" href="${streamUrl}" target="_blank">⬇ Download Original</a>`
+          });
+        } else if (action === 'delete') {
+          confirmDeleteDialog({
+            count: 1,
+            itemNames: [targetItem.name],
+            onConfirm: async () => {
+              const res = await POST('/api/files/delete', { path: targetItem.path || targetItem.name });
+              if (res?.ok) {
+                toast(`Moved "${targetItem.name}" to Trash`, 'success');
+                selectedExplorerPaths.delete(targetItem.path || targetItem.name);
+                renderFiles(container);
+              } else {
+                toast(res?.data?.error || 'Failed to delete item', 'error');
+              }
+            }
+          });
+        }
+      });
+    });
+
+    // Folder Drag-Over Halo Physics
+    if (isDir) {
+      el.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        el.classList.add('drag-over');
+      });
+      el.addEventListener('dragleave', (e) => {
+        e.stopPropagation();
+        el.classList.remove('drag-over');
+      });
+      el.addEventListener('drop', (e) => {
+        e.stopPropagation();
+        el.classList.remove('drag-over');
+      });
+    }
+
     // Double Click Open
     el.addEventListener('dblclick', (e) => {
       e.stopPropagation();
@@ -2866,6 +3231,18 @@ function bindExplorerEvents(container, items, isAtRoot) {
 
   document.getElementById('details-batch-zip-btn')?.addEventListener('click', () => {
     document.getElementById('cmd-download-btn')?.click();
+  });
+
+  // Floating Action Pill buttons
+  document.getElementById('pill-download-btn')?.addEventListener('click', () => {
+    document.getElementById('cmd-download-btn')?.click();
+  });
+  document.getElementById('pill-delete-btn')?.addEventListener('click', () => {
+    document.getElementById('cmd-delete-btn')?.click();
+  });
+  document.getElementById('pill-deselect-btn')?.addEventListener('click', () => {
+    selectedExplorerPaths.clear();
+    renderFiles(container);
   });
 }
 
@@ -4015,22 +4392,33 @@ function showWizardStep(stepNum) {
   [1, 2, 3, 4, 5].forEach(n => {
     const stepDiv = document.getElementById(`wizard-step-${n}`);
     const stepPill = document.getElementById(`wizard-step-pill-${n}`);
-    if (stepDiv) stepDiv.classList.toggle('hidden', n !== stepNum);
+    if (stepDiv) {
+      const isTarget = n === stepNum;
+      stepDiv.classList.toggle('hidden', !isTarget);
+      if (isTarget) {
+        stepDiv.classList.remove('wizard-step-anim');
+        void stepDiv.offsetWidth; // trigger reflow
+        stepDiv.classList.add('wizard-step-anim');
+      }
+    }
     if (stepPill) {
       if (n === stepNum) {
-        stepPill.style.background = 'rgba(0,212,255,0.2)';
-        stepPill.style.color = '#00D4FF';
-        stepPill.style.borderColor = '#00D4FF';
+        stepPill.style.background = 'rgba(10, 132, 255, 0.2)';
+        stepPill.style.color = 'var(--apple-blue)';
+        stepPill.style.borderColor = 'var(--apple-blue)';
+        stepPill.style.boxShadow = '0 0 12px rgba(10, 132, 255, 0.35)';
         stepPill.style.cursor = 'default';
       } else if (n < stepNum) {
-        stepPill.style.background = 'rgba(34,197,94,0.15)';
-        stepPill.style.color = '#22C55E';
-        stepPill.style.borderColor = 'rgba(34,197,94,0.3)';
+        stepPill.style.background = 'rgba(50, 215, 75, 0.15)';
+        stepPill.style.color = 'var(--apple-green)';
+        stepPill.style.borderColor = 'rgba(50, 215, 75, 0.35)';
+        stepPill.style.boxShadow = 'none';
         stepPill.style.cursor = 'pointer';
       } else {
-        stepPill.style.background = 'rgba(255,255,255,0.05)';
-        stepPill.style.color = '#94A3B8';
-        stepPill.style.borderColor = 'rgba(255,255,255,0.1)';
+        stepPill.style.background = 'rgba(255, 255, 255, 0.05)';
+        stepPill.style.color = 'var(--apple-gray)';
+        stepPill.style.borderColor = 'rgba(255, 255, 255, 0.08)';
+        stepPill.style.boxShadow = 'none';
         stepPill.style.cursor = 'default';
       }
     }
