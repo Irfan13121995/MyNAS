@@ -305,6 +305,19 @@ function isPathAllowed(targetPath, allowedDisks) {
   if (!targetPath) return false;
 
   let cleanTarget = String(targetPath).replace(/::+/g, ':').trim().toUpperCase();
+  if (cleanTarget.startsWith('RAID:')) {
+    const rawRaid = cleanTarget.replace(/^RAID:/, '');
+    const parts = rawRaid.split(/[\\\/]/).filter(Boolean);
+    const volKey = parts[0] || '';
+    const volumes = dbService.getAllVolumes();
+    const raidVol = volumes.find(v => v.id.toUpperCase() === volKey || v.name.toUpperCase() === volKey);
+    if (!raidVol || !Array.isArray(raidVol.member_disks) || raidVol.member_disks.length === 0) {
+      return false;
+    }
+    const cleanPrimary = raidVol.member_disks[0].replace(/[\/\\]+$/, '');
+    return isPathAllowed(cleanPrimary + '\\', allowedDisks);
+  }
+
   if (/^[A-Z]:?$/.test(cleanTarget)) {
     cleanTarget = cleanTarget.replace(':', '') + ':\\';
   }

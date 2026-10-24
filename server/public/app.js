@@ -953,6 +953,7 @@ function navigate(page, params = null) {
       });
   }
 }
+window.navigate = navigate;
 
 // ─── SYSTEM INFO (Sidebar + Topbar) ───────────────────────────────────────────
 async function loadSystemInfo() {
@@ -1611,7 +1612,7 @@ async function dashboard(container) {
                 </div>
                 <div style="display:flex;gap:8px">
                   <button class="btn btn-primary btn-sm" onclick="showUploadModal('raid:${vol.id}')">📤 Upload</button>
-                  <button class="btn btn-ghost btn-sm" onclick="navigate('files', { drive: 'raid:${vol.id}' })">📂 Browse</button>
+                  <button class="btn btn-ghost btn-sm browse-raid-btn" data-raid-id="raid:${vol.id}" onclick="navigate('files', { drive: 'raid:${vol.id}' })">📂 Browse</button>
                 </div>
               </div>
             `).join('')}
@@ -1717,6 +1718,21 @@ async function dashboard(container) {
   document.querySelectorAll('.upload-to-drive-btn').forEach(btn => {
     btn.addEventListener('click', () => showUploadModal(btn.dataset.path));
   });
+  document.querySelectorAll('.browse-raid-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      navigate('files', { drive: btn.dataset.raidId });
+    });
+  });
+
+  document.querySelectorAll('.browse-drive-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      navigate('files', { drive: btn.dataset.drive });
+    });
+  });
 
   document.getElementById('dash-tunnel-btn')?.addEventListener('click', async () => {
     const btn = document.getElementById('dash-tunnel-btn');
@@ -1799,7 +1815,7 @@ function renderDriveCard(d, idx = 0) {
 
       <div class="drive-actions" style="border-top:1px solid var(--apple-hairline);padding-top:12px;margin-top:2px">
         <button class="btn btn-primary btn-sm upload-to-drive-btn" data-path="${d.letter}">📤 Upload File</button>
-        <button class="btn btn-ghost btn-sm" onclick="navigate('files', { drive: '${d.letter}' })">📂 Browse Files</button>
+        <button class="btn btn-ghost btn-sm browse-drive-btn" data-drive="${d.letter}" onclick="navigate('files', { drive: '${d.letter}' })">📂 Browse Files</button>
         <span style="margin-left:auto;font-size:11px;color:var(--text-muted);display:flex;align-items:center;gap:4px">
           🌡️ 32°C Normal
         </span>
@@ -2107,7 +2123,7 @@ async function storage(container) {
                 </div>
                 <div style="display:flex;gap:8px">
                   <button class="btn btn-primary btn-sm" onclick="showUploadModal('raid:${vol.id}')">📤 Upload</button>
-                  <button class="btn btn-ghost btn-sm" onclick="navigate('files', { drive: 'raid:${vol.id}' })">📂 Browse</button>
+                  <button class="btn btn-ghost btn-sm browse-raid-btn" data-raid-id="raid:${vol.id}" onclick="navigate('files', { drive: 'raid:${vol.id}' })">📂 Browse</button>
                 </div>
               </div>
             `).join('')}
@@ -2154,7 +2170,7 @@ async function storage(container) {
                 ${makeGauge(pct, 80)}
                 <div style="display:flex;flex-direction:column;gap:8px;width:100%;max-width:140px">
                   <button class="btn btn-primary btn-sm upload-to-drive-btn" data-path="${d.letter}">📤 Upload File</button>
-                  <button class="btn btn-ghost btn-sm" onclick="navigate('files', { drive: '${d.letter}' })">📂 Browse</button>
+                  <button class="btn btn-ghost btn-sm browse-drive-btn" data-drive="${d.letter}" onclick="navigate('files', { drive: '${d.letter}' })">📂 Browse</button>
                   <button class="btn btn-danger btn-sm remove-drive-btn" data-path="${d.letter}">Remove</button>
                 </div>
               </div>
@@ -2171,6 +2187,21 @@ async function storage(container) {
 
   document.querySelectorAll('.upload-to-drive-btn').forEach(btn => {
     btn.addEventListener('click', () => showUploadModal(btn.dataset.path));
+  });
+  document.querySelectorAll('.browse-raid-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      navigate('files', { drive: btn.dataset.raidId });
+    });
+  });
+
+  document.querySelectorAll('.browse-drive-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      navigate('files', { drive: btn.dataset.drive });
+    });
   });
 
   document.querySelectorAll('.remove-drive-btn').forEach(btn => {
@@ -2365,6 +2396,7 @@ function groupItemsByDate(items) {
 
 // ── Primary Entry Point ──────────────────────────────────────────────────────
 async function files(container, params) {
+  container = container || document.getElementById('content');
   if (params && params.drive) {
     const cleanDrive = params.drive.replace(/[\/\\]+$/, '');
     filePath = [cleanDrive];
@@ -2381,22 +2413,48 @@ async function files(container, params) {
 
 // ── Windows 11 Explorer Renderer ─────────────────────────────────────────────
 async function renderFiles(container) {
+  container = container || document.getElementById('content');
   let pathStr = filePath.join('\\');
   if (/^[a-zA-Z]:$/.test(pathStr)) {
     pathStr += '\\';
   }
   const endpoint = pathStr ? `/api/files?path=${encodeURIComponent(pathStr)}` : '/api/files';
-  const r = await GET(endpoint);
-  let rawItems = r?.data || [];
+
+  // Fetch files, drives, and RAID volumes upfront in parallel
+  const [r, drivesR, volumesR] = await Promise.all([
+    GET(endpoint),
+    GET('/api/drives').catch(() => ({ data: [] })),
+    GET('/api/raid/volumes').catch(() => ({ data: { volumes: [] } }))
+  ]);
+
+  const drives = Array.isArray(drivesR?.data) ? drivesR.data : [];
+  const raidVolumes = Array.isArray(volumesR?.data?.volumes) ? volumesR.data.volumes : (Array.isArray(volumesR?.data) ? volumesR.data : []);
+
+  const formatSegmentDisplay = (seg) => {
+    if (typeof seg !== 'string') return '';
+    if (seg.startsWith('raid:')) {
+      const rawKey = seg.replace(/^raid:/, '');
+      const found = raidVolumes.find(v => v.id === rawKey || v.name.toLowerCase() === rawKey.toLowerCase());
+      return found ? `🛡️ ${found.name}` : `🛡️ ${rawKey}`;
+    }
+    return seg;
+  };
+
+  const isAtRoot = filePath.length === 0;
+  const currentFolderName = isAtRoot ? 'This PC' : formatSegmentDisplay(filePath[filePath.length - 1]);
+
+  // Handle errors gracefully (e.g. 403 access denied, missing disk, or network error)
+  const hasError = !r?.ok || (r?.data && !Array.isArray(r.data) && r.data.error);
+  let rawItems = Array.isArray(r?.data) ? r.data : [];
 
   // Filter with Search query if present
   let items = rawItems;
   if (explorerSearchFilter.trim()) {
     const q = explorerSearchFilter.trim().toLowerCase();
-    items = items.filter(f => f.name.toLowerCase().includes(q));
+    items = items.filter(f => (f.name || '').toLowerCase().includes(q));
   }
 
-  // Sort items
+  // Sort items safely
   items.sort((a, b) => {
     // Keep directories on top
     if (a.isDirectory && !b.isDirectory) return -1;
@@ -2410,11 +2468,11 @@ async function renderFiles(container) {
       valA = a.size || 0;
       valB = b.size || 0;
     } else if (explorerSortBy === 'type') {
-      valA = (a.name.split('.').pop() || '').toLowerCase();
-      valB = (b.name.split('.').pop() || '').toLowerCase();
+      valA = ((a.name || '').split('.').pop() || '').toLowerCase();
+      valB = ((b.name || '').split('.').pop() || '').toLowerCase();
     } else {
-      valA = a.name.toLowerCase();
-      valB = b.name.toLowerCase();
+      valA = (a.name || '').toLowerCase();
+      valB = (b.name || '').toLowerCase();
     }
 
     if (valA < valB) return explorerSortDir === 'asc' ? -1 : 1;
@@ -2422,22 +2480,12 @@ async function renderFiles(container) {
     return 0;
   });
 
-  const isAtRoot = filePath.length === 0;
-  const currentFolderName = filePath.length > 0 ? (filePath[filePath.length - 1].startsWith('raid:') ? '🛡️ ' + filePath[filePath.length - 1].replace(/^raid:/, '') : filePath[filePath.length - 1]) : 'This PC';
-
-  // Fetch drives for left navigation pane
-  const drivesR = await GET('/api/drives').catch(() => ({ data: [] }));
-  const drives = Array.isArray(drivesR?.data) ? drivesR.data : [];
-
-  const volumesR = await GET('/api/raid/volumes').catch(() => ({ data: { volumes: [] } }));
-  const raidVolumes = Array.isArray(volumesR?.data?.volumes) ? volumesR.data.volumes : (Array.isArray(volumesR?.data) ? volumesR.data : []);
-
-  // Breadcrumbs Bar
+  // Breadcrumbs Bar with friendly volume names
   const breadcrumbSegments = [
     `<span class="explorer-address-crumb" data-idx="-1">🏠 This PC</span>`,
     ...filePath.map((seg, i) => `
       <span class="explorer-address-sep">›</span>
-      <span class="explorer-address-crumb" data-idx="${i}">${seg.startsWith('raid:') ? '🛡️ ' + seg.replace(/^raid:/, '') : seg}</span>`)
+      <span class="explorer-address-crumb" data-idx="${i}">${escapeHtml(formatSegmentDisplay(seg))}</span>`)
   ].join('');
 
   // Calculate selected statistics
@@ -2476,7 +2524,16 @@ async function renderFiles(container) {
   // Render Main Content (Grid or Details)
   let mainContentHtml = '';
 
-  if (items.length === 0) {
+  if (hasError) {
+    const errorMsg = r?.data?.error || `Unable to access this path (HTTP ${r?.status || 500})`;
+    mainContentHtml = `
+      <div class="card empty-state" style="margin-top:30px;padding:32px;text-align:center">
+        <div class="icon" style="color:var(--red);font-size:36px;margin-bottom:12px">⚠️</div>
+        <h3 style="color:var(--red);margin-bottom:8px">Location Unavailable</h3>
+        <p style="color:var(--text-secondary);max-width:440px;margin:0 auto 16px auto">${escapeHtml(errorMsg)}</p>
+        <button class="btn btn-primary" onclick="navigate('files')">Return to This PC</button>
+      </div>`;
+  } else if (items.length === 0) {
     mainContentHtml = `
       <div class="card empty-state" style="margin-top:30px">
         <div class="icon">📂</div>
@@ -3027,7 +3084,12 @@ function bindExplorerEvents(container, items, isAtRoot) {
       showMacContextMenu(e, itemObj, (action, targetItem) => {
         if (action === 'open') {
           if (targetItem.isDirectory) {
-            filePath.push(targetItem.name);
+            if (isAtRoot) {
+              const seg = (targetItem.path || targetItem.name).replace(/[\/\\]+$/, '');
+              filePath.push(seg);
+            } else {
+              filePath.push(targetItem.name);
+            }
             explorerHistory.push([...filePath]);
             explorerHistoryIdx = explorerHistory.length - 1;
             selectedExplorerPaths.clear();
@@ -3090,7 +3152,12 @@ function bindExplorerEvents(container, items, isAtRoot) {
     el.addEventListener('dblclick', (e) => {
       e.stopPropagation();
       if (isDir) {
-        filePath.push(name);
+        if (isAtRoot) {
+          const seg = (p || name).replace(/[\/\\]+$/, '');
+          filePath.push(seg);
+        } else {
+          filePath.push(name);
+        }
         explorerHistory.push([...filePath]);
         explorerHistoryIdx = explorerHistory.length - 1;
         selectedExplorerPaths.clear();
