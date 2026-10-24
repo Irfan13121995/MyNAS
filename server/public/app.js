@@ -631,7 +631,14 @@ function showModal({ title, body, footer }) {
         ${footer ? `<div class="modal-footer">${footer}</div>` : ''}
       </div>
     </div>`;
-  const close = () => { root.innerHTML = ''; };
+  const close = () => {
+    root.innerHTML = '';
+    document.removeEventListener('keydown', handleKey);
+  };
+  const handleKey = (e) => {
+    if (e.key === 'Escape') close();
+  };
+  document.addEventListener('keydown', handleKey);
   document.getElementById('modal-close-btn').addEventListener('click', close);
   document.getElementById('modal-backdrop').addEventListener('click', (e) => { if (e.target.id === 'modal-backdrop') close(); });
   return close;
@@ -3819,6 +3826,7 @@ async function init() {
   } catch (e) {}
 
   bindSetupWizardEvents();
+  bindSpotlightSearch();
 
   try {
     const statusRes = await fetch('/api/setup/status');
@@ -4225,6 +4233,132 @@ function bindSetupWizardEvents() {
     await loadSystemInfo();
     navigate('dashboard');
   });
+}
+
+// ─── APPLE SPOTLIGHT SEARCH CONTROLLER (Cmd+K / Ctrl+K) ───────────────
+function bindSpotlightSearch() {
+  const overlay = document.getElementById('spotlight-overlay');
+  const input = document.getElementById('spotlight-input');
+  const results = document.getElementById('spotlight-results');
+  const triggerBtn = document.getElementById('spotlight-btn');
+
+  if (!overlay || !input || !results) return;
+
+  const quickPages = [
+    { name: 'Dashboard', icon: '📊', page: 'dashboard', desc: 'System overview, drive health & metrics' },
+    { name: 'Storage Pools', icon: '💾', page: 'storage', desc: 'View mounted disks, volumes & RAID arrays' },
+    { name: 'Files Explorer', icon: '📁', page: 'files', desc: 'Browse, manage and download files' },
+    { name: 'Media Gallery', icon: '📷', page: 'gallery', desc: 'Photos, videos & device camera roll' },
+    { name: 'Backup Center', icon: '🔄', page: 'backup', desc: 'Mobile backups and sync settings' },
+    { name: 'Remote Access', icon: '🌐', page: 'remote', desc: 'Cloudflare tunnels and public URLs' },
+    { name: 'Settings', icon: '⚙️', page: 'settings', desc: 'Server preferences, themes and passcodes' },
+    { name: 'Admin Panel', icon: '🛡️', page: 'admin', desc: 'Manage users, permissions & audit logs' }
+  ];
+
+  let selectedIdx = 0;
+  let activeMatches = quickPages;
+
+  const openSpotlight = () => {
+    overlay.classList.remove('hidden');
+    input.value = '';
+    renderResults(quickPages);
+    setTimeout(() => input.focus(), 60);
+  };
+
+  const closeSpotlight = () => {
+    overlay.classList.add('hidden');
+  };
+
+  const renderResults = (items) => {
+    activeMatches = items;
+    selectedIdx = 0;
+    if (items.length === 0) {
+      results.innerHTML = '<div class="spotlight-empty-hint">No matches found. Try searching for "storage", "files", or "photos".</div>';
+      return;
+    }
+
+    results.innerHTML = items.map((item, idx) => `
+      <div class="spotlight-item ${idx === 0 ? 'selected' : ''}" data-idx="${idx}" data-page="${item.page || ''}">
+        <div class="spotlight-item-icon">${item.icon}</div>
+        <div class="spotlight-item-info">
+          <div class="spotlight-item-title">${escapeHtml(item.name)}</div>
+          <div class="spotlight-item-sub">${escapeHtml(item.desc || '')}</div>
+        </div>
+      </div>
+    `).join('');
+
+    results.querySelectorAll('.spotlight-item').forEach(el => {
+      el.addEventListener('click', () => {
+        const page = el.dataset.page;
+        if (page) {
+          closeSpotlight();
+          navigate(page);
+        }
+      });
+    });
+  };
+
+  triggerBtn?.addEventListener('click', openSpotlight);
+
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) closeSpotlight();
+  });
+
+  input.addEventListener('input', () => {
+    const q = input.value.trim().toLowerCase();
+    if (!q) {
+      renderResults(quickPages);
+      return;
+    }
+    const matches = quickPages.filter(p => 
+      p.name.toLowerCase().includes(q) || 
+      p.desc.toLowerCase().includes(q) ||
+      p.page.toLowerCase().includes(q)
+    );
+    renderResults(matches);
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      if (overlay.classList.contains('hidden')) {
+        openSpotlight();
+      } else {
+        closeSpotlight();
+      }
+    } else if (e.key === 'Escape' && !overlay.classList.contains('hidden')) {
+      e.preventDefault();
+      closeSpotlight();
+    } else if (!overlay.classList.contains('hidden')) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (activeMatches.length > 0) {
+          selectedIdx = (selectedIdx + 1) % activeMatches.length;
+          updateSelected();
+        }
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (activeMatches.length > 0) {
+          selectedIdx = (selectedIdx - 1 + activeMatches.length) % activeMatches.length;
+          updateSelected();
+        }
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (activeMatches[selectedIdx]?.page) {
+          const targetPage = activeMatches[selectedIdx].page;
+          closeSpotlight();
+          navigate(targetPage);
+        }
+      }
+    }
+  });
+
+  function updateSelected() {
+    results.querySelectorAll('.spotlight-item').forEach((el, i) => {
+      el.classList.toggle('selected', i === selectedIdx);
+      if (i === selectedIdx) el.scrollIntoView({ block: 'nearest' });
+    });
+  }
 }
 
 document.addEventListener('DOMContentLoaded', init);

@@ -366,6 +366,14 @@
         </button>
         <h1 class="topbar-title" id="topbar-title">Dashboard</h1>
         <div class="topbar-actions">
+          <button id="spotlight-btn" class="spotlight-trigger-btn" title="Spotlight Search (Ctrl+K / Cmd+K)" aria-label="Search NAS">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <span class="spotlight-btn-text">Search...</span>
+            <kbd class="spotlight-kbd">⌘K</kbd>
+          </button>
           <div id="topbar-theme-switch" class="custom-theme-switch" role="button" tabindex="0" title="Toggle Light/Dark Mode">
             <div class="switch-track">
               <span class="switch-label dark-label">DARK</span>
@@ -418,6 +426,23 @@
 
   <!-- ── TOAST ROOT ── -->
   <div id="toast-root"></div>
+
+  <!-- ── SPOTLIGHT SEARCH OVERLAY (macOS Style) ── -->
+  <div id="spotlight-overlay" class="spotlight-overlay hidden">
+    <div class="spotlight-modal">
+      <div class="spotlight-input-wrapper">
+        <svg class="spotlight-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="18" height="18">
+          <circle cx="11" cy="11" r="8"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        <input type="text" id="spotlight-input" class="spotlight-input" placeholder="Search files, photos, disks, or pages..." autocomplete="off" />
+        <kbd class="spotlight-close-hint">ESC</kbd>
+      </div>
+      <div id="spotlight-results" class="spotlight-results">
+        <div class="spotlight-empty-hint">Type to search or jump to a page (e.g. "Storage", "Photos", "Backup")</div>
+      </div>
+    </div>
+  </div>
 
   <script src="app.js?v=9.0"></script>
 </body>
