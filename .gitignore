@@ -39,3 +39,6 @@ npm-debug.*
 yarn-debug.*
 .DS_Store
 *.log
+
+# Android APK binaries
+*.apk
