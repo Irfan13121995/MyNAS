@@ -60,8 +60,9 @@ function addPath(drivePath, label) {
   const normalized = drivePath.trim().replace(/[/\\]+$/, '');
 
   // Check if already present
-  if (config.allowedPaths.includes(normalized)) {
-    throw new Error(`"${normalized}" is already registered.`);
+  const normUpper = normalized.toUpperCase();
+  if (config.allowedPaths.some(p => p.toUpperCase() === normUpper)) {
+    return; // Already registered, idempotent
   }
 
   config.allowedPaths.push(normalized);
@@ -125,11 +126,64 @@ function setAllowedPaths(paths, customPaths = []) {
   return config;
 }
 
+/**
+ * Synchronizes allowedPaths with required paths (e.g. RAID member disks) and currently connected drives.
+ * - Ensures all requiredPaths (e.g. member disks ["I:", "K:"]) are present in allowedPaths.
+ * - Purges stale drive letters that are not connected, not in requiredPaths, and not custom paths.
+ * @param {Array<string>} requiredPaths - e.g. ["I:", "K:"]
+ * @param {Array<string>} currentValidDriveLetters - e.g. ["C:", "I:", "K:"]
+ * @returns {Array<string>|null}
+ */
+function syncWithDisks(requiredPaths = [], currentValidDriveLetters = []) {
+  const config = readConfig();
+  const normalizedRequired = (requiredPaths || []).map(p => p.trim().replace(/[\/\\]+$/, '').toUpperCase());
+  const normalizedCurrent = (currentValidDriveLetters || []).map(p => p.trim().replace(/[\/\\]+$/, '').toUpperCase());
+
+  if (!config.allowedPaths) {
+    const initial = normalizedCurrent.filter(d => !d.startsWith('C:'));
+    for (let i = 0; i < normalizedRequired.length; i++) {
+      const req = (requiredPaths[i] || '').trim().replace(/[\/\\]+$/, '');
+      if (!initial.some(x => x.toUpperCase() === normalizedRequired[i])) {
+        initial.push(req);
+      }
+    }
+    config.allowedPaths = initial;
+  } else {
+    const existingUpper = config.allowedPaths.map(p => p.toUpperCase().replace(/[\/\\]+$/, ''));
+
+    for (let i = 0; i < normalizedRequired.length; i++) {
+      const reqUpper = normalizedRequired[i];
+      if (!existingUpper.includes(reqUpper)) {
+        config.allowedPaths.push((requiredPaths[i] || '').trim().replace(/[\/\\]+$/, ''));
+        existingUpper.push(reqUpper);
+      }
+    }
+
+    if (normalizedCurrent.length > 0) {
+      const customPathStrings = (config.customPaths || []).map(cp => cp.path.toUpperCase().replace(/[\/\\]+$/, ''));
+      config.allowedPaths = config.allowedPaths.filter(p => {
+        const pClean = p.trim().replace(/[\/\\]+$/, '');
+        const pUpper = pClean.toUpperCase();
+        // If it's a custom path or UNC network share (not a standard single drive letter like "D:"), keep it
+        if (!/^[A-Z]:$/i.test(pClean)) return true;
+        if (normalizedCurrent.includes(pUpper)) return true;
+        if (normalizedRequired.includes(pUpper)) return true;
+        if (customPathStrings.includes(pUpper)) return true;
+        return false;
+      });
+    }
+  }
+
+  saveConfig(config);
+  return config.allowedPaths;
+}
+
 module.exports = {
   getAllowedPaths,
   getCustomPaths,
   addPath,
   removePath,
   initializeWithDrives,
-  setAllowedPaths
+  setAllowedPaths,
+  syncWithDisks
 };

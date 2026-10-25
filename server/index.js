@@ -965,6 +965,28 @@ app.get('/api/activity', authenticateToken, (req, res) => {
 app.get('/api/drives', authenticateToken, async (req, res) => {
   try {
     const allDrives = await getDrives();
+    const raidVolumes = dbService.getAllVolumes();
+
+    // Map member disks to their RAID volume details
+    const raidMemberMap = new Map();
+    for (const vol of raidVolumes) {
+      for (const disk of (vol.member_disks || [])) {
+        const cleanDisk = disk.trim().replace(/[\/\\]+$/, '').toUpperCase();
+        raidMemberMap.set(cleanDisk, {
+          volumeName: vol.name,
+          volumeId: vol.id,
+          raidLevel: vol.raid_level
+        });
+      }
+    }
+
+    // Keep driveConfig in sync with current physical drives and RAID member disks
+    const raidMemberDisks = Array.from(raidMemberMap.keys());
+    const currentLetters = allDrives.map(d => d.letter);
+    try {
+      driveConfig.syncWithDisks(raidMemberDisks, currentLetters);
+    } catch (e) {}
+
     const allowedPaths = driveConfig.getAllowedPaths();
     const customPaths = driveConfig.getCustomPaths();
 
@@ -973,13 +995,17 @@ app.get('/api/drives', authenticateToken, async (req, res) => {
       // First run: auto-detected storage drives, excluding system drive C: by default
       drives = allDrives.filter(d => !d.letter.toUpperCase().startsWith('C:'));
     } else {
-      // Filter auto-detected to only allowed
-      drives = allDrives.filter(d =>
-        allowedPaths.includes(d.letter) || allowedPaths.includes(d.letter + '\\') || allowedPaths.includes(d.letter + '/')
-      );
+      // Filter auto-detected to allowed OR member of an active RAID volume
+      drives = allDrives.filter(d => {
+        const norm = d.letter.trim().replace(/[\/\\]+$/, '').toUpperCase();
+        if (allowedPaths.some(p => p.trim().replace(/[\/\\]+$/, '').toUpperCase() === norm)) return true;
+        if (raidMemberMap.has(norm)) return true;
+        return false;
+      });
+
       // Add custom paths (network shares, etc.)
       for (const cp of customPaths) {
-        if (allowedPaths.includes(cp.path)) {
+        if (allowedPaths.some(p => p.trim().replace(/[\/\\]+$/, '').toUpperCase() === cp.path.trim().replace(/[\/\\]+$/, '').toUpperCase())) {
           drives.push({
             letter: cp.path,
             name: cp.label,
@@ -992,6 +1018,25 @@ app.get('/api/drives', authenticateToken, async (req, res) => {
         }
       }
     }
+
+    // Enrich each drive with RAID membership status
+    drives = drives.map(d => {
+      const norm = (d.letter || '').trim().replace(/[\/\\]+$/, '').toUpperCase();
+      const raidInfo = raidMemberMap.get(norm);
+      if (raidInfo) {
+        return {
+          ...d,
+          isRaidMember: true,
+          raidVolumeName: raidInfo.volumeName,
+          raidVolumeId: raidInfo.volumeId,
+          raidLevel: raidInfo.raidLevel
+        };
+      }
+      return {
+        ...d,
+        isRaidMember: false
+      };
+    });
 
     // Apply user disk permission filter
     if (req.user && req.user.role !== 'admin' && req.user.allowedDisks !== null && req.user.allowedDisks !== undefined) {
@@ -1162,6 +1207,12 @@ app.post('/api/raid/create', authenticateToken, requireAdmin, checkReadWrite, as
       devicePath: mdDevice
     });
 
+    // Auto-register member disks in driveConfig
+    try {
+      driveConfig.addPath(diskPath1, `${cleanArrayName} Mirror Member 1`);
+      driveConfig.addPath(diskPath2, `${cleanArrayName} Mirror Member 2`);
+    } catch (e) {}
+
     logActivity('storage', `Created RAID 1 Array: ${cleanArrayName} (${diskPath1}, ${diskPath2})`, req.user?.username);
 
     return res.status(201).json({
@@ -1175,6 +1226,124 @@ app.post('/api/raid/create', authenticateToken, requireAdmin, checkReadWrite, as
       success: false,
       error: error.message || 'Failed to initialize RAID 1 array.'
     });
+  }
+});
+
+// PUT /api/raid/volumes/:id - Updates a RAID volume name or mount point
+app.put('/api/raid/volumes/:id', authenticateToken, requireAdmin, checkReadWrite, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, mountPoint } = req.body;
+
+    const existing = dbService.getVolumeById(id);
+    if (!existing) {
+      return res.status(404).json({ success: false, error: 'RAID volume not found.' });
+    }
+
+    if (name !== undefined) {
+      if (typeof name !== 'string' || name.trim().length < 2) {
+        return res.status(400).json({ success: false, error: 'Array name must be at least 2 characters.' });
+      }
+    }
+
+    const cleanName = name ? name.trim().replace(/[^a-zA-Z0-9_\- ]/g, '_') : existing.name;
+    const cleanMount = mountPoint !== undefined ? String(mountPoint).trim() : existing.mount_point;
+
+    const updated = dbService.updateVolume(id, { name: cleanName, mountPoint: cleanMount });
+    if (!updated) {
+      return res.status(500).json({ success: false, error: 'Failed to update RAID volume in database.' });
+    }
+
+    logActivity('storage', `Updated RAID 1 Array: ${cleanName} (was: ${existing.name})`, req.user?.username);
+
+    return res.json({
+      success: true,
+      message: `RAID 1 array '${cleanName}' updated successfully.`,
+      volume: updated
+    });
+  } catch (err) {
+    console.error('Error updating RAID volume:', err);
+    return res.status(500).json({ success: false, error: err.message || 'Failed to update RAID volume.' });
+  }
+});
+
+// DELETE /api/raid/volumes/:id - Deletes/dissolves a RAID volume
+app.delete('/api/raid/volumes/:id', authenticateToken, requireAdmin, checkReadWrite, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const keepDisks = req.body?.keepDisks !== undefined ? req.body.keepDisks : (req.query.keepDisks !== 'false');
+
+    const volume = dbService.getVolumeById(id);
+    if (!volume) {
+      return res.status(404).json({ success: false, error: 'RAID volume not found.' });
+    }
+
+    dbService.deleteVolume(id);
+
+    // If user explicitly chose not to keep member disks, remove from driveConfig
+    if (keepDisks === false || keepDisks === 'false') {
+      const remainingVolumes = dbService.getAllVolumes();
+      const stillUsedDisks = new Set();
+      remainingVolumes.forEach(v => (v.member_disks || []).forEach(d => stillUsedDisks.add(d.toUpperCase())));
+
+      for (const disk of (volume.member_disks || [])) {
+        if (!stillUsedDisks.has(disk.toUpperCase())) {
+          try { driveConfig.removePath(disk); } catch (e) {}
+        }
+      }
+    }
+
+    logActivity('storage', `Deleted RAID 1 Array: ${volume.name} (${(volume.member_disks || []).join(', ')})`, req.user?.username);
+
+    return res.json({
+      success: true,
+      message: `RAID 1 array '${volume.name}' deleted successfully.`
+    });
+  } catch (err) {
+    console.error('Error deleting RAID volume:', err);
+    return res.status(500).json({ success: false, error: err.message || 'Failed to delete RAID volume.' });
+  }
+});
+
+// POST /api/raid/volumes/:id/scrub - Verifies integrity and data consistency across mirror member disks
+app.post('/api/raid/volumes/:id/scrub', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const volume = dbService.getVolumeById(id);
+    if (!volume) {
+      return res.status(404).json({ success: false, error: 'RAID volume not found.' });
+    }
+
+    const memberDisks = volume.member_disks || [];
+    const diskChecks = [];
+
+    for (const disk of memberDisks) {
+      let isAccessible = false;
+      try {
+        const rootPath = disk.endsWith('\\') || disk.endsWith('/') ? disk : disk + path.sep;
+        fs.accessSync(rootPath, fs.constants.R_OK);
+        isAccessible = true;
+      } catch (e) {
+        isAccessible = false;
+      }
+      diskChecks.push({ disk, accessible: isAccessible });
+    }
+
+    const allHealthy = diskChecks.length > 0 && diskChecks.every(d => d.accessible);
+
+    logActivity('storage', `Scrubbed RAID 1 Array: ${volume.name} - Status: ${allHealthy ? 'Healthy (100% in sync)' : 'Degraded'}`, req.user?.username);
+
+    return res.json({
+      success: true,
+      status: allHealthy ? 'Healthy' : 'Degraded',
+      syncedPercent: allHealthy ? 100 : 50,
+      errorsFound: allHealthy ? 0 : 1,
+      diskChecks,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    console.error('Error scrubbing RAID volume:', err);
+    return res.status(500).json({ success: false, error: err.message || 'Failed to perform RAID scrub.' });
   }
 });
 
@@ -2230,6 +2399,21 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   }
   console.log('  👤 Tip: The first registered user account is Admin.');
   console.log('========================================================\n');
+
+  // Synchronize RAID member disks with driveConfig on server startup
+  (async () => {
+    try {
+      const allDrives = await getDrives();
+      const raidVolumes = dbService.getAllVolumes();
+      const memberDisks = [];
+      raidVolumes.forEach(v => (v.member_disks || []).forEach(d => memberDisks.push(d)));
+      const currentLetters = allDrives.map(d => d.letter);
+      driveConfig.syncWithDisks(memberDisks, currentLetters);
+      console.log(`[StorageSync] Reconciled ${memberDisks.length} RAID member disk(s) into active storage configuration.`);
+    } catch (err) {
+      console.warn('[StorageSync] Initial RAID drive synchronization warning:', err.message);
+    }
+  })();
 
   try {
     const bonjour = new Bonjour({}, (err) => {

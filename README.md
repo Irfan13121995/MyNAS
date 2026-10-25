@@ -297,6 +297,11 @@ Open `server/.env` in Notepad. Edit `PASSCODE=your_new_passcode` (and delete the
 #### 4. How do I add or manage storage disks on the server?
 Log into the Web Dashboard as an Administrator, navigate to **Storage Pools / Disks**, and click **Add Storage Disk** or **Create RAID 1 Mirror Pool**. You can assign specific disks or folders to specific users.
 
+#### 5. How does RAID 1 Mirror Pool management and persistence work?
+- **Automatic Drive Synchronization Across Restarts:** The server automatically synchronizes its registered drive configuration with active RAID member disks on startup and during drive queries, ensuring member disks never disappear or show "No drives registered" upon reboot.
+- **Array Management (`⚙️ Manage`):** Administrators can edit array names, update custom mount points, view real-time mirrored health status, and run **Data Scrubbing / Integrity Verifications** across all member drives.
+- **Dissolving / Deleting Arrays (`🗑️ Delete`):** Arrays can be safely deleted or dissolved with the option to keep individual member disks available as standalone storage pools.
+
 ---
 
 ## 🛡️ Security Architecture

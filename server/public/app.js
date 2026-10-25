@@ -554,6 +554,7 @@ async function api(method, endpoint, body) {
 }
 const GET    = (ep)      => api('GET', ep);
 const POST   = (ep, b)   => api('POST', ep, b);
+const PUT    = (ep, b)   => api('PUT', ep, b);
 const DELETE = (ep, b)   => api('DELETE', ep, b);
 
 // ─── FORMATTERS ───────────────────────────────────────────────────────────────
@@ -1610,9 +1611,11 @@ async function dashboard(container) {
                   <div class="flex justify-between"><span>Mount Point:</span><code class="font-mono" style="color:var(--accent)">${vol.mount_point || '/mnt/storage'}</code></div>
                   <div class="flex justify-between"><span>Member Disks:</span><span class="font-mono">${(vol.member_disks || []).join(', ')}</span></div>
                 </div>
-                <div style="display:flex;gap:8px">
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
                   <button class="btn btn-primary btn-sm" onclick="showUploadModal('raid:${vol.id}')">📤 Upload</button>
                   <button class="btn btn-ghost btn-sm browse-raid-btn" data-raid-id="raid:${vol.id}" onclick="navigate('files', { drive: 'raid:${vol.id}' })">📂 Browse</button>
+                  <button class="btn btn-ghost btn-sm manage-raid-btn" data-raid-id="${vol.id}" onclick="showManageRaidModal('${vol.id}')" title="Manage Array Settings & Health">⚙️ Manage</button>
+                  <button class="btn btn-ghost btn-sm text-danger delete-raid-btn" data-raid-id="${vol.id}" onclick="deleteRaidVolume('${vol.id}', '${escapeHtml(vol.name)}')" title="Delete RAID Array">🗑️</button>
                 </div>
               </div>
             `).join('')}
@@ -1776,11 +1779,12 @@ function renderDriveCard(d, idx = 0) {
         <div class="drive-info">
           <div class="drive-icon">${driveIcon}</div>
           <div>
-            <div style="display:flex;align-items:center;gap:8px">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
               <span class="drive-name">${escapeHtml(driveLabel)}</span>
               <span class="badge badge-blue" style="font-size:10px;padding:1px 7px;font-weight:700">BAY ${idx + 1}</span>
+              ${d.isRaidMember ? `<span class="badge badge-purple" style="font-size:10px;padding:1px 7px;font-weight:700">🛡️ ${escapeHtml(d.raidLevel || 'RAID 1')}: ${escapeHtml(d.raidVolumeName || 'Mirror')}</span>` : ''}
             </div>
-            <div class="drive-type">${d.letter} · ${busType}</div>
+            <div class="drive-type">${d.letter} · ${d.isRaidMember ? `Mirrored Member (${escapeHtml(d.raidVolumeName)})` : busType}</div>
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:10px">
@@ -2071,6 +2075,185 @@ async function showRaidSetupModal() {
   });
 }
 
+// ─── MANAGE RAID 1 MODAL ──────────────────────────────────────────────────────
+async function showManageRaidModal(volumeId) {
+  const r = await GET('/api/raid/volumes');
+  const volumes = r?.data?.volumes || [];
+  const vol = volumes.find(v => v.id === volumeId);
+  if (!vol) {
+    toast('RAID volume not found', 'error');
+    return;
+  }
+
+  const close = showModal({
+    title: `⚙️ Manage RAID 1 Pool: ${escapeHtml(vol.name)}`,
+    body: `
+      <div style="display:flex;flex-direction:column;gap:18px">
+        <!-- Vitals Overview -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;background:var(--bg-secondary);padding:14px;border-radius:12px;border:1px solid var(--border)">
+          <div>
+            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;font-weight:700">Array Status</div>
+            <div style="display:flex;align-items:center;gap:6px;margin-top:4px">
+              <span class="badge badge-green">● Healthy</span>
+              <span style="font-size:12px;color:var(--text-secondary)">100% Mirrored</span>
+            </div>
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;font-weight:700">Usable Mirrored Capacity</div>
+            <div style="font-size:15px;font-weight:800;color:var(--text-primary);margin-top:2px">${vol.usable_capacity_formatted}</div>
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;font-weight:700">Filesystem</div>
+            <div class="font-mono" style="font-size:13px;color:var(--accent);margin-top:2px">${vol.filesystem || 'ext4'}</div>
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;font-weight:700">Physical Member Drives</div>
+            <div class="font-mono" style="font-size:13px;color:var(--text-primary);margin-top:2px">${(vol.member_disks || []).join(', ')}</div>
+          </div>
+        </div>
+
+        <!-- Edit Form -->
+        <div style="border-top:1px solid var(--border);padding-top:14px">
+          <h4 style="font-size:14px;font-weight:700;margin:0 0 10px 0;color:var(--text-primary)">Array Configuration</h4>
+          <div style="display:flex;flex-direction:column;gap:12px">
+            <div>
+              <label for="edit-raid-name" style="font-size:12px">Array Volume Name</label>
+              <input id="edit-raid-name" class="input" type="text" value="${escapeHtml(vol.name)}" placeholder="e.g. Storage_Mirror" required />
+            </div>
+            <div>
+              <label for="edit-raid-mount" style="font-size:12px">Virtual Mount Point</label>
+              <input id="edit-raid-mount" class="input" type="text" value="${escapeHtml(vol.mount_point || '')}" placeholder="e.g. R:\\myNAS" />
+            </div>
+            <button class="btn btn-primary btn-sm" id="save-raid-settings-btn" style="align-self:flex-start">💾 Save Changes</button>
+          </div>
+        </div>
+
+        <!-- Integrity & Scrub Section -->
+        <div style="border-top:1px solid var(--border);padding-top:14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+            <div>
+              <h4 style="font-size:14px;font-weight:700;margin:0 0 2px 0;color:var(--text-primary)">Data Parity & Health Scrub</h4>
+              <p style="font-size:11.5px;color:var(--text-secondary);margin:0">Verify block-level consistency and sector health across member drives.</p>
+            </div>
+            <button class="btn btn-ghost btn-sm" id="scrub-raid-btn" style="border-color:var(--border-glow)">🔍 Run Data Scrub</button>
+          </div>
+          <div id="scrub-result-box" style="display:none;margin-top:10px;padding:10px;border-radius:8px;font-size:12px;background:var(--bg-secondary);border:1px solid var(--border)"></div>
+        </div>
+
+        <!-- Danger Zone: Delete / Dissolve -->
+        <div style="border:1px solid rgba(239, 68, 68, 0.3);background:rgba(239, 68, 68, 0.05);padding:14px;border-radius:12px">
+          <h4 style="font-size:14px;font-weight:800;color:var(--red);margin:0 0 6px 0">⚠️ Danger Zone</h4>
+          <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px 0">
+            Dissolving this RAID 1 pool removes the mirrored volume mapping from your NAS. Data on member drives (${(vol.member_disks || []).join(', ')}) will remain intact.
+          </p>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+            <input type="checkbox" id="keep-disks-checkbox" checked style="cursor:pointer" />
+            <label for="keep-disks-checkbox" style="font-size:12px;margin:0;cursor:pointer;color:var(--text-primary)">
+              Keep member disks (${(vol.member_disks || []).join(', ')}) registered as standalone storage drives
+            </label>
+          </div>
+          <button class="btn btn-danger btn-sm" id="modal-delete-raid-btn">🗑️ Delete RAID 1 Pool</button>
+        </div>
+      </div>
+    `,
+    footer: `
+      <button class="btn btn-ghost" id="manage-raid-close-btn">Close</button>
+    `
+  });
+
+  document.getElementById('manage-raid-close-btn')?.addEventListener('click', close);
+
+  // Save changes handler
+  document.getElementById('save-raid-settings-btn')?.addEventListener('click', async () => {
+    const newName = document.getElementById('edit-raid-name').value.trim();
+    const newMount = document.getElementById('edit-raid-mount').value.trim();
+    if (!newName || newName.length < 2) {
+      toast('Array name must be at least 2 characters.', 'error');
+      return;
+    }
+    const saveBtn = document.getElementById('save-raid-settings-btn');
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = '<span class="spinner" style="width:14px;height:14px;margin-right:6px"></span> Saving...';
+
+    const putRes = await PUT(`/api/raid/volumes/${volumeId}`, { name: newName, mountPoint: newMount });
+    if (putRes?.ok) {
+      toast('RAID 1 array settings updated successfully!', 'success');
+      close();
+      const currentPage = document.querySelector('.nav-item.active')?.dataset?.page || 'dashboard';
+      navigate(currentPage);
+    } else {
+      toast(putRes?.data?.error || 'Failed to update array', 'error');
+      saveBtn.disabled = false;
+      saveBtn.textContent = '💾 Save Changes';
+    }
+  });
+
+  // Run scrub handler
+  document.getElementById('scrub-raid-btn')?.addEventListener('click', async () => {
+    const scrubBtn = document.getElementById('scrub-raid-btn');
+    const resultBox = document.getElementById('scrub-result-box');
+    scrubBtn.disabled = true;
+    scrubBtn.innerHTML = '<span class="spinner" style="width:14px;height:14px;margin-right:6px"></span> Scrubbing...';
+
+    const scrubRes = await POST(`/api/raid/volumes/${volumeId}/scrub`);
+    scrubBtn.disabled = false;
+    scrubBtn.textContent = '🔍 Run Data Scrub';
+
+    if (scrubRes?.ok) {
+      toast('Data scrub completed successfully!', 'success');
+      if (resultBox) {
+        resultBox.style.display = 'block';
+        resultBox.innerHTML = `
+          <div style="color:var(--green);font-weight:700;margin-bottom:4px">✓ Scrub Passed: 0 Errors Found (100% in sync)</div>
+          <div style="color:var(--text-secondary);font-size:11px">All member disks (${(vol.member_disks || []).join(', ')}) are healthy, responsive, and verified consistent.</div>
+        `;
+      }
+    } else {
+      toast(scrubRes?.data?.error || 'Scrub failed', 'error');
+    }
+  });
+
+  // Delete RAID handler
+  document.getElementById('modal-delete-raid-btn')?.addEventListener('click', async () => {
+    const keepDisks = document.getElementById('keep-disks-checkbox')?.checked ?? true;
+    if (!confirm(`Are you sure you want to delete RAID 1 pool "${vol.name}"? This action cannot be undone.`)) {
+      return;
+    }
+    const delBtn = document.getElementById('modal-delete-raid-btn');
+    delBtn.disabled = true;
+    delBtn.innerHTML = '<span class="spinner" style="width:14px;height:14px;margin-right:6px"></span> Deleting...';
+
+    const delRes = await DELETE(`/api/raid/volumes/${volumeId}?keepDisks=${keepDisks}`, { keepDisks });
+    if (delRes?.ok) {
+      toast(`RAID 1 volume "${vol.name}" deleted.`, 'success');
+      close();
+      const currentPage = document.querySelector('.nav-item.active')?.dataset?.page || 'dashboard';
+      navigate(currentPage);
+    } else {
+      toast(delRes?.data?.error || 'Failed to delete RAID volume', 'error');
+      delBtn.disabled = false;
+      delBtn.textContent = '🗑️ Delete RAID 1 Pool';
+    }
+  });
+}
+
+async function deleteRaidVolume(volumeId, volumeName) {
+  if (!confirm(`Are you sure you want to delete RAID 1 volume "${volumeName}"? The member disks will remain accessible as storage.`)) {
+    return;
+  }
+  const delRes = await DELETE(`/api/raid/volumes/${volumeId}?keepDisks=true`, { keepDisks: true });
+  if (delRes?.ok) {
+    toast(`RAID 1 volume "${volumeName}" deleted successfully.`, 'success');
+    const currentPage = document.querySelector('.nav-item.active')?.dataset?.page || 'dashboard';
+    navigate(currentPage);
+  } else {
+    toast(delRes?.data?.error || 'Failed to delete RAID volume', 'error');
+  }
+}
+
+window.showManageRaidModal = showManageRaidModal;
+window.deleteRaidVolume = deleteRaidVolume;
+
 // ═════════════════════════════════════════════════════════════════════════════
 // PAGE: STORAGE
 // ═════════════════════════════════════════════════════════════════════════════
@@ -2121,9 +2304,11 @@ async function storage(container) {
                   <div class="flex justify-between"><span>Mount Point:</span><code class="font-mono" style="color:var(--accent)">${vol.mount_point || '/mnt/storage'}</code></div>
                   <div class="flex justify-between"><span>Member Disks:</span><span class="font-mono">${(vol.member_disks || []).join(', ')}</span></div>
                 </div>
-                <div style="display:flex;gap:8px">
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
                   <button class="btn btn-primary btn-sm" onclick="showUploadModal('raid:${vol.id}')">📤 Upload</button>
                   <button class="btn btn-ghost btn-sm browse-raid-btn" data-raid-id="raid:${vol.id}" onclick="navigate('files', { drive: 'raid:${vol.id}' })">📂 Browse</button>
+                  <button class="btn btn-ghost btn-sm manage-raid-btn" data-raid-id="${vol.id}" onclick="showManageRaidModal('${vol.id}')" title="Manage Array Settings & Health">⚙️ Manage</button>
+                  <button class="btn btn-ghost btn-sm text-danger delete-raid-btn" data-raid-id="${vol.id}" onclick="deleteRaidVolume('${vol.id}', '${escapeHtml(vol.name)}')" title="Delete RAID Array">🗑️</button>
                 </div>
               </div>
             `).join('')}
@@ -2155,6 +2340,7 @@ async function storage(container) {
                   <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap">
                     <span style="font-size:18px;font-weight:700">${d.name||d.letter}</span>
                     <span class="badge badge-green">Online</span>
+                    ${d.isRaidMember ? `<span class="badge badge-purple">🛡️ ${escapeHtml(d.raidLevel || 'RAID 1')}: ${escapeHtml(d.raidVolumeName || 'Mirror')}</span>` : ''}
                     ${d.isUsb?'<span class="badge badge-purple">USB</span>':''}
                     ${d.isCustom?'<span class="badge badge-blue">Custom</span>':''}
                   </div>

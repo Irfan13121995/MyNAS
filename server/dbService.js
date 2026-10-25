@@ -568,6 +568,25 @@ function deleteVolume(id) {
   }
 }
 
+/**
+ * Updates a volume record in SQLite (name and/or mountPoint)
+ */
+function updateVolume(id, { name, mountPoint }) {
+  try {
+    const existing = getVolumeById(id);
+    if (!existing) return null;
+
+    const newName = name !== undefined && name !== null ? String(name).trim() : existing.name;
+    const newMount = mountPoint !== undefined && mountPoint !== null ? String(mountPoint).trim() : existing.mount_point;
+
+    db.prepare('UPDATE volumes SET name = ?, mount_point = ? WHERE id = ?').run(newName, newMount, id);
+    return getVolumeById(id);
+  } catch (err) {
+    console.error('Failed to update volume:', err);
+    return null;
+  }
+}
+
 module.exports = {
   db,
   hasAnyUsers,
@@ -590,6 +609,7 @@ module.exports = {
   getVolumeById,
   getAllVolumes,
   deleteVolume,
+  updateVolume,
   createPairingCode,
   redeemPairingCode,
   incrementTokenVersion
