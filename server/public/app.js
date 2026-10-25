@@ -1612,10 +1612,10 @@ async function dashboard(container) {
                   <div class="flex justify-between"><span>Member Disks:</span><span class="font-mono">${(vol.member_disks || []).join(', ')}</span></div>
                 </div>
                 <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-                  <button class="btn btn-primary btn-sm" onclick="showUploadModal('raid:${vol.id}')">📤 Upload</button>
-                  <button class="btn btn-ghost btn-sm browse-raid-btn" data-raid-id="raid:${vol.id}" onclick="navigate('files', { drive: 'raid:${vol.id}' })">📂 Browse</button>
-                  <button class="btn btn-ghost btn-sm manage-raid-btn" data-raid-id="${vol.id}" onclick="showManageRaidModal('${vol.id}')" title="Manage Array Settings & Health">⚙️ Manage</button>
-                  <button class="btn btn-ghost btn-sm text-danger delete-raid-btn" data-raid-id="${vol.id}" onclick="deleteRaidVolume('${vol.id}', '${escapeHtml(vol.name)}')" title="Delete RAID Array">🗑️</button>
+                  <button class="btn btn-primary btn-sm upload-raid-btn" data-raid-id="raid:${vol.id}">📤 Upload</button>
+                  <button class="btn btn-ghost btn-sm browse-raid-btn" data-raid-id="raid:${vol.id}">📂 Browse</button>
+                  <button class="btn btn-ghost btn-sm manage-raid-btn" data-raid-id="${vol.id}" title="Manage Array Settings & Health">⚙️ Manage</button>
+                  <button class="btn btn-ghost btn-sm text-danger delete-raid-btn" data-raid-id="${vol.id}" data-raid-name="${escapeHtml(vol.name)}" title="Delete RAID Array">🗑️</button>
                 </div>
               </div>
             `).join('')}
@@ -1726,6 +1726,33 @@ async function dashboard(container) {
       e.preventDefault();
       e.stopPropagation();
       navigate('files', { drive: btn.dataset.raidId });
+    });
+  });
+
+  document.querySelectorAll('.upload-raid-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      showUploadModal(btn.dataset.raidId);
+    });
+  });
+
+  document.querySelectorAll('.manage-raid-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const raidId = btn.dataset.raidId;
+      if (raidId) showManageRaidModal(raidId);
+    });
+  });
+
+  document.querySelectorAll('.delete-raid-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const raidId = btn.dataset.raidId;
+      const raidName = btn.dataset.raidName || 'RAID Array';
+      if (raidId) deleteRaidVolume(raidId, raidName);
     });
   });
 
@@ -2077,9 +2104,10 @@ async function showRaidSetupModal() {
 
 // ─── MANAGE RAID 1 MODAL ──────────────────────────────────────────────────────
 async function showManageRaidModal(volumeId) {
+  const cleanId = String(volumeId || '').replace(/^raid:/, '').trim();
   const r = await GET('/api/raid/volumes');
-  const volumes = r?.data?.volumes || [];
-  const vol = volumes.find(v => v.id === volumeId);
+  const volumes = r?.data?.volumes || (Array.isArray(r?.data) ? r.data : []);
+  const vol = volumes.find(v => v.id === cleanId || v.id === volumeId || (v.name && v.name.toLowerCase() === cleanId.toLowerCase()));
   if (!vol) {
     toast('RAID volume not found', 'error');
     return;
@@ -2175,7 +2203,7 @@ async function showManageRaidModal(volumeId) {
     saveBtn.disabled = true;
     saveBtn.innerHTML = '<span class="spinner" style="width:14px;height:14px;margin-right:6px"></span> Saving...';
 
-    const putRes = await PUT(`/api/raid/volumes/${volumeId}`, { name: newName, mountPoint: newMount });
+    const putRes = await PUT(`/api/raid/volumes/${vol.id}`, { name: newName, mountPoint: newMount });
     if (putRes?.ok) {
       toast('RAID 1 array settings updated successfully!', 'success');
       close();
@@ -2195,7 +2223,7 @@ async function showManageRaidModal(volumeId) {
     scrubBtn.disabled = true;
     scrubBtn.innerHTML = '<span class="spinner" style="width:14px;height:14px;margin-right:6px"></span> Scrubbing...';
 
-    const scrubRes = await POST(`/api/raid/volumes/${volumeId}/scrub`);
+    const scrubRes = await POST(`/api/raid/volumes/${vol.id}/scrub`);
     scrubBtn.disabled = false;
     scrubBtn.textContent = '🔍 Run Data Scrub';
 
@@ -2223,7 +2251,7 @@ async function showManageRaidModal(volumeId) {
     delBtn.disabled = true;
     delBtn.innerHTML = '<span class="spinner" style="width:14px;height:14px;margin-right:6px"></span> Deleting...';
 
-    const delRes = await DELETE(`/api/raid/volumes/${volumeId}?keepDisks=${keepDisks}`, { keepDisks });
+    const delRes = await DELETE(`/api/raid/volumes/${vol.id}?keepDisks=${keepDisks}`, { keepDisks });
     if (delRes?.ok) {
       toast(`RAID 1 volume "${vol.name}" deleted.`, 'success');
       close();
@@ -2238,12 +2266,14 @@ async function showManageRaidModal(volumeId) {
 }
 
 async function deleteRaidVolume(volumeId, volumeName) {
-  if (!confirm(`Are you sure you want to delete RAID 1 volume "${volumeName}"? The member disks will remain accessible as storage.`)) {
+  const cleanId = String(volumeId || '').replace(/^raid:/, '').trim();
+  const displayName = volumeName || cleanId || 'RAID 1 Volume';
+  if (!confirm(`Are you sure you want to delete RAID 1 volume "${displayName}"? The member disks will remain accessible as storage.`)) {
     return;
   }
-  const delRes = await DELETE(`/api/raid/volumes/${volumeId}?keepDisks=true`, { keepDisks: true });
+  const delRes = await DELETE(`/api/raid/volumes/${cleanId}?keepDisks=true`, { keepDisks: true });
   if (delRes?.ok) {
-    toast(`RAID 1 volume "${volumeName}" deleted successfully.`, 'success');
+    toast(`RAID 1 volume "${displayName}" deleted successfully.`, 'success');
     const currentPage = document.querySelector('.nav-item.active')?.dataset?.page || 'dashboard';
     navigate(currentPage);
   } else {
@@ -2253,6 +2283,28 @@ async function deleteRaidVolume(volumeId, volumeName) {
 
 window.showManageRaidModal = showManageRaidModal;
 window.deleteRaidVolume = deleteRaidVolume;
+
+// Global Delegated Handler for RAID Action Buttons (Fail-Safe)
+document.addEventListener('click', (e) => {
+  const manageBtn = e.target.closest('.manage-raid-btn');
+  if (manageBtn) {
+    e.preventDefault();
+    e.stopPropagation();
+    const raidId = manageBtn.dataset.raidId;
+    if (raidId) showManageRaidModal(raidId);
+    return;
+  }
+
+  const deleteBtn = e.target.closest('.delete-raid-btn');
+  if (deleteBtn) {
+    e.preventDefault();
+    e.stopPropagation();
+    const raidId = deleteBtn.dataset.raidId;
+    const raidName = deleteBtn.dataset.raidName || 'RAID Array';
+    if (raidId) deleteRaidVolume(raidId, raidName);
+    return;
+  }
+});
 
 // ═════════════════════════════════════════════════════════════════════════════
 // PAGE: STORAGE
@@ -2305,10 +2357,10 @@ async function storage(container) {
                   <div class="flex justify-between"><span>Member Disks:</span><span class="font-mono">${(vol.member_disks || []).join(', ')}</span></div>
                 </div>
                 <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-                  <button class="btn btn-primary btn-sm" onclick="showUploadModal('raid:${vol.id}')">📤 Upload</button>
-                  <button class="btn btn-ghost btn-sm browse-raid-btn" data-raid-id="raid:${vol.id}" onclick="navigate('files', { drive: 'raid:${vol.id}' })">📂 Browse</button>
-                  <button class="btn btn-ghost btn-sm manage-raid-btn" data-raid-id="${vol.id}" onclick="showManageRaidModal('${vol.id}')" title="Manage Array Settings & Health">⚙️ Manage</button>
-                  <button class="btn btn-ghost btn-sm text-danger delete-raid-btn" data-raid-id="${vol.id}" onclick="deleteRaidVolume('${vol.id}', '${escapeHtml(vol.name)}')" title="Delete RAID Array">🗑️</button>
+                  <button class="btn btn-primary btn-sm upload-raid-btn" data-raid-id="raid:${vol.id}">📤 Upload</button>
+                  <button class="btn btn-ghost btn-sm browse-raid-btn" data-raid-id="raid:${vol.id}">📂 Browse</button>
+                  <button class="btn btn-ghost btn-sm manage-raid-btn" data-raid-id="${vol.id}" title="Manage Array Settings & Health">⚙️ Manage</button>
+                  <button class="btn btn-ghost btn-sm text-danger delete-raid-btn" data-raid-id="${vol.id}" data-raid-name="${escapeHtml(vol.name)}" title="Delete RAID Array">🗑️</button>
                 </div>
               </div>
             `).join('')}
@@ -2379,6 +2431,33 @@ async function storage(container) {
       e.preventDefault();
       e.stopPropagation();
       navigate('files', { drive: btn.dataset.raidId });
+    });
+  });
+
+  document.querySelectorAll('.upload-raid-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      showUploadModal(btn.dataset.raidId);
+    });
+  });
+
+  document.querySelectorAll('.manage-raid-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const raidId = btn.dataset.raidId;
+      if (raidId) showManageRaidModal(raidId);
+    });
+  });
+
+  document.querySelectorAll('.delete-raid-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const raidId = btn.dataset.raidId;
+      const raidName = btn.dataset.raidName || 'RAID Array';
+      if (raidId) deleteRaidVolume(raidId, raidName);
     });
   });
 
