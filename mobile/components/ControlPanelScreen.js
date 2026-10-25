@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { Share } from 'react-native';
+import RecycleBinModal from './RecycleBinModal';
 import {
   StyleSheet, View, Text, ScrollView, TouchableOpacity,
   TextInput, Modal, ActivityIndicator, Alert, Platform, StatusBar
@@ -8,7 +10,7 @@ import * as Updates from 'expo-updates';
 import { useTheme } from '../contexts/ThemeContext';
 import { THEME_MODES } from '../services/themeService';
 
-export default function ControlPanelScreen({ serverUrl, token, onNavigateModule, onOpenAutoSync, onLogout, onThemeChange }) {
+export default function ControlPanelScreen({ serverUrl, token, onNavigateModule, onOpenAutoSync, onLogout, onThemeChange, isReadonly = false, userRole = 'user' }) {
   const { themeMode, setThemeMode, colors } = useTheme();
   const styles = React.useMemo(() => getStyles(colors), [colors]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -17,6 +19,7 @@ export default function ControlPanelScreen({ serverUrl, token, onNavigateModule,
   const [actionLoading, setActionLoading] = useState(false);
   const [systemData, setSystemData] = useState(null);
   const [tunnelData, setTunnelData] = useState(null);
+  const [trashVisible, setTrashVisible] = useState(false);
 
   // App Updates State
   const [checkingUpdate, setCheckingUpdate] = useState(false);
@@ -164,7 +167,10 @@ export default function ControlPanelScreen({ serverUrl, token, onNavigateModule,
           setSystemData(data);
         }
       } else if (modId === 'trash') {
-        await fetchTrash();
+        setTrashVisible(true);
+        setActiveModal(null);
+        setModalLoading(false);
+        return;
       } else if (modId === 'tunnel') {
         const res = await fetch(`${serverUrl}/api/tunnel/status`, {
           headers: { Authorization: `Bearer ${token}` }
@@ -255,6 +261,44 @@ export default function ControlPanelScreen({ serverUrl, token, onNavigateModule,
     }
   };
 
+
+  const handleToggleTunnel = async () => {
+    const isRunning = tunnelData?.active || tunnelData?.status === 'running';
+    const endpoint = isRunning ? '/api/tunnel/stop' : '/api/tunnel/start';
+    setActionLoading(true);
+    try {
+      const res = await fetch(`${serverUrl}${endpoint}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        Alert.alert('Tunnel Status', isRunning ? 'Cloudflare Tunnel has been stopped.' : `Cloudflare Tunnel is live at:\n${data.url}`);
+        const statusRes = await fetch(`${serverUrl}/api/tunnel/status`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (statusRes.ok) {
+          setTunnelData(await statusRes.json());
+        }
+      } else {
+        Alert.alert('Tunnel Action Failed', data.error || 'Could not update tunnel.');
+      }
+    } catch (err) {
+      Alert.alert('Error', err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleShareTunnelUrl = () => {
+    if (tunnelData?.url) {
+      Share.share({
+        message: tunnelData.url,
+        title: 'Personal NAS Remote Access URL'
+      });
+    }
+  };
+
   const statusBarPadding = Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 8 : 16;
 
   return (
@@ -323,6 +367,14 @@ export default function ControlPanelScreen({ serverUrl, token, onNavigateModule,
       </ScrollView>
 
       {/* INTERACTIVE MODULE MODALS */}
+      <RecycleBinModal
+        visible={trashVisible}
+        serverUrl={serverUrl}
+        token={token}
+        isReadonly={isReadonly}
+        onClose={() => setTrashVisible(false)}
+      />
+
       {activeModal && (
         <Modal
           visible={!!activeModal}
@@ -510,10 +562,42 @@ export default function ControlPanelScreen({ serverUrl, token, onNavigateModule,
 
                     {activeModal === 'tunnel' && (
                       <View style={styles.modalSection}>
-                        <Text style={styles.modalText}>Status: {tunnelData?.active ? '🟢 ACTIVE' : '🔴 INACTIVE'}</Text>
-                        {tunnelData?.url && (
-                          <Text style={styles.modalCode}>Public URL: {tunnelData.url}</Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                          <Text style={styles.modalText}>
+                            Status: {tunnelData?.active || tunnelData?.status === 'running' ? '🟢 Active & Online' : '⚫ Stopped'}
+                          </Text>
+                          <View style={[styles.badge, { backgroundColor: (tunnelData?.active || tunnelData?.status === 'running') ? 'rgba(50, 215, 75, 0.2)' : 'rgba(255, 69, 58, 0.2)' }]}>
+                            <Text style={{ fontSize: 11, fontWeight: '700', color: (tunnelData?.active || tunnelData?.status === 'running') ? colors.success : colors.danger }}>
+                              {(tunnelData?.active || tunnelData?.status === 'running') ? 'ONLINE' : 'OFFLINE'}
+                            </Text>
+                          </View>
+                        </View>
+
+                        {tunnelData?.url ? (
+                          <View style={{ marginBottom: 16 }}>
+                            <Text style={styles.modalSubText}>Secure Public URL:</Text>
+                            <TouchableOpacity style={[styles.modalCodeBox, { marginTop: 6, padding: 12, borderRadius: 10, backgroundColor: colors.surfaceElevated || colors.surfaceSolid, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]} onPress={handleShareTunnelUrl}>
+                              <Text style={[styles.modalCode, { flex: 1, marginRight: 8 }]} numberOfLines={1}>{tunnelData.url}</Text>
+                              <Text style={{ fontSize: 16 }}>📋</Text>
+                            </TouchableOpacity>
+                          </View>
+                        ) : (
+                          <Text style={[styles.modalSubText, { marginBottom: 16 }]}>Start the tunnel to securely access your NAS from anywhere without port forwarding.</Text>
                         )}
+
+                        <TouchableOpacity
+                          style={[styles.actionBtn, { backgroundColor: (tunnelData?.active || tunnelData?.status === 'running') ? colors.danger : colors.accent, padding: 14, borderRadius: 12, alignItems: 'center', marginTop: 8 }]}
+                          onPress={handleToggleTunnel}
+                          disabled={actionLoading}
+                        >
+                          {actionLoading ? (
+                            <ActivityIndicator size="small" color="#fff" />
+                          ) : (
+                            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>
+                              {(tunnelData?.active || tunnelData?.status === 'running') ? '⏹ Stop Tunnel' : '▶ Start Cloudflare Tunnel'}
+                            </Text>
+                          )}
+                        </TouchableOpacity>
                       </View>
                     )}
 

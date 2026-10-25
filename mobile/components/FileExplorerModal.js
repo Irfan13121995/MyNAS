@@ -13,7 +13,9 @@ export default function FileExplorerModal({
   onClose, 
   onFilePress, 
   mode = 'view', // 'view' | 'selectFolder'
-  onSelectFolder 
+  onSelectFolder,
+  raidVolumes = [],
+  isReadonly = false
 }) {
   const { colors } = useTheme();
   const styles = React.useMemo(() => getStyles(colors), [colors]);
@@ -21,6 +23,21 @@ export default function FileExplorerModal({
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [internalRaidVolumes, setInternalRaidVolumes] = useState(raidVolumes || []);
+
+  useEffect(() => {
+    if ((!raidVolumes || raidVolumes.length === 0) && visible && serverUrl && token) {
+      fetch(`${serverUrl}/api/raid/volumes`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      .then(res => res.json())
+      .then(data => {
+        const vols = Array.isArray(data.volumes) ? data.volumes : (Array.isArray(data) ? data : []);
+        setInternalRaidVolumes(vols);
+      })
+      .catch(() => {});
+    }
+  }, [visible, serverUrl, token, raidVolumes]);
   
   // New folder dialog state
   const [newFolderModalVisible, setNewFolderModalVisible] = useState(false);
@@ -68,6 +85,14 @@ export default function FileExplorerModal({
   };
 
   const handleUp = () => {
+    if (currentPath.startsWith('raid:')) {
+      const parts = currentPath.split(/[/\\]/).filter(Boolean);
+      if (parts.length > 1) {
+        parts.pop();
+        setCurrentPath(parts.join('\\'));
+      }
+      return;
+    }
     const parts = currentPath.split(/[/\\]/).filter(Boolean);
     if (parts.length > 1) {
       parts.pop();
@@ -78,11 +103,32 @@ export default function FileExplorerModal({
 
   const handleItemPress = (item) => {
     if (item.isDirectory) {
-      setCurrentPath(item.path);
+      if (currentPath.startsWith('raid:')) {
+        setCurrentPath(`${currentPath.replace(/[\\/]+$/, '')}\\${item.name}`);
+      } else {
+        setCurrentPath(item.path);
+      }
     } else {
       onFilePress && onFilePress(item, items);
     }
   };
+
+  const displayPath = React.useMemo(() => {
+    if (!currentPath) return 'Storage';
+    if (currentPath.startsWith('raid:')) {
+      const raw = currentPath.replace(/^raid:/, '');
+      const parts = raw.split(/[/\\]/).filter(Boolean);
+      const volKey = parts[0] || '';
+      const vols = (raidVolumes && raidVolumes.length > 0) ? raidVolumes : internalRaidVolumes;
+      const found = vols.find(v => v.id === volKey || v.name.toLowerCase() === volKey.toLowerCase());
+      const prefix = found ? `🛡️ ${found.name}` : `🛡️ ${volKey}`;
+      if (parts.length > 1) {
+        return `${prefix} › ${parts.slice(1).join(' › ')}`;
+      }
+      return prefix;
+    }
+    return currentPath;
+  }, [currentPath, raidVolumes, internalRaidVolumes]);
 
   const handleCreateNewFolder = async () => {
     if (!newFolderName || !newFolderName.trim()) {
@@ -164,13 +210,15 @@ export default function FileExplorerModal({
             
             <View style={styles.pathContainer}>
               <Text style={styles.pathText} numberOfLines={1} ellipsizeMode="head">
-                {currentPath}
+                {displayPath}
               </Text>
             </View>
 
-            <TouchableOpacity onPress={() => setNewFolderModalVisible(true)} style={styles.newFolderBtn}>
-              <Text style={styles.newFolderText}>+ Folder</Text>
-            </TouchableOpacity>
+            {!isReadonly && (
+              <TouchableOpacity onPress={() => setNewFolderModalVisible(true)} style={styles.newFolderBtn}>
+                <Text style={styles.newFolderText}>+ Folder</Text>
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
               <Text style={styles.closeText}>✕</Text>

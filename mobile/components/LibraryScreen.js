@@ -74,14 +74,14 @@ function groupMediaByDate(items) {
   return result;
 }
 
-const ImageItem = React.memo(({ thumbUri }) => {
+const ImageItem = React.memo(({ thumbUri, isVideo }) => {
   const { colors } = useTheme();
   const styles = useMemo(() => getStyles(colors), [colors]);
   const [error, setError] = useState(false);
   if (error) {
     return (
       <View style={[styles.thumbnail, { alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surfaceSolid }]}>
-        <Text style={{fontSize: 24}}>🖼️</Text>
+        <Text style={{fontSize: 24}}>{isVideo ? '🎬' : '🖼️'}</Text>
       </View>
     );
   }
@@ -99,7 +99,7 @@ const ImageItem = React.memo(({ thumbUri }) => {
   );
 });
 
-export default function LibraryScreen({ serverUrl, token, drives = [], initialFilter = 'all', onSelectMedia }) {
+export default function LibraryScreen({ serverUrl, token, drives = [], initialFilter = 'all', isReadonly = false, userRole = 'user', onSelectMedia }) {
   const { colors } = useTheme();
   const styles = useMemo(() => getStyles(colors), [colors]);
   const [activeSource, setActiveSource] = useState('nas'); // 'nas' | 'device'
@@ -598,11 +598,7 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
       >
         {isVid ? (
           <View style={styles.videoPlaceholder}>
-            {item.isDevice ? (
-              <ImageItem thumbUri={thumbUri} />
-            ) : (
-              <Text style={styles.videoEmoji}>🎬</Text>
-            )}
+            <ImageItem thumbUri={thumbUri} isVideo={true} />
             <View style={styles.videoPlayBtn}>
               <Text style={styles.playArrow}>▶</Text>
             </View>
@@ -611,7 +607,7 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
             </View>
           </View>
         ) : (
-          <ImageItem thumbUri={thumbUri} />
+          <ImageItem thumbUri={thumbUri} isVideo={false} />
         )}
 
         {isGif && (
@@ -637,6 +633,10 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
     if (selectedItems.size === 0) return;
 
     if (activeSource === 'nas') {
+      if (isReadonly) {
+        Alert.alert('Permission Denied', 'Your account has read-only access. You cannot delete files from the NAS.');
+        return;
+      }
       Alert.alert(
         'Delete from NAS',
         `Are you sure you want to permanently delete ${selectedItems.size} selected item(s) from your NAS storage? This cannot be undone.`,
@@ -771,13 +771,19 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
               </View>
             ) : (
               <View style={{ flexDirection: 'row', gap: 8, flex: 1 }}>
-                <TouchableOpacity
-                  style={[styles.actionBtn, styles.actionBtnDanger, { flex: 1 }]}
-                  activeOpacity={0.7}
-                  onPress={handleBatchDelete}
-                >
-                  <Text style={styles.actionBtnDangerText}>🗑️ Delete ({selectedItems.size})</Text>
-                </TouchableOpacity>
+                {!isReadonly ? (
+                  <TouchableOpacity
+                    style={[styles.actionBtn, styles.actionBtnDanger, { flex: 1 }]}
+                    activeOpacity={0.7}
+                    onPress={handleBatchDelete}
+                  >
+                    <Text style={styles.actionBtnDangerText}>🗑️ Delete ({selectedItems.size})</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <View style={[styles.actionBtn, { flex: 1, backgroundColor: 'rgba(255, 159, 10, 0.15)', borderColor: 'rgba(255, 159, 10, 0.35)', alignItems: 'center', justifyContent: 'center' }]}>
+                    <Text style={{ color: '#FF9F0A', fontWeight: '700', fontSize: 13 }}>🔒 Read-Only Access</Text>
+                  </View>
+                )}
               </View>
             )}
           </View>
@@ -995,6 +1001,59 @@ export default function LibraryScreen({ serverUrl, token, drives = [], initialFi
         >
           <Text style={styles.syncFabIcon}>🔄</Text>
         </TouchableOpacity>
+      )}
+
+      {/* FLOATING ACTION PILL FOR BATCH SELECTION */}
+      {isSelectionMode && selectedItems.size > 0 && (
+        <View style={styles.floatingSelectionBar}>
+          <View style={styles.floatingSelectionInner}>
+            <View style={styles.floatingCountContainer}>
+              <View style={[styles.floatingCountBadge, { backgroundColor: colors.accentBg }]}>
+                <Text style={[styles.floatingCountText, { color: colors.accent }]}>
+                  {selectedItems.size}
+                </Text>
+              </View>
+              <Text style={[styles.floatingLabel, { color: colors.textPrimary }]}>Selected</Text>
+            </View>
+
+            <View style={styles.floatingActions}>
+              {activeSource === 'device' ? (
+                <TouchableOpacity
+                  style={[styles.floatingPillBtn, { backgroundColor: colors.accent }]}
+                  activeOpacity={0.8}
+                  onPress={() => setUploadModalVisible(true)}
+                >
+                  <Text style={[styles.floatingPillBtnText, { color: '#0B0E14' }]}>📤 Upload</Text>
+                </TouchableOpacity>
+              ) : null}
+
+              {(!isReadonly || activeSource === 'device') ? (
+                <TouchableOpacity
+                  style={[styles.floatingPillBtn, { backgroundColor: 'rgba(255, 69, 58, 0.15)', borderColor: 'rgba(255, 69, 58, 0.35)' }]}
+                  activeOpacity={0.8}
+                  onPress={handleBatchDelete}
+                >
+                  <Text style={[styles.floatingPillBtnText, { color: colors.danger }]}>🗑️ Trash</Text>
+                </TouchableOpacity>
+              ) : (
+                <View style={[styles.floatingPillBtn, { backgroundColor: 'rgba(255, 159, 10, 0.15)', borderColor: 'rgba(255, 159, 10, 0.3)' }]}>
+                  <Text style={[styles.floatingPillBtnText, { color: '#FF9F0A' }]}>🔒 Read-Only</Text>
+                </View>
+              )}
+
+              <TouchableOpacity
+                style={[styles.floatingPillBtn, { backgroundColor: colors.surfaceSolid, borderColor: colors.borderLight }]}
+                activeOpacity={0.8}
+                onPress={() => {
+                  setIsSelectionMode(false);
+                  setSelectedItems(new Set());
+                }}
+              >
+                <Text style={[styles.floatingPillBtnText, { color: colors.textSecondary }]}>✕ Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
       )}
 
       {/* CATEGORY PICKER MODAL */}
@@ -1857,6 +1916,69 @@ const getStyles = (colors) => StyleSheet.create({
     color: colors.textMuted,
     paddingHorizontal: 6,
     paddingBottom: 8,
+  },
+
+  // FLOATING SELECTION CAPSULE PILL
+  floatingSelectionBar: {
+    position: 'absolute',
+    bottom: Platform.OS === 'ios' ? 104 : 92,
+    left: 16,
+    right: 16,
+    alignItems: 'center',
+    zIndex: 100,
+  },
+  floatingSelectionInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: colors.surfaceSolid,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 10,
+    width: '100%',
+    maxWidth: 420,
+  },
+  floatingCountContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  floatingCountBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  floatingCountText: {
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  floatingLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  floatingActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  floatingPillBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  floatingPillBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
   },
 
   // SYNC FAB (Circular Floating Action Button placed safely above the floating bottom dock)

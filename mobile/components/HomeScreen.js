@@ -8,7 +8,7 @@ import FileExplorerModal from './FileExplorerModal';
 import { cacheService } from '../services/cacheService';
 import { useTheme } from '../contexts/ThemeContext';
 
-export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileBrowser, onOpenLibrary }) {
+export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileBrowser, onOpenLibrary, isReadonly = false, userRole = 'user' }) {
   const { themeMode, setThemeMode, colors } = useTheme();
   const styles = useMemo(() => getStyles(colors), [colors]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -571,6 +571,8 @@ export default function HomeScreen({ serverUrl, token, onSelectFile, onOpenFileB
         initialPath={explorePath}
         serverUrl={serverUrl}
         token={token}
+        raidVolumes={raidVolumes}
+        isReadonly={isReadonly}
         onClose={() => setExploreVisible(false)}
       />
     </View>

@@ -83,6 +83,7 @@ function AppContent() {
   const [serverUrl, setServerUrl] = useState(null);
   const [token, setToken] = useState(null);
   const [username, setUsername] = useState('NAS User');
+  const [userProfile, setUserProfile] = useState(null); // { role, isReadonly, allowedDisks }
   const [activeTab, setActiveTab] = useState('home'); // 'home' | 'storage' | 'library' | 'control'
   const [libraryFilter, setLibraryFilter] = useState('all'); // 'all' | 'photos' | 'videos'
   const [drives, setDrives] = useState([]);
@@ -195,7 +196,11 @@ function AppContent() {
       const storedUrl = await getSecureItem('nas_server_url');
       const storedToken = await getSecureItem('nas_jwt_token');
       const storedUser = await AsyncStorage.getItem('nas_username');
+      const storedProfile = await AsyncStorage.getItem('nas_user_profile');
       if (storedUser) setUsername(storedUser);
+      if (storedProfile) {
+        try { setUserProfile(JSON.parse(storedProfile)); } catch (e) {}
+      }
 
       if (storedUrl && storedToken) {
         const verifyResult = await verifyToken(storedUrl, storedToken, signal);
@@ -238,6 +243,10 @@ function AppContent() {
           setUsername(data.username);
           await AsyncStorage.setItem('nas_username', data.username);
         }
+        if (data.user) {
+          setUserProfile(data.user);
+          await AsyncStorage.setItem('nas_user_profile', JSON.stringify(data.user));
+        }
         return { valid: true, networkError: false };
       }
       if (res.status === 401 || res.status === 403) {
@@ -272,17 +281,19 @@ function AppContent() {
       await setSecureItem('nas_jwt_token', jwtToken);
 
       let nameToSet = userDisplayName;
-      if (!nameToSet) {
-        try {
-          const res = await fetch(`${url}/api/auth/verify`, {
-            headers: { Authorization: `Bearer ${jwtToken}` }
-          });
-          if (res.ok) {
-            const data = await res.json();
-            if (data.username) nameToSet = data.username;
+      try {
+        const res = await fetch(`${url}/api/auth/verify`, {
+          headers: { Authorization: `Bearer ${jwtToken}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.username) nameToSet = data.username;
+          if (data.user) {
+            setUserProfile(data.user);
+            await AsyncStorage.setItem('nas_user_profile', JSON.stringify(data.user));
           }
-        } catch (e) {}
-      }
+        }
+      } catch (e) {}
 
       nameToSet = nameToSet || 'NAS User';
       await AsyncStorage.setItem('nas_username', nameToSet);
@@ -300,9 +311,11 @@ function AppContent() {
       await deleteSecureItem('nas_server_url');
       await deleteSecureItem('nas_jwt_token');
       await AsyncStorage.removeItem('nas_username');
+      await AsyncStorage.removeItem('nas_user_profile');
       setServerUrl(null);
       setToken(null);
       setUsername('NAS User');
+      setUserProfile(null);
       setDrives([]);
     } catch (e) {
       console.error('Failed to clear credentials', e);
@@ -411,6 +424,15 @@ function AppContent() {
             <Text style={[styles.topBarTitle, { color: colors.textPrimary }]}>myNAS</Text>
           </View>
           <View style={styles.topBarRight}>
+            {userProfile?.isReadonly ? (
+              <View style={[styles.roleBadge, { backgroundColor: 'rgba(255, 159, 10, 0.15)', borderColor: 'rgba(255, 159, 10, 0.35)', marginRight: 8 }]}>
+                <Text style={{ fontSize: 11, fontWeight: '700', color: '#FF9F0A' }}>🔒 Read-Only</Text>
+              </View>
+            ) : userProfile?.role === 'admin' ? (
+              <View style={[styles.roleBadge, { backgroundColor: 'rgba(191, 90, 242, 0.15)', borderColor: 'rgba(191, 90, 242, 0.35)', marginRight: 8 }]}>
+                <Text style={{ fontSize: 11, fontWeight: '700', color: '#BF5AF2' }}>Admin</Text>
+              </View>
+            ) : null}
             <View style={[styles.userBadge, { backgroundColor: colors.accentBg, borderColor: colors.borderLight }]}>
               <Text style={styles.userBadgeIcon}>👤</Text>
               <Text style={[styles.userBadgeText, { color: colors.accent }]} numberOfLines={1}>
@@ -426,6 +448,8 @@ function AppContent() {
             <HomeScreen
               serverUrl={serverUrl}
               token={token}
+              isReadonly={userProfile?.isReadonly || false}
+              userRole={userProfile?.role || 'user'}
               onSelectFile={(f, list) => {
                 setSelectedFile(f);
                 if (list) setActiveMediaList(list);
@@ -443,6 +467,8 @@ function AppContent() {
             <StorageScreen
               serverUrl={serverUrl}
               token={token}
+              isReadonly={userProfile?.isReadonly || false}
+              userRole={userProfile?.role || 'user'}
               onOpenAddStorage={() => setAutoSyncVisible(true)}
             />
           )}
@@ -453,6 +479,8 @@ function AppContent() {
               token={token}
               drives={drives}
               initialFilter={libraryFilter}
+              isReadonly={userProfile?.isReadonly || false}
+              userRole={userProfile?.role || 'user'}
               onSelectMedia={(m, list) => {
                 setSelectedFile(m);
                 if (list) setActiveMediaList(list);
@@ -464,6 +492,8 @@ function AppContent() {
             <ControlPanelScreen
               serverUrl={serverUrl}
               token={token}
+              isReadonly={userProfile?.isReadonly || false}
+              userRole={userProfile?.role || 'user'}
               onLogout={handleLogout}
               onNavigateModule={(modId) => {
                 if (modId === 'files') setActiveTab('storage');
@@ -565,6 +595,12 @@ const styles = StyleSheet.create({
   topBarRight: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  roleBadge: {
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+    borderWidth: 1,
   },
   userBadge: {
     flexDirection: 'row',

@@ -5,10 +5,11 @@ import {
 } from 'react-native';
 import CircularGauge from './CircularGauge';
 import FileExplorerModal from './FileExplorerModal';
+import RecycleBinModal from './RecycleBinModal';
 import { useTheme } from '../contexts/ThemeContext';
 import { useMemo } from 'react';
 
-export default function StorageScreen({ serverUrl, token, onOpenAddStorage }) {
+export default function StorageScreen({ serverUrl, token, onOpenAddStorage, isReadonly = false }) {
   const { colors } = useTheme();
   const styles = useMemo(() => getStyles(colors), [colors]);
   const [activeTab, setActiveTab] = useState('storage'); // 'storage' | 'external'
@@ -18,6 +19,7 @@ export default function StorageScreen({ serverUrl, token, onOpenAddStorage }) {
   const [raidVolumes, setRaidVolumes] = useState([]);
   const [exploreVisible, setExploreVisible] = useState(false);
   const [explorePath, setExplorePath] = useState('');
+  const [trashVisible, setTrashVisible] = useState(false);
 
   const fetchDrives = async () => {
     try {
@@ -75,10 +77,13 @@ export default function StorageScreen({ serverUrl, token, onOpenAddStorage }) {
       <View style={[styles.topbar, { paddingTop: 6 }]}>
         <Text style={styles.topbarTitle}>Storage</Text>
         <View style={styles.topbarActions}>
-          <TouchableOpacity style={styles.iconBtn} onPress={onRefresh}>
+          <TouchableOpacity style={styles.iconBtn} onPress={() => setTrashVisible(true)} title="Recycle Bin">
+            <Text style={styles.iconText}>🗑️</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.iconBtn} onPress={onRefresh} title="Refresh">
             <Text style={styles.iconText}>🔄</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.iconBtn} onPress={onOpenAddStorage}>
+          <TouchableOpacity style={styles.iconBtn} onPress={onOpenAddStorage} title="Configure">
             <Text style={styles.iconText}>⚙️</Text>
           </TouchableOpacity>
         </View>
@@ -285,7 +290,18 @@ export default function StorageScreen({ serverUrl, token, onOpenAddStorage }) {
         initialPath={explorePath}
         serverUrl={serverUrl}
         token={token}
+        raidVolumes={raidVolumes}
+        isReadonly={isReadonly}
         onClose={() => setExploreVisible(false)}
+      />
+
+      <RecycleBinModal
+        visible={trashVisible}
+        serverUrl={serverUrl}
+        token={token}
+        isReadonly={isReadonly}
+        onClose={() => setTrashVisible(false)}
+        onItemRestored={fetchDrives}
       />
 
       {/* FAB button to configure storage */}
